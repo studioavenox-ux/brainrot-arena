@@ -1,0 +1,29 @@
+{
+  "packaged_at_utc": "2026-10-29T16:25:14+00:00",
+  "archive": "BrainrotArena-Project.zip",
+  "archive_bytes": 175289,
+  "archive_sha256": "fd61a1bcf4edb0cb3436a7b8106104f484104fa649678e86d78c6b4e91fcef3b",
+  "archive_file_count": 35,
+  "preserved_production_sources": 10,
+  "preserved_place_files": 2,
+  "gameplay_and_places_byte_identical_to_prior_implementation": true,
+  "archive_crc_and_payload_sha256_checks": "passed",
+  "clean_extraction_export_tests": {
+    "passed": 28,
+    "failed": 0
+  },
+  "missing_required_project_files": [],
+  "missing_required_custom_assets": [],
+  "installed_platform_required": "Roblox Studio for Windows; Roblox account and normal platform resources",
+  "roblox_bundled_resource_urls": [
+    "rbxasset://sounds/electronicpingshort.wav",
+    "rbxasset://textures/sky/sky512_bk.tex",
+    "rbxasset://textures/sky/sky512_dn.tex",
+    "rbxasset://textures/sky/sky512_ft.tex",
+    "rbxasset://textures/sky/sky512_lf.tex",
+    "rbxasset://textures/sky/sky512_rt.tex",
+    "rbxasset://textures/sky/sky512_up.tex"
+  ],
+  "windows_studio_execution_tested": false,
+  "note": "Existing 129-test gameplay verification report retained unchanged; full Luau tests were not rerun for this documentation/packaging-only update."
+}

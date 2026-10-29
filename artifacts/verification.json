@@ -1,0 +1,67 @@
+{
+  "verified_at_utc": "2026-10-28T10:35:00+00:00",
+  "status": "automated_checks_passed_studio_unverified",
+  "test_counts": {
+    "core_luau": 72,
+    "mock_adapter_luau": 29,
+    "place_python": 28
+  },
+  "total_passed": 129,
+  "failed": 0,
+  "luau_files_compiled": 13,
+  "source_sha256": "a733440904169150e25e2abfebea4afc952843407763d7158491d71096a2dfdb",
+  "static_world_parts": 358,
+  "pickup_slots": 48,
+  "places": {
+    "BrainrotArena-QuickTest.rbxlx": {
+      "bytes": 634417,
+      "sha256": "75d1da51d9da9ad9fd8221870a111ec534494ba314a094cffcaee9622dd353cf"
+    },
+    "BrainrotArena.rbxlx": {
+      "bytes": 634418,
+      "sha256": "004d966e102b739b22cf4f35e05555171177a01a61de9d05d8543ab5a6fc4520"
+    }
+  },
+  "stages": [
+    {
+      "name": "Studio place exports built",
+      "passed": true
+    },
+    {
+      "name": "All 13 Luau files compile",
+      "passed": true
+    },
+    {
+      "name": "Strict type analysis: authority modules + configuration",
+      "passed": true
+    },
+    {
+      "name": "Core rules and 100 simulated 12-player rounds",
+      "passed": true
+    },
+    {
+      "name": "Production adapters against mocked Roblox services",
+      "passed": true
+    },
+    {
+      "name": "Place structure, loadable API properties and geometry",
+      "passed": true
+    },
+    {
+      "name": "Deterministic export rebuild",
+      "passed": true
+    },
+    {
+      "name": "Git diff whitespace check",
+      "passed": true
+    }
+  ],
+  "not_executed": [
+    "Roblox Studio import",
+    "Roblox client/server multiplayer simulation",
+    "Engine physics and rendering",
+    "Real touch-device input",
+    "Bundled sound playback",
+    "Published server test"
+  ]
+}

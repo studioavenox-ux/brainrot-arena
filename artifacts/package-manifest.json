@@ -1,0 +1,203 @@
+{
+  "format_version": 1,
+  "project": "BRAINROT ARENA",
+  "scope": "Complete current prototype; production scripts and places preserved byte-for-byte",
+  "files": [
+    {
+      "path": ".github/workflows/check.yml",
+      "bytes": 826,
+      "sha256": "407c6a92999d5dd2ae556400d2386d2a9afbebecc647fe7d3b2d31e0b165b3c2"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 543,
+      "sha256": "3f88d09c030de87d95e3cd0a59df8b11378b9730d31f339748b504d01d53f907"
+    },
+    {
+      "path": "README.md",
+      "bytes": 9709,
+      "sha256": "ea64b02a81c81563943f768fbaf9e6dd8fcd7055b70d5551597986b876c6179c"
+    },
+    {
+      "path": "artifacts/verification.json",
+      "bytes": 1694,
+      "sha256": "d097794587dcab0ca455942506e22ef26b7adc6b808ec282e429cdedb4123199"
+    },
+    {
+      "path": "assets/README.md",
+      "bytes": 1971,
+      "sha256": "de7536f5f6583c83e739e6a94581bd4418f01a2efc940371a4e37527e8974dc8"
+    },
+    {
+      "path": "assets/asset-manifest.json",
+      "bytes": 1516,
+      "sha256": "7abd3692e492da9580acac6d0a22f7b5ad686c129dd594f790db70a3388276a4"
+    },
+    {
+      "path": "default.project.json",
+      "bytes": 682,
+      "sha256": "5abbca78b4ea72339bd54b4f51539fa096267dc320751c3da524fc9bf2ebb2d7"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "bytes": 8042,
+      "sha256": "eebb564cadf1f1b8a0332106c62ed4977eabc37382ee453f449956cc256d7b76"
+    },
+    {
+      "path": "docs/BUILD_REPORT.md",
+      "bytes": 2660,
+      "sha256": "4b0d9388eb39bbe75b1667df8b3e8a108e025f0f4e7320977fdd8f5168a922e6"
+    },
+    {
+      "path": "docs/DEPENDENCIES.md",
+      "bytes": 5538,
+      "sha256": "96c05b41dc907e39cd8cdd483493dcd602f649f77a7e0ebf30398865906c9e6b"
+    },
+    {
+      "path": "docs/TESTING.md",
+      "bytes": 5717,
+      "sha256": "f0f4305b4dc758199a54d056b759338ab4154e43158b65ab34773b9dd2170f12"
+    },
+    {
+      "path": "places/BrainrotArena-QuickTest.rbxlx",
+      "bytes": 634417,
+      "sha256": "75d1da51d9da9ad9fd8221870a111ec534494ba314a094cffcaee9622dd353cf"
+    },
+    {
+      "path": "places/BrainrotArena.rbxlx",
+      "bytes": 634418,
+      "sha256": "004d966e102b739b22cf4f35e05555171177a01a61de9d05d8543ab5a6fc4520"
+    },
+    {
+      "path": "src/client/Effects.luau",
+      "bytes": 7650,
+      "sha256": "38b5e4145f0c6311570ff76e8daa9dc9b6d0159613cc99bebec150fa23694d0f"
+    },
+    {
+      "path": "src/client/Hud.luau",
+      "bytes": 23550,
+      "sha256": "07f3516cdb421dcb826cbf1609c2f138216d60cf0c5465ea3800ee53205166ac"
+    },
+    {
+      "path": "src/client/Main.client.luau",
+      "bytes": 1814,
+      "sha256": "0b5178e5fcc950b64b6106eb103422bad4981e516c9091db8c020c754b0b0a3b"
+    },
+    {
+      "path": "src/server/Main.server.luau",
+      "bytes": 13018,
+      "sha256": "8fea4c5e983f2dfc108d2863aef2b76ab4945a86292a5cee5cb80cb43e3fa814"
+    },
+    {
+      "path": "src/server/WorldData.luau",
+      "bytes": 88662,
+      "sha256": "fd41d41d0b4d8e29f8b165c1fdadf98bc9a3e1b8d4f6bd6ee199c374b524f57e"
+    },
+    {
+      "path": "src/server/WorldService.luau",
+      "bytes": 4635,
+      "sha256": "796a25baf6ad0e691cbfa348b90632016715d645a366e14f7369b9e35d84601d"
+    },
+    {
+      "path": "src/server/core/MovementGuard.luau",
+      "bytes": 1904,
+      "sha256": "0443fd77bc9f18bb74a2cd1528192e924c1d5c2c74531c973f5308455f1ec36f"
+    },
+    {
+      "path": "src/server/core/PickupLedger.luau",
+      "bytes": 4382,
+      "sha256": "caa9aed06d9b37e06c01e7207d7ddb1d689fe0c2b4ab7a58b4f7b4b6d42dcbbd"
+    },
+    {
+      "path": "src/server/core/RoundMachine.luau",
+      "bytes": 7818,
+      "sha256": "99bc29f66c7ea0c8e0da079ac6e428185027606edb79d2dc0338d599df31b2a1"
+    },
+    {
+      "path": "src/shared/Config.luau",
+      "bytes": 1109,
+      "sha256": "82825300d74702da484e213bc688fec32343967130bc05bf90458c0aca2f2184"
+    },
+    {
+      "path": "tests/adapters.spec.luau",
+      "bytes": 11352,
+      "sha256": "787f7180332c6e70defc3bc42c13d26808d88881760bc753367fe7b8dbef449c"
+    },
+    {
+      "path": "tests/core.spec.luau",
+      "bytes": 15463,
+      "sha256": "507b19244baf4ea535f5c510428ad2cb557ca91f99c72061b19004c323c88217"
+    },
+    {
+      "path": "tests/fixtures/roblox-api.json",
+      "bytes": 85181,
+      "sha256": "167793ebcad9802f3a6ce2f3eb471fbff4d804d64948ab4953356bb47b17d612"
+    },
+    {
+      "path": "tests/roblox_mock.luau",
+      "bytes": 16219,
+      "sha256": "3a2d5e1a841c7b1345a57b509c6db4b4bfb9ab2af32bc602c498901d816ea529"
+    },
+    {
+      "path": "tools/bootstrap_luau.py",
+      "bytes": 1663,
+      "sha256": "19ced1e108ef58e02f581905b5e43217d8ff9543bc0242e156928fe94bbeb65e"
+    },
+    {
+      "path": "tools/build_place.py",
+      "bytes": 12074,
+      "sha256": "2c3ea68c3c72ed442259e872ef349e3d8864f569003217bf2b04141507843dcb"
+    },
+    {
+      "path": "tools/check.py",
+      "bytes": 8140,
+      "sha256": "aba041155ca7b4d3080ed181a4a8874eeda03235e120dbef08bbd6b90dfeccf1"
+    },
+    {
+      "path": "tools/package_release.py",
+      "bytes": 6988,
+      "sha256": "1692223d5c00d166d28e839cb2bf2560a89f376a527ea463e9f284e6543254bb"
+    },
+    {
+      "path": "tools/test_adapters.py",
+      "bytes": 1316,
+      "sha256": "11de294ef7ba4570ec53ae4b566248384b443d29d73eaf908c6a35f9709f6453"
+    },
+    {
+      "path": "tools/verify_place.py",
+      "bytes": 11739,
+      "sha256": "66e0a9774a74eabd32c83db6d2c9844caa48ee85b52881487fd01b1ce0c0e850"
+    },
+    {
+      "path": "tools/world.py",
+      "bytes": 10749,
+      "sha256": "0c0c899ffbee0ff3f4485377ab614f929226aff601fd4ab9d8e9d691d4f308fa"
+    }
+  ],
+  "file_count_excluding_manifest": 34,
+  "production_script_count": 10,
+  "place_count": 2,
+  "source_sha256": "a733440904169150e25e2abfebea4afc952843407763d7158491d71096a2dfdb",
+  "prior_verification_timestamp_utc": "2026-10-28T10:35:00+00:00",
+  "prior_automated_tests_passed": 129,
+  "studio_engine_playtest_performed": false,
+  "missing_required_project_files": [],
+  "missing_required_custom_assets": [],
+  "required_installed_platform": "Roblox Studio for Windows, Roblox account and normal platform resources",
+  "roblox_bundled_resource_urls": [
+    "rbxasset://sounds/electronicpingshort.wav",
+    "rbxasset://textures/sky/sky512_bk.tex",
+    "rbxasset://textures/sky/sky512_dn.tex",
+    "rbxasset://textures/sky/sky512_ft.tex",
+    "rbxasset://textures/sky/sky512_lf.tex",
+    "rbxasset://textures/sky/sky512_rt.tex",
+    "rbxasset://textures/sky/sky512_up.tex"
+  ],
+  "bundled_resource_availability_verified_in_studio": false,
+  "documentation": {
+    "windows_instructions": "README.md",
+    "dependencies": "docs/DEPENDENCIES.md",
+    "assets": "assets/asset-manifest.json"
+  },
+  "manifest_note": "Per-file hashes cover all payload files; MANIFEST.json cannot include its own hash."
+}

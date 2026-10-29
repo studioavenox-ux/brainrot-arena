@@ -1,0 +1,27 @@
+{
+  "name": "BrainrotArena",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "BrainrotShared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "BrainrotServer": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "$properties": {
+        "CharacterWalkSpeed": 22,
+        "CharacterUseJumpPower": true,
+        "CharacterJumpPower": 50,
+        "CameraMaxZoomDistance": 80,
+        "CameraMinZoomDistance": 8
+      },
+      "StarterPlayerScripts": {
+        "BrainrotClient": { "$path": "src/client" }
+      }
+    },
+    "Workspace": {
+      "$properties": { "Gravity": 196.2, "FallenPartsDestroyHeight": -160 }
+    }
+  }
+}
