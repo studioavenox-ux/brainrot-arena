@@ -1,0 +1,30 @@
+name: Prototype verification
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  luau-and-export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .tools/luau-0.744
+          key: ${{ runner.os }}-luau-0.744-v1
+      - name: Prepare official Luau tools
+        run: python3 tools/bootstrap_luau.py
+      - name: Build, compile, type-check and execute tests
+        run: python3 tools/check.py --check-generated
+      - name: Preserve ready-to-open places and verification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrainrotArena-prototype
+          path: |
+            places/*.rbxlx
+            docs/BUILD_REPORT.md
+            artifacts/verification.json
+            artifacts/check-*.log

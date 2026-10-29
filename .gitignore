@@ -1,41 +1,24 @@
-# Compiled Lua sources
-luac.out
+# Local development tools / caches (never shipped)
+.tools/
+.cache/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
 
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+# Studio recovery / local settings
+*.rbxl
+*.rbxl.lock
+*.rbxlx.lock
+*.rbxl.autosave
+*.rbxlx.autosave
+*.rbxs
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+# Build output is reproducible; the two ready-to-open XML places are intentionally tracked.
+artifacts/*.log
 
-# Precompiled Headers
-*.gch
-*.pch
+# Reproducible delivery archives (regenerate with tools/package_release.py)
+artifacts/*.zip
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
+# Requested complete project attachment is intentionally preserved with the project.
+!artifacts/BrainrotArena-Project.zip

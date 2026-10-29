@@ -1,0 +1,37 @@
+{
+  "project": "BRAINROT ARENA",
+  "asset_strategy": "Procedural Roblox primitives / script-built UI, baked into the places or included in source",
+  "included_procedural_asset_sources": [
+    "places/BrainrotArena.rbxlx",
+    "places/BrainrotArena-QuickTest.rbxlx",
+    "tools/world.py",
+    "src/server/WorldData.luau",
+    "src/server/WorldService.luau",
+    "src/server/Main.server.luau",
+    "src/client/Hud.luau",
+    "src/client/Effects.luau",
+    "src/shared/Config.luau",
+    "src/server/core/RoundMachine.luau"
+  ],
+  "custom_imported_asset_files_required": [],
+  "external_roblox_asset_ids_required": [],
+  "roblox_bundled_resource_urls": [
+    "rbxasset://sounds/electronicpingshort.wav",
+    "rbxasset://textures/sky/sky512_bk.tex",
+    "rbxasset://textures/sky/sky512_dn.tex",
+    "rbxasset://textures/sky/sky512_ft.tex",
+    "rbxasset://textures/sky/sky512_lf.tex",
+    "rbxasset://textures/sky/sky512_rt.tex",
+    "rbxasset://textures/sky/sky512_up.tex"
+  ],
+  "roblox_platform_resources_redistributed": false,
+  "bundled_resource_availability_verified_in_windows_studio": false,
+  "other_platform_dependencies": [
+    "Roblox Studio for Windows",
+    "Roblox engine and built-in fonts",
+    "Roblox character controls and camera scripts",
+    "Platform-provided avatars"
+  ],
+  "missing_required_custom_assets": [],
+  "notes": "Roblox-bundled resources are installed by Roblox, not missing custom project assets. Verify the listed sound and sky paths in Studio. Current references are preserved."
+}
