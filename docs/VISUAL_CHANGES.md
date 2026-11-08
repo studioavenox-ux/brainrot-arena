@@ -269,7 +269,20 @@ pickup, reward or lifecycle logic was touched.
 
 ---
 
-## 6. What is verified — and what is not
+## 6. Regenerating everything
+
+```sh
+python3 tools/build_place.py   # WorldData.luau + ArtDirection.luau + both places
+python3 tools/check.py         # 158 checks incl. the art-direction gate
+python3 tools/preview.py       # after renders  -> docs/previews/*.jpg
+python3 tools/preview.py --legacy   # before renders (frozen old palette)
+python3 tools/package_release.py    # project ZIP + manifest + checksums
+```
+
+`tools/preview.py` is the only step needing third-party packages
+(`pip install numpy pillow`); it is **never** required to open or play the game.
+
+## 7. What is verified — and what is not
 
 **Verified here (158 automated checks):**
 - 72 core Luau rules tests, incl. 100 simulated 12-player rounds.

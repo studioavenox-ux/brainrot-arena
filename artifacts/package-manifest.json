@@ -10,8 +10,8 @@
     },
     {
       "path": ".gitignore",
-      "bytes": 543,
-      "sha256": "3f88d09c030de87d95e3cd0a59df8b11378b9730d31f339748b504d01d53f907"
+      "bytes": 713,
+      "sha256": "1146adb1fd0ddae449127681bcab5660fb1a4519e84a1a8365f089169c926dfc"
     },
     {
       "path": "README.md",
@@ -21,7 +21,7 @@
     {
       "path": "artifacts/verification.json",
       "bytes": 1839,
-      "sha256": "408dc7c3f1d897d9a58380b73ab80be4f13ccfc37a4a6e4ed577d0bbb1dc1029"
+      "sha256": "766a98c65ea72e27404641b0c5ee83fa964147e74f81d9b7bc0e604a38c810c2"
     },
     {
       "path": "assets/README.md",
@@ -46,7 +46,7 @@
     {
       "path": "docs/BUILD_REPORT.md",
       "bytes": 3309,
-      "sha256": "1fb19a9a00cd5f1d30da82c69319e2e2d412a94c1ae37725cd62c107da89803a"
+      "sha256": "ca0c83cf2c82a2273e64bb3c45d9d2d587f2d0def6508a90bdd0391fc4448ed8"
     },
     {
       "path": "docs/DEPENDENCIES.md",
@@ -60,8 +60,8 @@
     },
     {
       "path": "docs/VISUAL_CHANGES.md",
-      "bytes": 17358,
-      "sha256": "8cf6500abfc2f11d00d124cfe5d6542a9b10f074b5dd3bb6c432f84421228b6a"
+      "bytes": 17920,
+      "sha256": "07d8fa4efc0bbb579f65930b3c3c367b1d989df9f004e4a4014180c14540ce3b"
     },
     {
       "path": "docs/previews/arena-legacy.jpg",
@@ -268,7 +268,7 @@
   "production_script_count": 13,
   "place_count": 2,
   "source_sha256": "2538c9bf8e68a943bd19c5dc20c5b13317fc1158005401baa87bbbaf3f0f2a1d",
-  "prior_verification_timestamp_utc": "2026-11-08T12:14:36+00:00",
+  "prior_verification_timestamp_utc": "2026-11-08T12:15:46+00:00",
   "prior_automated_tests_passed": 158,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
