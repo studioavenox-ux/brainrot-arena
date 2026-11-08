@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-08T12:57:07+00:00**.
+Verified: **2026-11-08T14:06:05+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -14,7 +14,14 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
 - Atomic server pickups (+1/+5/+10), synchronized HUD/leaderboard, late joins, respawns and fall rescue.
 - Low gravity at 60 seconds for 25 seconds, then normal gravity; clean event/round resets.
 - Winner/tie/no-score announcements; session coins; one server-validated session cosmetic.
-- Responsive HUD with touch-control clearance, SFX toggle and reduced-motion setting.
+- Server-authoritative arena access: heartbeat routing with verified pivots, backoff and a
+  seated/dead-safe fallback, so a round always pulls every eligible player in and returns
+  them afterwards. See [PHASE3_GAMEPLAY_FIXES.md](PHASE3_GAMEPLAY_FIXES.md).
+- Complete game UI on a generated design system: top HUD (cells, coins, synchronized clock),
+  live leaderboard, centre notifications (phase, chaos event, winner/tie), bottom Shop/Gear/
+  Settings cards acting on real server data, lobby countdown; responsive from phone to
+  desktop with reduced-motion and SFX preferences. See
+  [UI_IMPLEMENTATION_PHASE3.md](UI_IMPLEMENTATION_PHASE3.md) and `docs/previews/ui-*.jpg`.
 - Visual redesign: natural sand/teal/stone palette, tropical greens, soft blue sky with a
   warm 15:20 sun, authored materials and shadows, redesigned gate/signage, rarity
   silhouettes. Gameplay rules and walkable geometry are unchanged. See
@@ -24,11 +31,11 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
 
 | Check | Result |
 |---|---:|
-| Luau core tests (includes 100 × 12-player logical round simulations) | 72 passed |
-| Real server/client scripts against mocked Roblox services | 32 passed |
+| Luau core tests (includes 100 × 12-player logical round simulations) | 82 passed |
+| Real server/client scripts against mocked Roblox services | 52 passed |
 | XML/API/geometry export tests | 30 passed |
-| Art-direction gate (palette, hierarchy, legibility, lighting) | 30 passed |
-| Official Luau compilation | 18 files passed |
+| Art-direction gate (palette, hierarchy, legibility, lighting) | 34 passed |
+| Official Luau compilation | 22 files passed |
 | Strict analysis | 3 authority modules + Config passed |
 | Repeat build | Byte-for-byte deterministic |
 | Git whitespace check | Passed |
@@ -40,7 +47,8 @@ not engine captures; rendered lighting and materials still need the Studio pass.
 ## Remaining acceptance work
 
 Open `places/BrainrotArena-QuickTest.rbxlx` in Roblox Studio and use its Test tab to start **2 clients**.
-Confirm collecting, jumping during low gravity, the winner card, and the next round on both clients.
+Confirm both players are pulled into the arena (including from a seated character), collecting,
+jumping during low gravity, the winner card, the Shop purchase, and the next round on both clients.
 Use Device Emulator to verify touch controls/text and check Output for errors. See [TESTING.md](TESTING.md).
 No code pasting, plugin installation, API keys, asset uploads, or monetization setup is required.
 
@@ -53,7 +61,7 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 ## Export integrity
 
-Source SHA-256: `440ea4f6b66c482fb56d5c646663d7ef3235c0a352db90cc127e1b91b7c40d98`
+Source SHA-256: `21cf89e603bac8b0aacc5a2917b28ee10ab2a2aaff7abc479fb0e616f752b8e7`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,411,092 bytes; SHA-256 `148af6f7a6e1ae48a077e2c883cf6db6840d522097a1bca6f81b634139b7e245`
-- `BrainrotArena.rbxlx` — 1,411,093 bytes; SHA-256 `5ad8a3c05c32180f14bc1a556a91a5889b4874dc435a46c60b9748d661ea95e9`
+- `BrainrotArena-QuickTest.rbxlx` — 1,449,193 bytes; SHA-256 `a03ac5752357d2b35710ca0b641594d5bd5cb27526dfd5015b0f7015cc37adf8`
+- `BrainrotArena.rbxlx` — 1,449,194 bytes; SHA-256 `05f1666fa33a0225eaca149dbcb36fd9405304961a28cdd5370b51d47a825b1c`

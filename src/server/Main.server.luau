@@ -9,6 +9,7 @@ local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForC
 local RoundMachine = require(script.Parent.core.RoundMachine)
 local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
+local ArenaRoute = require(script.Parent.core.ArenaRoute)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
@@ -22,6 +23,10 @@ local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.
 	return random:NextNumber()
 end)
 local movement = MovementGuard.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
+-- Arena access. Every rail trip goes through this router: it asserts a destination
+-- and keeps asserting it until the character is measurably there.
+local route = ArenaRoute.new()
+local routeStep = 0
 -- Appearance only. Idempotent with the lighting rig baked into the place file.
 ArtService.apply()
 local world = WorldService.new()
@@ -121,22 +126,106 @@ local function applyHalo(player: Player)
 	model.Parent = character
 end
 
-local function teleport(player: Player, arena: boolean, now: number)
+local function characterReady(player: Player)
 	local character = player.Character
-	local record = records[player.UserId]
 	local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
 	local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
-	if not character or not record or not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
-		return
+	if not character or not humanoid or not root or not root:IsA("BasePart") then
+		return nil
+	end
+	if humanoid.Health <= 0 then
+		return nil
+	end
+	return character, humanoid, root
+end
+
+-- One rail move. Returns true only if the character was actually relocated.
+local function movePlayer(player: Player, arena: boolean, now: number, escalate: boolean): boolean
+	local record = records[player.UserId]
+	local character, humanoid, root = characterReady(player)
+	if not record or not character or not humanoid or not root then
+		return false
 	end
 	local target = world:spawnCFrame(arena, record.spawnIndex)
-	character:PivotTo(target)
+	-- Fallback path: an unseated or seated humanoid will silently refuse a PivotTo.
+	-- Detach it from the seat, stop physics, then pivot; the engine re-seats it.
+	if escalate then
+		-- An unseated or platform-standing humanoid silently refuses a PivotTo.
+		-- Detach it, stop the assembly, then pivot twice: the second call lands after
+		-- the engine has reset the root from the first.
+		humanoid.Sit = false
+		humanoid.PlatformStand = false
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+		character:PivotTo(target)
+		character:PivotTo(target)
+	else
+		character:PivotTo(target)
+	end
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
 	humanoid.WalkSpeed = Config.WalkSpeed
 	humanoid.UseJumpPower = true
 	humanoid.JumpPower = Config.JumpPower
 	movement:teleport(player.UserId, position(target.Position), now)
+	route:attempt(player.UserId, if arena then "arena" else "lobby", now)
+
+	-- Verify, do not assume. A PivotTo can be silently ignored (seated humanoid,
+	-- platform stand, a physics owner mid-step). If the character did not move, open
+	-- the retry window immediately instead of waiting out the backoff.
+	local landed = (root.Position - target.Position).Magnitude <= 16
+	if not landed then
+		local track = route:track(player.UserId)
+		track.lastAttempt = now - ArenaRoute.RETRY_DELAY + 0.02
+		route.corrections += 1
+	end
+	return landed
+end
+
+-- One routing decision for one player. This is the only place that decides whether
+-- a character belongs in the arena, and it retries until the character is there.
+local function routePlayer(player: Player, now: number, force: boolean)
+	local _, _, root = characterReady(player)
+	local trackPosition = if root then position(root.Position) else nil
+	if force then
+		-- A phase flip should be acted on in this very step. Clearing the backoff is
+		-- not a bypass of the verification: the move is still an ordinary attempt,
+		-- and only repeated failures escalate to the fallback path.
+		local track = route:track(player.UserId)
+		track.cooldownUntil = -math.huge
+		track.attempts = 0
+	end
+	local verdict, destination = route:evaluate(
+		player.UserId,
+		machine.phase,
+		machine:isParticipating(player.UserId),
+		trackPosition,
+		root ~= nil,
+		now
+	)
+	if verdict == "retry" and destination then
+		local placed = movePlayer(player, destination == "arena", now, false)
+		-- A refused pivot opens the retry window immediately (movePlayer already
+		-- reset the backoff), so no extra bookkeeping is needed here.
+	elseif verdict == "give-up" and destination then
+		-- Escalation: re-seat the character. The router has already counted this as
+		-- a fallback, so the log line below is evidence, not decoration.
+		local escaped = (function()
+			local _, humanoid = characterReady(player)
+			return humanoid ~= nil and (humanoid.Sit == true or humanoid.PlatformStand == true)
+		end)()
+		movePlayer(player, destination == "arena", now, true)
+		local fallbacks = (player:GetAttribute("ArenaRouteFallbacks") or 0) + 1
+		player:SetAttribute("ArenaRouteFallbacks", fallbacks)
+		print(string.format(
+			"[Brainrot] route fallback #%d • %s -> %s%s",
+			fallbacks, player.Name, destination,
+			if escaped then " (detached from seat)" else " (re-seat + pivot)"))
+	elseif force and destination then
+		-- Character just loaded, or the phase just flipped: assert the destination
+		-- now. Still the ordinary attempt, so a failure is visible and escalates.
+		movePlayer(player, destination == "arena", now, false)
+	end
 end
 
 local function updatePickup(slotId: number)
@@ -210,17 +299,20 @@ local function handleEffects(effects, now: number)
 			if machine.phase == "Playing" then
 				ledger:beginRound(machine.roundId)
 				spawnPickups()
+				-- Route every player (including a player whose character is still
+				-- loading: routePlayer re-asserts on the next sweep and on
+				-- CharacterAdded). Never yields, never blocks the authority loop.
 				for _, player in Players:GetPlayers() do
-					teleport(player, true, now)
+					routePlayer(player, now, true)
 				end
 			else
 				ledger:clear()
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
 				setGravity(false)
-				if machine.phase == "Results" then
+				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
-						teleport(player, false, now)
+						routePlayer(player, now, true)
 					end
 				end
 			end
@@ -240,7 +332,10 @@ local function characterAdded(player: Player, character: Model)
 		if not root or not humanoid or player.Parent ~= Players or player.Character ~= character then
 			return
 		end
-		teleport(player, machine:isParticipating(player.UserId), Workspace:GetServerTimeNow())
+		-- Characters spawn in the lobby; the router decides where they belong and
+		-- keeps asserting it. This covers respawns mid-round and joins mid-round.
+		route:remove(player.UserId)
+		routePlayer(player, Workspace:GetServerTimeNow(), true)
 		applyHalo(player)
 	end)
 end
@@ -280,6 +375,7 @@ Players.PlayerRemoving:Connect(function(player)
 	end
 	records[player.UserId] = nil
 	movement:remove(player.UserId)
+	route:remove(player.UserId)
 	machine:removePlayer(player.UserId)
 	dirty = true
 end)
@@ -340,7 +436,8 @@ RunService.Heartbeat:Connect(function(dt: number)
 		end
 		local p = root.Position
 		if p.Y < Config.RescueBelowY then
-			teleport(player, machine:isParticipating(player.UserId), now)
+			route:remove(player.UserId)
+			routePlayer(player, now, true)
 			continue
 		end
 		local allowed, correction = movement:observe(player.UserId, position(p), now)
@@ -364,6 +461,25 @@ RunService.Heartbeat:Connect(function(dt: number)
 					pickupRemote:FireAllClients(receipt)
 					dirty = true
 				end
+			end
+		end
+	end
+
+	-- On-demand fallback: a light round-robin sweep proves everyone's destination
+	-- every step, so a failed transition self-heals within a fraction of a second
+	-- even if the phase effect was missed entirely.
+	if machine.phase == "Playing" or machine.phase == "Results" or machine.phase == "Intermission" then
+		routeStep += 1
+		local ids: { number } = {}
+		local byId: { [number]: Player } = {}
+		for _, player in Players:GetPlayers() do
+			table.insert(ids, player.UserId)
+			byId[player.UserId] = player
+		end
+		for _, id in ArenaRoute.slice(ids, routeStep) do
+			local player = byId[id]
+			if player then
+				routePlayer(player, now, false)
 			end
 		end
 	end

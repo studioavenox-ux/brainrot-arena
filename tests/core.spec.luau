@@ -3,6 +3,7 @@
 local RoundMachine = require("../src/server/core/RoundMachine")
 local PickupLedger = require("../src/server/core/PickupLedger")
 local MovementGuard = require("../src/server/core/MovementGuard")
+local ArenaRoute = require("../src/server/core/ArenaRoute")
 local Config = require("../src/shared/Config")
 local passed, failed = 0, 0
 local function test(name, fn)
@@ -146,6 +147,102 @@ test("100 simulated 12-player rounds conserve scores and rewards", function()
 		end
 		now=m.phaseEndsAt; m:step(now); eq(m.phase,"Intermission")
 	end
+end)
+
+
+-- ---------------------------------------------------------------- arena access
+local function router() return ArenaRoute.new() end
+local arenaPoint = { x = 20, y = 25, z = 10 }
+local lobbyPoint = { x = 0, y = 25, z = 188 }
+
+test("route: desired destination follows phase and eligibility", function()
+	eq(ArenaRoute.desired("Playing", true), "arena")
+	-- A non-participant during a live round is a spectator: left alone, not moved.
+	eq(ArenaRoute.desired("Playing", false), nil)
+	eq(ArenaRoute.desired("Intermission", false), "lobby")
+	eq(ArenaRoute.desired("Results", true), "lobby")
+	eq(ArenaRoute.desired("Waiting", true), "lobby")
+	eq(ArenaRoute.desired("Unknown", true), nil)
+end)
+test("route: zone is a plane test, arena includes the far satellites", function()
+	eq(ArenaRoute.zone(arenaPoint), "arena")
+	eq(ArenaRoute.zone({ x = 73, y = 25, z = 0 }), "arena")
+	eq(ArenaRoute.zone({ x = -94, y = 21, z = 0 }), "arena")   -- west dock
+	eq(ArenaRoute.zone({ x = 33, y = 25, z = 13 }), "arena")    -- spawn pad at r=36
+	eq(ArenaRoute.zone(lobbyPoint), "lobby")
+	eq(ArenaRoute.zone({ x = 0, y = 21, z = 120 }), "transit")  -- causeway deck
+end)
+test("route: transit counts as arrived either way, so no teleport loop", function()
+	eq(ArenaRoute.atDestination("arena", { x = 0, y = 21, z = 120 }), true)
+	eq(ArenaRoute.atDestination("lobby", { x = 0, y = 21, z = 120 }), true)
+	eq(ArenaRoute.atDestination("arena", lobbyPoint), false)
+	eq(ArenaRoute.atDestination("lobby", arenaPoint), false)
+end)
+test("route: a correct player is left alone", function()
+	local r = router()
+	eq(r:evaluate(-1, "Playing", true, arenaPoint, true, 1), "arrived")
+	eq(r:evaluate(-1, "Playing", true, arenaPoint, true, 2), "arrived")
+	eq(r.fallbacks, 0)
+end)
+test("route: a stranded player is retried, spaced by the backoff", function()
+	local r = router()
+	eq(r:evaluate(-1, "Playing", true, lobbyPoint, true, 1), "retry")
+	r:attempt(-1, "arena", 1)
+	eq(r:evaluate(-1, "Playing", true, lobbyPoint, true, 1.1), "pending")
+	eq(r:evaluate(-1, "Playing", true, lobbyPoint, true, 1 + ArenaRoute.RETRY_DELAY + .01), "retry")
+end)
+test("route: repeated failures escalate exactly once per window", function()
+	local r = router()
+	local now = 1
+	for _ = 1, ArenaRoute.MAX_ATTEMPTS do
+		eq(r:evaluate(-1, "Playing", true, lobbyPoint, true, now), "retry")
+		r:attempt(-1, "arena", now)
+		now += ArenaRoute.RETRY_DELAY + .01
+	end
+	eq(r:evaluate(-1, "Playing", true, lobbyPoint, true, now), "give-up")
+	eq(r.fallbacks, 1)
+	eq(r:evaluate(-1, "Playing", true, lobbyPoint, true, now + 1), "retry")
+end)
+test("route: a dead or missing character is never teleported", function()
+	local r = router()
+	eq(r:evaluate(-1, "Playing", true, nil, false, 1), "pending")
+	eq(r:evaluate(-1, "Playing", true, lobbyPoint, false, 2), "pending")
+	eq(r:track(-1).attempts, 0)
+end)
+test("route: idle phases never move anybody", function()
+	local r = router()
+	-- Between rounds everybody belongs in the lobby; an arena straggler is moved back.
+	eq(ArenaRoute.desired("Waiting", false), "lobby")
+	eq(r:evaluate(-1, "Waiting", false, lobbyPoint, true, 1), "arrived")
+	eq(r:evaluate(-2, "Waiting", false, arenaPoint, true, 1), "retry")
+	-- A spectator standing in the lobby is already where a spectator belongs.
+	eq(r:evaluate(-1, "Playing", false, lobbyPoint, true, 2), "idle")
+	eq(r:evaluate(-1, "Playing", false, arenaPoint, true, 3), "idle")
+end)
+test("route: the sweep is bounded and covers everyone once per cycle", function()
+	local ids = {}
+	for i = 1, 12 do ids[i] = -i end
+	-- 12 players at a cell size of 8 means a full cycle is two steps; every player
+	-- must be examined exactly once inside that cycle and never more than the cap.
+	local cellSteps = math.ceil(12 / ArenaRoute.CELL_SIZE)
+	local seen = {}
+	for step = 0, cellSteps - 1 do
+		local slice = ArenaRoute.slice(ids, step)
+		assert(#slice <= ArenaRoute.CELL_SIZE)
+		assert(#slice > 0)
+		for _, id in slice do
+			seen[id] = (seen[id] or 0) + 1
+		end
+	end
+	for i = 1, 12 do eq(seen[-i], 1) end
+end)
+test("route: stats report arrivals and fallbacks", function()
+	local r = router()
+	r:evaluate(-1, "Playing", true, arenaPoint, true, 1)
+	eq(r:stats().arrivals, 1)
+	eq(r:stats().tracked, 1)
+	r:remove(-1)
+	eq(r:stats().tracked, 0)
 end)
 
 print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))

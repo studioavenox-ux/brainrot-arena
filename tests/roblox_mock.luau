@@ -108,17 +108,37 @@ function Mock.new(sources, schema, options)
 	local methods={}
 	local function children(obj) return table.clone(obj._children) end
 	local instanceMt={}
-	local function absoluteSize(obj)
+	-- Content box of a GUI object: parent content minus UIPadding, times UIScale.
+	local function contentBox(obj)
+		local size=absoluteSize(obj)
+		local padding=obj:FindFirstChild("UIPadding")
+		if padding then
+			size={X=size.X-(padding.PaddingLeft.Offset+padding.PaddingRight.Offset),
+				Y=size.Y-(padding.PaddingTop.Offset+padding.PaddingBottom.Offset)}
+		end
+		return size
+	end
+	local function scaleOf(obj)
+		local scale=obj:FindFirstChild("UIScale")
+		return if scale then scale.Scale else 1
+	end
+	function absoluteSize(obj)
 		if obj:IsA("ScreenGui") then return env.viewport end
 		local size=obj._props.Size or UDim2.fromScale(0,0)
-		local ps=if obj._props.Parent then absoluteSize(obj._props.Parent) else env.viewport
-		return {X=ps.X*size.X.Scale+size.X.Offset,Y=ps.Y*size.Y.Scale+size.Y.Offset}
+		local ps=if obj._props.Parent then contentBox(obj._props.Parent) else env.viewport
+		local scale=scaleOf(obj)
+		return {X=(ps.X*size.X.Scale+size.X.Offset)*scale,Y=(ps.Y*size.Y.Scale+size.Y.Offset)*scale}
 	end
 	local function absolutePosition(obj)
 		local parent=obj._props.Parent
 		if not parent or obj:IsA("ScreenGui") then return {X=0,Y=0} end
 		local pp=absolutePosition(parent)
-		local ps=absoluteSize(parent)
+		local ps=contentBox(parent)
+		local parentScale=scaleOf(parent)
+		local padding=parent:FindFirstChild("UIPadding")
+		if padding then
+			pp={X=pp.X+padding.PaddingLeft.Offset*parentScale,Y=pp.Y+padding.PaddingTop.Offset*parentScale}
+		end
 		local size=absoluteSize(obj)
 		local pos=obj._props.Position or UDim2.fromOffset(0,0)
 		local anchor=obj._props.AnchorPoint or Vector2.zero
@@ -127,6 +147,7 @@ function Mock.new(sources, schema, options)
 	instanceMt.__index=function(obj,key)
 		if key=="ClassName" then return obj._class end
 		if methods[key] then return methods[key] end
+		if obj._signals[key] then return obj._signals[key] end
 		if key=="Position" and obj:IsA("BasePart") then return (obj._props.CFrame or CF.new()).Position end
 		if key=="AbsoluteSize" then return absoluteSize(obj) end
 		if key=="AbsolutePosition" then return absolutePosition(obj) end
@@ -157,7 +178,16 @@ function Mock.new(sources, schema, options)
 	local function new(class)
 		assert(schema.Classes[class],"Unknown Roblox class: "..class)
 		local obj=setmetatable({_class=class,_props={Name=class},_children={},_signals={},_attributes={},_propertySignals={}},instanceMt)
-		for _,key in {"ChildAdded","ChildRemoved","AncestryChanged","Destroying","AttributeChanged","Activated","OnServerEvent","OnClientEvent","CharacterAdded","PlayerAdded","PlayerRemoving","Heartbeat","RenderStepped","InputBegan"} do obj._signals[key]=signal() end
+		for _,key in {"ChildAdded","ChildRemoved","AncestryChanged","Destroying","AttributeChanged","MouseEnter","MouseLeave","InputBegan","InputEnded","FocusLost"} do obj._signals[key]=signal() end
+		-- Signals that only exist on specific classes, mirroring the real API.
+		if class=="TextButton" then obj._signals.Activated=signal() end
+		for _,key in {"OnServerEvent","OnClientEvent"} do
+			if class=="RemoteEvent" then obj._signals[key]=signal() end
+		end
+		if class=="Player" then obj._signals.CharacterAdded=signal() end
+		if class=="Players" then obj._signals.PlayerAdded=signal(); obj._signals.PlayerRemoving=signal() end
+		if class=="RunService" then obj._signals.Heartbeat=signal(); obj._signals.RenderStepped=signal() end
+		if class=="UserInputService" then obj._signals.InputBegan=signal(); obj._signals.InputEnded=signal() end
 		if obj:IsA("BasePart") then obj._props.CFrame=CF.new(); obj._props.Color=Color.new(1,1,1) end
 		if obj:IsA("GuiObject") then obj._props.Visible=true; obj._props.Size=UDim2.fromOffset(0,0); obj._props.Position=UDim2.fromOffset(0,0) end
 		if class=="Humanoid" then obj._props.Health=100 end
@@ -199,6 +229,13 @@ function Mock.new(sources, schema, options)
 		return CF.new()
 	end
 	function methods:PivotTo(cf)
+		local humanoid=self:FindFirstChildOfClass("Humanoid")
+		if humanoid and (humanoid.Sit==true or humanoid.PlatformStand==true) then
+			-- Engine behaviour: a seated / platform-standing assembly refuses a pivot.
+			-- Models the failure mode the router has to recover from.
+			self._droppedPivots=(self._droppedPivots or 0)+1
+			return
+		end
 		local delta=cf*self:GetPivot():Inverse()
 		for _,part in self:GetDescendants() do if part:IsA("BasePart") then part.CFrame=delta*part.CFrame end end
 		self._pivot=cf
@@ -208,6 +245,7 @@ function Mock.new(sources, schema, options)
 	function methods:IsStudio() return options.studio~=false end
 	function methods:GetFocusedTextBox() return nil end
 	function methods:SetCoreGuiEnabled() end
+	function methods:GetFocusedTextBox() return nil end
 	function methods:Play() self._played=true end
 	function methods:FireAllClients(...)
 		table.insert(env.logs,{name=self.Name,args={...},player=nil})
@@ -219,7 +257,8 @@ function Mock.new(sources, schema, options)
 	end
 	function methods:FireServer(...) self.OnServerEvent:Fire(env.services.Players.LocalPlayer,...) end
 	function methods:Create(target,_,properties)
-		return {Play=function() for key,value in properties do target[key]=value end end}
+		return {Play=function() for key,value in properties do target[key]=value end end,
+			Cancel=function() end,Pause=function() end}
 	end
 	function methods:AddItem(object,delay) table.insert(env.delayed,{at=env.now+delay,fn=function() object:Destroy() end}) end
 	env.new=new
@@ -248,8 +287,14 @@ function Mock.new(sources, schema, options)
 		local node=new(class); node.Name=name; node.Parent=parent; node._sourcePath=path; nodes[path]=node
 	end
 	env.nodes=nodes
+	local function flatten(...)
+		local parts={}
+		for i=1,select("#",...) do parts[i]=tostring((select(i,...))) end
+		return table.concat(parts," ")
+	end
 	local globals={
-		print=function(...) end, warn=function(...) end,
+		print=function(...) table.insert(env.logs,{name="Log",text=flatten(...)}) end,
+		warn=function(...) table.insert(env.logs,{name="Warn",text=flatten(...)}) end,
 		game=env.game,workspace=env.services.Workspace,Instance={new=new},Enum=enum,
 		Vector3=V,Vector2=Vector2,CFrame=CF,Color3=Color,UDim=UDim,UDim2=UDim2,
 		TweenInfo={new=function(...) return {...} end},
@@ -314,12 +359,27 @@ function Mock.new(sources, schema, options)
 	function env:request(player,...)
 		self.services.ReplicatedStorage.BrainrotRemotes.Request.OnServerEvent:Fire(player,...)
 	end
+	function env:logsMatching(needle)
+		local out={}
+		for _,entry in self.logs do
+			if entry.name=="Log" and string.find(entry.text,needle,1,true) then table.insert(out,entry.text) end
+		end
+		return out
+	end
 	function env:lastState()
 		for i=#self.logs,1,-1 do if self.logs[i].name=="State" then return self.logs[i].args[1] end end
 		return nil
 	end
 	function env:find(name)
 		return self.game:FindFirstChild(name,true)
+	end
+	-- Simulate a key press the way UserInputService delivers it.
+	function env:press(key)
+		env.services.UserInputService.InputBegan:Fire({
+			KeyCode=enum.KeyCode[key],
+			UserInputType=enum.UserInputType.Keyboard,
+			UserInputState=enum.UserInputState.Begin,
+		},false)
 	end
 	function env:setViewport(width,height)
 		self.viewport={X=width,Y=height}
