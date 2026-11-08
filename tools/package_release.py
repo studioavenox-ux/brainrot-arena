@@ -10,10 +10,13 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "artifacts/BrainrotArena-Project.zip"
 SOURCE_FILES = (
-    "src/client/Effects.luau", "src/client/Hud.luau", "src/client/Main.client.luau",
-    "src/server/Main.server.luau", "src/server/WorldData.luau", "src/server/WorldService.luau",
+    "src/client/Effects.luau", "src/client/Hud.luau", "src/client/Iconography.luau",
+    "src/client/Main.client.luau",
+    "src/server/ArtService.luau", "src/server/Main.server.luau", "src/server/WorldData.luau",
+    "src/server/WorldService.luau",
     "src/server/core/MovementGuard.luau", "src/server/core/PickupLedger.luau",
-    "src/server/core/RoundMachine.luau", "src/shared/Config.luau",
+    "src/server/core/RoundMachine.luau",
+    "src/shared/ArtDirection.luau", "src/shared/Config.luau",
 )
 PLACE_FILES = ("places/BrainrotArena.rbxlx", "places/BrainrotArena-QuickTest.rbxlx")
 
@@ -33,8 +36,16 @@ def main():
     required = [
         *SOURCE_FILES, *PLACE_FILES, "README.md", "default.project.json", ".gitignore",
         "docs/BUILD_REPORT.md", "docs/TESTING.md", "docs/ARCHITECTURE.md", "docs/DEPENDENCIES.md",
+        "docs/VISUAL_CHANGES.md",
+        "docs/previews/arena.jpg", "docs/previews/lobby.jpg", "docs/previews/palms.jpg",
+        "docs/previews/play.jpg", "docs/previews/overview.jpg",
+        "docs/previews/arena-legacy.jpg", "docs/previews/lobby-legacy.jpg",
+        "docs/previews/palms-legacy.jpg", "docs/previews/play-legacy.jpg",
+        "docs/previews/overview-legacy.jpg",
         "assets/README.md", "assets/asset-manifest.json", "artifacts/verification.json",
-        "tools/build_place.py", "tools/world.py", "tools/verify_place.py", "tests/fixtures/roblox-api.json",
+        "tools/build_place.py", "tools/world.py", "tools/theme.py", "tools/verify_place.py",
+        "tools/artcheck.py", "tools/preview.py", "tools/check.py", "tools/package_release.py",
+        "tests/fixtures/roblox-api.json", "tests/fixtures/world-baseline.json",
     ]
     missing = [name for name in required if not (ROOT / name).is_file()]
     if missing:
@@ -63,7 +74,8 @@ def main():
 
     files = [ROOT / "README.md", ROOT / "default.project.json", ROOT / ".gitignore", ROOT / "artifacts/verification.json"]
     for directory in ("places", "src", "assets", "tests", "tools", "docs", ".github"):
-        files.extend(p for p in (ROOT / directory).rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
+        files.extend(p for p in (ROOT / directory).rglob("*")
+                     if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
     files = sorted(set(files))
     entries = [
         {"path": p.relative_to(ROOT).as_posix(), "bytes": p.stat().st_size, "sha256": sha256(p.read_bytes())}
@@ -72,7 +84,7 @@ def main():
     manifest = {
         "format_version": 1,
         "project": "BRAINROT ARENA",
-        "scope": "Complete current prototype; production scripts and places preserved byte-for-byte",
+        "scope": "Complete current prototype with the visual redesign; production scripts and places preserved byte-for-byte",
         "files": entries,
         "file_count_excluding_manifest": len(entries),
         "production_script_count": len(sources),
@@ -81,6 +93,15 @@ def main():
         "prior_verification_timestamp_utc": verification["verified_at_utc"],
         "prior_automated_tests_passed": verification["total_passed"],
         "studio_engine_playtest_performed": False,
+        "visual_redesign": {
+            "report": "docs/VISUAL_CHANGES.md",
+            "preview_renders": "docs/previews/ (software render, not engine captures)",
+            "world_parts": 588,
+            "walkable_geometry_unchanged": True,
+            "gameplay_scripts_changed": ["Main.server.luau (ArtService call + halo tint only)",
+                                         "WorldService.luau (materials, shadows, lights, sign fonts)"],
+            "gameplay_rules_changed": False,
+        },
         "missing_required_project_files": [],
         "missing_required_custom_assets": [],
         "required_installed_platform": "Roblox Studio for Windows, Roblox account and normal platform resources",

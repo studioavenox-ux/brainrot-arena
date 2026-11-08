@@ -4,15 +4,19 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local Iconography = require(script.Parent.Iconography)
 local Hud = {}
 Hud.__index = Hud
 
+-- HUD palette: warm charcoal-teal panels over sand, game-rose / gold / prism accents.
+-- Contrast checked in tools/artcheck.py; saturated hues are reserved for rarity,
+-- reward and result information so the interface never competes with the world.
 local C = {
-	Ink = Color3.fromRGB(18, 22, 46), Panel = Color3.fromRGB(27, 32, 64),
-	Line = Color3.fromRGB(73, 82, 122), Muted = Color3.fromRGB(167, 181, 210),
-	White = Color3.fromRGB(244, 249, 255), Pink = Color3.fromRGB(255, 102, 192),
-	Cyan = Color3.fromRGB(83, 238, 255), Gold = Color3.fromRGB(255, 216, 83),
-	Purple = Color3.fromRGB(172, 124, 255),
+	Ink = Color3.fromRGB(24, 32, 36), Panel = Color3.fromRGB(34, 44, 50),
+	Line = Color3.fromRGB(92, 110, 116), Muted = Color3.fromRGB(176, 190, 190),
+	White = Color3.fromRGB(243, 247, 245), Pink = Color3.fromRGB(255, 108, 186),
+	Cyan = Color3.fromRGB(126, 226, 250), Gold = Color3.fromRGB(255, 205, 96),
+	Purple = Color3.fromRGB(98, 176, 168),
 }
 local function make(className, properties, parent)
 	local instance = Instance.new(className)
@@ -107,7 +111,7 @@ function Hud.new(config, request)
 	centerLabel(self.timerPanel, "MapName", "S Y N A P S E   C I R C U I T", UDim2.new(1, -10, 0, 14), UDim2.fromOffset(5, 80), C.Muted, Enum.Font.GothamMedium, 9)
 
 	self.eventPanel = panel(self.root, "Chaos", UDim2.fromOffset(350, 46), UDim2.new(.5, 0, 0, 120), Vector2.new(.5, 0))
-	self.eventPanel.BackgroundColor3 = Color3.fromRGB(55, 37, 90)
+	self.eventPanel.BackgroundColor3 = Color3.fromRGB(30, 52, 56)
 	self.eventLabel = centerLabel(self.eventPanel, "Event", "GRAB THE GLOW. TOP THE BOARD.", UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), C.Muted, nil, 12)
 
 	self.scorePanel = panel(self.root, "YourCells", UDim2.fromOffset(252, 78), UDim2.new(.5, 0, 1, -22), Vector2.new(.5, 1))
@@ -116,8 +120,11 @@ function Hud.new(config, request)
 	self.scoreLabel = text(self.scorePanel, "Score", "0", UDim2.fromOffset(150, 42), UDim2.fromOffset(88, 4), C.White, Enum.Font.GothamBlack, 36)
 	text(self.scorePanel, "Caption", "YOUR BRAIN CELLS", UDim2.fromOffset(155, 22), UDim2.fromOffset(89, 46), C.Pink, nil, 11)
 	self.legend = make("Frame", { Name = "RarityKey", Size = UDim2.fromOffset(360, 24), Position = UDim2.new(.5, 0, 1, -112), AnchorPoint = Vector2.new(.5, 1), BackgroundTransparency = 1 }, self.root)
-	for index, entry in { {"PINK +1", C.Pink}, {"GOLD +5", C.Gold}, {"PRISM +10", C.Cyan} } do
-		centerLabel(self.legend, "Rarity" .. index, entry[1], UDim2.fromOffset(120, 24), UDim2.fromOffset((index-1)*120, 0), entry[2], nil, 12)
+	for index, entry in { {"PINK +1", C.Pink, 1}, {"GOLD +5", C.Gold, 5}, {"PRISM +10", C.Cyan, 10} } do
+		local slot = make("Frame", { Name = "Rarity" .. index, Size = UDim2.fromOffset(120, 24), Position = UDim2.fromOffset((index-1)*120, 0), BackgroundTransparency = 1 }, self.legend)
+		local label = centerLabel(slot, "Label", entry[1], UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), entry[2], nil, 12)
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		Iconography.glyph(slot, entry[3], entry[2]).Position = UDim2.fromOffset(2, 3)
 	end
 
 	self.coinsPanel = panel(self.root, "Coins", UDim2.fromOffset(238, 78), UDim2.new(1, -20, 0, 16), Vector2.new(1, 0))
@@ -169,7 +176,7 @@ function Hud.new(config, request)
 	self.modalBody.TextYAlignment = Enum.TextYAlignment.Top
 	self.modalBody.TextScaled = true
 	make("UITextSizeConstraint", { MinTextSize = 11, MaxTextSize = 16 }, self.modalBody)
-	self.modalAction = button(self.modalPanel, "Action", "LET'S GO", UDim2.new(1, -48, 0, 46), UDim2.new(0, 24, 1, -102), Color3.fromRGB(104, 62, 185))
+	self.modalAction = button(self.modalPanel, "Action", "LET'S GO", UDim2.new(1, -48, 0, 46), UDim2.new(0, 24, 1, -102), Color3.fromRGB(52, 96, 92))
 	self.motionButton = button(self.modalPanel, "Motion", "REDUCED MOTION: OFF", UDim2.new(.5, -30, 0, 44), UDim2.new(0, 24, 1, -52))
 	self.motionButton.TextSize = 10
 	self.modalSoundButton = button(self.modalPanel, "ModalSound", "SFX ON", UDim2.new(.5, -30, 0, 44), UDim2.new(.5, 6, 1, -52))
@@ -332,7 +339,7 @@ function Hud:update(state)
 			self.rows[row.id] = view
 		end
 		view.frame.LayoutOrder = index
-		view.frame.BackgroundColor3 = if row.id == self.userId then Color3.fromRGB(70, 48, 113) else C.Panel
+		view.frame.BackgroundColor3 = if row.id == self.userId then Color3.fromRGB(46, 74, 74) else C.Panel
 		view.rank.Text = string.format("%02d", index)
 		view.rank.TextColor3 = if index == 1 then C.Gold else C.Muted
 		view.name.Text = row.name .. (if row.id == self.userId then " (you)" else "")
@@ -386,7 +393,7 @@ function Hud:tick()
 	if state.eventActive then
 		self.eventLabel.Text = "LOW GRAVITY  /  " .. timeString(state.eventEndsAt-now)
 		self.eventLabel.TextColor3 = C.Cyan
-		self.eventPanel.BackgroundColor3 = Color3.fromRGB(64, 40, 111)
+		self.eventPanel.BackgroundColor3 = Color3.fromRGB(32, 62, 66)
 	else
 		self.eventLabel.Text = if state.phase == "Playing" then "GRAB THE GLOW. TOP THE BOARD." else "NEXT ROUND IS AUTOMATIC. YOU'RE IN."
 		self.eventLabel.TextColor3 = C.Muted

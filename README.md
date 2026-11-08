@@ -50,11 +50,11 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for the complete included/missi
 
 ## Implemented
 
-- **One original lobby + Synapse Circuit arena:** 358 anchored map parts, a brain beacon, signal palms, four bridged satellite platforms, and a readable yellow/cyan circuit.
+- **One original lobby + Synapse Circuit arena:** 588 anchored map parts in a natural tropical art direction — pale sand and teal stone courts, tropical palms, a warm-lit gate and a single brain beacon — plus four bridged satellite platforms. [Visual change report →](docs/VISUAL_CHANGES.md)
 - **Automatic multiplayer lifecycle:** waiting → 12s intermission → **180s round** → 9s results → repeat. Solo testing also works. Late joiners enter the active round at zero.
 - **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**; five-second respawns. Atomic claiming prevents double rewards.
 - **Low gravity:** activates 60 seconds into each standard round for 25 seconds, with UI and lighting feedback, then restores normal gravity.
-- **Responsive HUD:** synchronized clock, custom leaderboard, local score, coin balance, rarity key, help, winner/tie/no-score announcements, touch-friendly buttons, reduced motion, and SFX controls.
+- **Responsive HUD:** synchronized clock, custom leaderboard, local score, coin balance, rarity key with shapes as well as colours, help, winner/tie/no-score announcements, touch-friendly buttons, reduced motion, and SFX controls.
 - **Recovery:** death/reset rejoins the current arena; falling rescues the player without losing points; round cleanup removes cells and resets gravity.
 - **Session rewards:** 10 coins for participation + 2 per point + 30 for each tied winner. Earn 100 coins to unlock/equip the original Pulse Halo through **Rewards**. No Robux, no monetization.
 - **Server boundaries:** no score-submission remote; server-only positions, values, eligibility, payout, prices, and ownership. Requests use two small rate-limited verbs.
@@ -72,11 +72,13 @@ places/                     Ready-to-open standard and QuickTest places
 src/server/Main.server.luau  Roblox server adapter / authoritative gameplay loop
 src/server/core/             Strict, engine-independent round/pickup/movement rules
 src/server/WorldService.luau  Reuses baked map; builds the same map for Rojo users
+src/server/ArtService.luau    Applies the shared lighting rig (idempotent)
+src/shared/ArtDirection.luau  Generated palette/lighting mirror of tools/theme.py
 src/server/WorldData.luau     Generated runtime geometry and spawn data
 src/shared/Config.luau       Timings, physics, rarity, coin and cosmetic settings
-src/client/                 HUD, local cell animation, pickup effects and preferences
+src/client/                 HUD, rarity silhouettes, local cell animation, effects and preferences
 tests/                      Core tests + production-script contract tests + API fixture
-tools/                      Deterministic place build, verification and packaging
+tools/                      Deterministic place build, verification, art checks, previews and packaging
 docs/                       Acceptance checklist, architecture and actual build report
 default.project.json        Optional Rojo source workflow
 ```
@@ -93,4 +95,4 @@ python3 tools/package_release.py
 
 On Linux/macOS with `make` and `g++`, `python3 tools/bootstrap_luau.py` builds pinned official **Luau 0.744** locally. Existing tools on `PATH` are also supported. [Architecture / editing notes →](docs/ARCHITECTURE.md)
 
-The test suite executes 72 core Luau tests (including 100 simulated 12-player logical rounds), 29 production-adapter tests against explicit Roblox service doubles, and 28 XML/API/geometry tests. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.
+The test suite executes 72 core Luau tests (including 100 simulated 12-player logical rounds), 32 production-adapter tests against explicit Roblox service doubles, 30 XML/API/geometry tests and 24 art-direction tests. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.

@@ -29,6 +29,15 @@ QuickTest is gated by `RunService:IsStudio()`. Even if that place is accidentall
 - [ ] In Studio's **Device Emulator**, check a small phone in portrait and landscape: timer, ranks toggle, help, rewards and local score remain readable; joystick/jump remain usable. HUD controls have touch alternatives to keyboard shortcuts.
 - [ ] Check Studio **Output** for red errors. Confirm the bundled pickup chime plays, the SFX toggle mutes it, and reduced motion stops cell bobbing/spinning/sparks. Sound availability can vary with Roblox's installed bundle.
 
+### Visual acceptance (added with the art-direction redesign)
+
+- [ ] At the spawn pad, look toward the gate: the **BRAINROT / ARENA** wordmark, the hanging **SYNAPSE CIRCUIT** banner and both side boards are legible without walking closer.
+- [ ] Walk lobby → gate → arena: sand and stone read as one continuous natural palette; no neon cyan floor, lime foliage or purple platform remains.
+- [ ] Stand at arena centre height and identify **pink, gold and prism** cells by both colour *and* silhouette (halo / crown / crossed arms), including at the lowest graphics quality.
+- [ ] Low gravity triggers: beacon ring, gate rails and the HUD pulse prismatic; the environment stays natural (no full-screen colour wash).
+- [ ] Confirm `Lighting` contains `TropicalDaySky`, `CoastalHaze`, `GameplayBloom`, `NeutralGrade` and exactly **7** PointLights, all with `Shadows` off.
+- [ ] Device Emulator: the scene still reads clearly on a small phone and frame rate stays acceptable on Studio's "lowest" graphics quality.
+
 Optional edge checks: start another client mid-round; disconnect the current leader; let all players leave during low gravity; rejoin and confirm the server returns to intermission with normal gravity. A zero-score round must not invent a winner. Shared first place pays the winner bonus to each tied player.
 
 ## Testing session rewards
@@ -40,11 +49,12 @@ Each round pays `10 + 2 × score`, plus `30` to every winner with a positive sco
 - Official Luau compilation of all production scripts and test files.
 - Strict analysis of the three pure server authority modules and shared configuration.
 - **72 core tests**, including 100 logical 12-player rounds, tie payouts, generation/replay protection, invalid inputs, empty-server recovery and movement sanity checks.
-- **29 adapter tests** executing the actual server/client/HUD/effect scripts against **mocked** Roblox services, with API/enum names checked against a pinned Roblox API fixture.
-- **28 export tests** checking embedded source/hierarchy, supported property names, spawn/floor geometry, part budget, bridge continuity and both place variants.
+- **32 adapter tests** executing the actual server/client/HUD/effect scripts against **mocked** Roblox services, with API/enum names checked against a pinned Roblox API fixture — including the new lighting rig, authored materials/shadows and the cell-visual part budget.
+- **30 export tests** checking embedded source/hierarchy, supported property names, spawn/floor geometry, materials, shadows, point lights, sign fonts, part budget, bridge continuity and both place variants.
+- **24 art-direction tests** covering palette ceilings, hierarchy order, purple/cyan restriction, lighting values, post-processing limits, cell-vs-floor contrast, signage contrast and the frozen walkable geometry. Plus `docs/previews/` review renders produced by `tools/preview.py` (software render, not engine output).
 - Deterministic rebuild and whitespace checks.
 
-These tests do **not** prove Studio import, physics/collision behavior, real network replication, rendered text fit, audio availability or real-device touch behavior. See the current [build report](BUILD_REPORT.md) for exact execution status.
+These tests do **not** prove Studio import, physics/collision behaviour, real network replication, rendered text fit, rendered lighting/materials, audio availability or real-device touch behaviour. See the current [build report](BUILD_REPORT.md) for exact execution status.
 
 ## If something fails
 

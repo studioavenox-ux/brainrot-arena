@@ -7,6 +7,7 @@ local Lighting = game:GetService("Lighting")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
+local Iconography = require(script.Parent.Iconography)
 local Effects = {}
 Effects.__index = Effects
 
@@ -25,8 +26,10 @@ function Effects.new(hud, config)
 	self.folder = Instance.new("Folder")
 	self.folder.Name = "BrainrotClientFX"
 	self.folder.Parent = Workspace
+	-- Owned by the client so the low-gravity pulse is purely local feedback.
+	-- Saturation stays near neutral: the environment must never look washed out.
 	self.tint = Instance.new("ColorCorrectionEffect")
-	self.tint.Name = "BrainrotChaosTint"
+	self.tint.Name = "BrainrotEventTint"
 	self.tint.Parent = Lighting
 	local pickups = Workspace:WaitForChild("BrainrotPickups")
 	for _, child in pickups:GetChildren() do self:add(child) end
@@ -45,12 +48,22 @@ function Effects:refresh(part)
 	for _, kind in self.config.Kinds do
 		if kind.Value == view.value then base = Color3.fromRGB(kind.Color[1], kind.Color[2], kind.Color[3]); break end
 	end
+	-- Each cell keeps its rarity colour; brighter halves read as a lit surface
+	-- rather than introducing a second hue.
 	for index, lobe in view.lobes do
-		lobe.Color = if view.value == 10 and index%2 == 0 then Color3.fromRGB(193, 122, 255) else base:Lerp(Color3.new(1, 1, 1), if index%3 == 0 then .13 else 0)
+		lobe.Color = if view.value == 10 and index%2 == 0
+			then base:Lerp(Color3.fromRGB(206, 244, 255), .38)
+			else base:Lerp(Color3.new(1, 1, 1), if index%3 == 0 then .13 else 0)
 		lobe.Material = if view.value == 1 then Enum.Material.SmoothPlastic else Enum.Material.Neon
 		lobe.Transparency = if view.active and view.near then 0 else 1
 	end
 	view.seam.Transparency = if view.active and view.near then 0 else 1
+	-- A neutral (self-lit) halo: one per cell regardless of rarity. It guarantees
+	-- separation from pale sand and stone floors without a neon outline.
+	view.halo.Transparency = if view.active and view.near then .3 else 1
+	view.halo.Color = Color3.new(1, 1, 1)
+	-- Silhouette marks make the three rarity classes distinguishable without colour.
+	Iconography.apply(view.marks, view.value, base, view.active and view.near)
 end
 
 function Effects:add(part)
@@ -71,10 +84,17 @@ function Effects:add(part)
 			table.insert(lobes, lobe)
 		end
 	end
-	local seam = fxPart(model, "Split", Vector3.new(.09, .95, 1.35), Color3.fromRGB(144, 61, 178))
+	local seam = fxPart(model, "Split", Vector3.new(.09, .95, 1.35), Color3.fromRGB(120, 66, 132))
 	seam.CFrame = CFrame.new(part.Position + Vector3.new(0, .08, 0))
+	local halo = fxPart(model, "Halo", Vector3.new(1.62, .09, 1.62), Color3.new(1, 1, 1))
+	halo.Shape = Enum.PartType.Cylinder
+	halo.Material = Enum.Material.SmoothPlastic
+	halo.CFrame = CFrame.new(part.Position) * CFrame.Angles(0, 0, math.pi / 2)
+	halo.Transparency = 1
+	local marks = Iconography.marks(model, part.Color)
 	model.Parent = self.folder
-	local view = { model = model, lobes = lobes, seam = seam, active = true, near = true, value = 1, phase = (part:GetAttribute("SlotId") or 0)*.77 }
+	local view = { model = model, lobes = lobes, seam = seam, halo = halo, marks = marks,
+		active = true, near = true, value = 1, phase = (part:GetAttribute("SlotId") or 0)*.77 }
 	self.visuals[part] = view
 	view.connection = part.AttributeChanged:Connect(function() self:refresh(part) end)
 	self:refresh(part)
@@ -110,8 +130,9 @@ function Effects:update(state)
 	if state.eventActive == self.eventActive then return end
 	self.eventActive = state.eventActive
 	local properties = {
-		TintColor = if state.eventActive then Color3.fromRGB(238, 228, 255) else Color3.new(1, 1, 1),
-		Saturation = if state.eventActive then .08 else 0,
+		TintColor = if state.eventActive then Color3.fromRGB(236, 246, 255) else Color3.new(1, 1, 1),
+		Saturation = if state.eventActive then .05 else 0,
+		Brightness = if state.eventActive then .02 else 0,
 	}
 	if self.hud.reducedMotion then
 		for key, value in properties do self.tint[key] = value end

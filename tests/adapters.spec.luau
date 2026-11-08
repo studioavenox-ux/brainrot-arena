@@ -44,7 +44,10 @@ return function(Mock, sources, schema)
 	test("server builds original world and safe lobby spawn",function()
 		local e,a=fixture()
 		local w=e.services.Workspace.BrainrotWorld
-		eq(#w:GetChildren(),358)
+		-- 588 runtime geometry parts after the visual redesign (was 358). The exported
+		-- place adds 13 bake-only sign boards on top; the budget is asserted in
+		-- tools/verify_place.py and tools/artcheck.py.
+		eq(#w:GetChildren(),588)
 		eq(w.LobbySpawn:IsA("SpawnLocation"),true)
 		eq(a.RespawnLocation,w.LobbySpawn)
 		assert(a.Character.HumanoidRootPart.Position.Z>140)
@@ -55,7 +58,7 @@ return function(Mock, sources, schema)
 		local initial=World.new().root
 		e:addPlayer(-1,"Solo"); e:startServer()
 		eq(e.services.Workspace.BrainrotWorld,initial)
-		eq(#initial:GetChildren(),358)
+		eq(#initial:GetChildren(),588)
 	end)
 	test("server creates only three whitelisted remotes",function()
 		local e=fixture(); local r=e.services.ReplicatedStorage.BrainrotRemotes
@@ -212,6 +215,45 @@ return function(Mock, sources, schema)
 		e:find("Rewards").Activated:Fire(); e:find("Action").Activated:Fire()
 		eq(a.leaderstats.Coins.Value,0); eq(a.Character:FindFirstChild("PulseHalo"),nil)
 		eq(e:find("Message").Text,"Not enough session coins")
+	end)
+	test("art direction rig applies daylight, haze and cheap grade",function()
+		local e=fixture()
+		local lighting=e.services.Lighting
+		assert(lighting.Ambient and lighting.OutdoorAmbient and lighting.FogColor)
+		for _,name in {"TropicalDaySky","CoastalHaze","GameplayBloom","NeutralGrade"} do
+			assert(lighting:FindFirstChild(name),"missing "..name)
+		end
+		assert(lighting.GameplayBloom.Intensity<=.3)
+		assert(lighting.NeutralGrade.Saturation<=.12)
+		eq(lighting.GlobalShadows,true)
+	end)
+	test("world parts carry authored materials and shadow flags",function()
+		local e=fixture(); local w=e.services.Workspace.BrainrotWorld
+		eq(w.Arena_Turf.Material.Name,"Sand")
+		eq(w.Lobby_Turf.Material.Name,"Grass")
+		eq(w.Rail_1.Material.Name,"Limestone")
+		eq(w.Bridge_0.Material.Name,"WoodPlanks")
+		eq(w.Arena_Rock.CastShadow,true)
+		eq(w.ChaosAccent_BeaconRing.CastShadow,false)
+		eq(w.Arena_Rock.CanCollide,true)
+	end)
+	test("cell visuals stay bounded and carry rarity silhouettes",function()
+		local e=fixture(nil,true); play(e)
+		local fx=e.services.Workspace.BrainrotClientFX
+		local models=0
+		for _,model in fx:GetChildren() do
+			if model:IsA("Model") then
+				models+=1
+				local parts=0; local halos=0
+				for _,child in model:GetChildren() do
+					if child:IsA("BasePart") then parts+=1 end
+					if child.Name=="Halo" then halos+=1 end
+				end
+				assert(parts<=12,"cell visual exceeded part budget: "..parts)
+				eq(halos,1)
+			end
+		end
+		eq(models,48)
 	end)
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")

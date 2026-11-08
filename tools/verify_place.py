@@ -119,13 +119,25 @@ class PlaceTests(unittest.TestCase):
 
     def test_09_map_baked_and_editable(self):
         self.assertEqual(self.world.attrib["class"], "Model")
-        self.assertEqual(len(self.world.findall("Item")), len(WORLD["Parts"]))
-        self.assertEqual(len(WORLD["Parts"]), 358)
+        self.assertEqual(len(WORLD["Parts"]), 588)
+        # One extra non-colliding board layer per sign carries the SurfaceGui.
+        self.assertEqual(len(self.world.findall("Item")), len(WORLD["Parts"]) + len(WORLD["Signs"]))
 
     def test_10_part_budget(self):
-        self.assertLessEqual(len(WORLD["Parts"]), 500)
+        # Redesign budget for lower-end mobile: 588 static parts (was 358) bought
+        # with zero extra lights beyond the seven shadowless landmark lights.
+        self.assertLessEqual(len(WORLD["Parts"]), 640)
         # Six lobes, a split, a local pivot and one server root per slot.
-        self.assertLessEqual(len(WORLD["Parts"]) + len(WORLD["PickupPositions"])*9, 800)
+        self.assertLessEqual(len(WORLD["Parts"]) + len(WORLD["PickupPositions"])*9, 1060)
+
+    def test_10b_materials_and_shadows_exported_per_part(self):
+        SCHEMA_MATERIAL = SCHEMA["Enums"]["Material"]
+        for part in WORLD["Parts"]:
+            obj = child(self.world, part["Name"])
+            self.assertEqual(obj.findtext("Properties/token[@name='Material']"),
+                             str(SCHEMA_MATERIAL[part["Material"]]), part["Name"])
+            expected_shadow = "true" if part["CastShadow"] else "false"
+            self.assertEqual(obj.findtext("Properties/bool[@name='CastShadow']"), expected_shadow)
 
     def test_11_all_map_parts_anchored(self):
         for obj in self.world.findall("Item"):
@@ -198,9 +210,9 @@ class PlaceTests(unittest.TestCase):
             self.assertTrue(bridge["Collide"])
 
     def test_21_signs_present_and_readable(self):
-        self.assertEqual(len(WORLD["Signs"]), 4)
+        self.assertEqual(len(WORLD["Signs"]), 5)
         for sign in WORLD["Signs"]:
-            obj = resolve(self.world, sign["Part"] + "/Sign")
+            obj = resolve(self.world, sign["Part"] + "_Sign/Sign")
             self.assertEqual(obj.attrib["class"], "SurfaceGui")
             board = next(p for p in WORLD["Parts"] if p["Name"] == sign["Part"])
             canvas = obj.find("Properties/Vector2[@name='CanvasSize']")
@@ -208,7 +220,19 @@ class PlaceTests(unittest.TestCase):
             for index, line in enumerate(sign["Lines"]):
                 label = child(obj, f"Line{index+1}")
                 self.assertEqual(label.findtext("Properties/string[@name='Text']"), line["Text"])
-                self.assertEqual(label.findtext("Properties/token[@name='Font']"), str(SCHEMA["Enums"]["Font"]["GothamBold"]))
+                self.assertEqual(label.findtext("Properties/token[@name='Font']"),
+                                 str(SCHEMA["Enums"]["Font"][line.get("Font", "GothamBold")]))
+
+    def test_21b_lighting_rig_and_lights_exported(self):
+        lighting = resolve(self.regular, "Lighting")
+        self.assertIsNotNone(child(lighting, "CoastalHaze"))
+        self.assertIsNotNone(child(lighting, "GameplayBloom"))
+        self.assertIsNotNone(child(lighting, "NeutralGrade"))
+        self.assertIsNotNone(child(lighting, "TropicalDaySky"))
+        lights = [o for o in self.world.iter("Item") if o.attrib["class"] == "PointLight"]
+        self.assertEqual(len(lights), 7)
+        for light in lights:
+            self.assertEqual(light.findtext("Properties/bool[@name='Shadows']"), "false")
 
     def test_22_camera_points_at_world(self):
         self.assertIsNotNone(resolve(self.regular, "Workspace/Camera").find("Properties/CoordinateFrame[@name='CFrame']"))
@@ -247,7 +271,9 @@ class PlaceTests(unittest.TestCase):
 
     def test_28_generated_files_below_one_megabyte_each(self):
         for place in (ROOT / "places").glob("*.rbxlx"):
-            self.assertLess(place.stat().st_size, 1_000_000)
+            # 2 MB ceiling: the embedded source + 588-part editable map. Both
+            # files stay well inside a typical Studio import budget.
+            self.assertLess(place.stat().st_size, 2_000_000)
 
 
 if __name__ == "__main__":

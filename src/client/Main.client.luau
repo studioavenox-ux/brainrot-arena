@@ -5,11 +5,14 @@ local StarterGui = game:GetService("StarterGui")
 local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
 local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
+local Iconography = require(script.Parent.Iconography)
 local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes")
 local stateRemote = remotes:WaitForChild("State") :: RemoteEvent
 local pickupRemote = remotes:WaitForChild("Pickup") :: RemoteEvent
 local requestRemote = remotes:WaitForChild("Request") :: RemoteEvent
 
+-- Loaded before the HUD so rarity glyphs exist on the first frame.
+local _iconography = Iconography
 local hud = Hud.new(Config, function(action: string)
 	requestRemote:FireServer(action)
 end)
