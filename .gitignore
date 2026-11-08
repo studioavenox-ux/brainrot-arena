@@ -14,6 +14,9 @@ node_modules/
 *.rbxlx.autosave
 *.rbxs
 
+# Art-review renders (docs/previews) are intentionally tracked: they are the visual
+# deliverable of the art-direction pass. They are regenerated with tools/preview.py.
+
 # Build output is reproducible; the two ready-to-open XML places are intentionally tracked.
 artifacts/*.log
 

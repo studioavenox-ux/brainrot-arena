@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from world import make_world  # noqa: E402
 ARTIFACTS = ROOT / "artifacts"
 
 
@@ -58,6 +60,7 @@ def main():
     core_output = run("core", "Core rules and 100 simulated 12-player rounds", [binaries["luau"], "tests/core.spec.luau"])
     adapter_output = run("adapters", "Production adapters against mocked Roblox services", [py, "tools/test_adapters.py", "--luau", binaries["luau"]])
     xml_output = run("place", "Place structure, loadable API properties and geometry", [py, "tools/verify_place.py"])
+    art_output = run("art", "Art direction: palette, hierarchy, legibility, lighting rig", [py, "tools/artcheck.py"])
     hashes_before = {str(p): digest(p) for p in generated}
     run("deterministic", "Deterministic export rebuild", [py, "tools/build_place.py"])
     assert all(digest(Path(p)) == value for p, value in hashes_before.items()), "Non-deterministic generated output"
@@ -66,7 +69,9 @@ def main():
     core_count = int(re.search(r"CORE RESULTS: (\d+) passed, 0 failed", core_output)[1])
     adapter_count = int(re.search(r"ADAPTER RESULTS: (\d+) passed, 0 failed", adapter_output)[1])
     place_count = int(re.search(r"Ran (\d+) tests", xml_output)[1])
-    counts = {"core_luau": core_count, "mock_adapter_luau": adapter_count, "place_python": place_count}
+    art_count = int(re.search(r"Ran (\d+) tests", art_output)[1])
+    counts = {"core_luau": core_count, "mock_adapter_luau": adapter_count,
+              "place_python": place_count, "art_direction_python": art_count}
     source_hash = hashlib.sha256()
     for path in sorted(ROOT.glob("src/**/*.luau")):
         source_hash.update(path.relative_to(ROOT).as_posix().encode())
@@ -77,7 +82,8 @@ def main():
         "verified_at_utc": verified_at, "status": "automated_checks_passed_studio_unverified",
         "test_counts": counts, "total_passed": sum(counts.values()), "failed": 0,
         "luau_files_compiled": len(files), "source_sha256": source_hash.hexdigest(),
-        "static_world_parts": 358, "pickup_slots": 48, "places": places, "stages": stages,
+        "static_world_parts": len(make_world()["Parts"]), "pickup_slots": 48,
+        "places": places, "stages": stages,
         "not_executed": ["Roblox Studio import", "Roblox client/server multiplayer simulation", "Engine physics and rendering", "Real touch-device input", "Bundled sound playback", "Published server test"],
     }
     (ARTIFACTS / "verification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -87,20 +93,28 @@ def main():
         "This Linux workspace has no Roblox Studio installation or Roblox control connector.", "",
         "## Delivered", "",
         "- Two self-contained Studio-openable `.rbxlx` exports, plus editable Luau source and an optional Rojo project.",
-        "- Original 358-part lobby/arena, four connected satellite platforms, and 48 collectible slots.",
+        "- Redesigned tropical lobby/arena: 588 anchored parts (601 instances incl. 13 baked sign",
+        "  boards), four connected satellite platforms, and 48 collectible slots.",
         "- 12-second intermission → 180-second round → 9-second results; repeat automatically.",
         "- Atomic server pickups (+1/+5/+10), synchronized HUD/leaderboard, late joins, respawns and fall rescue.",
         "- Low gravity at 60 seconds for 25 seconds, then normal gravity; clean event/round resets.",
         "- Winner/tie/no-score announcements; session coins; one server-validated session cosmetic.",
-        "- Responsive HUD with touch-control clearance, SFX toggle and reduced-motion setting.", "",
+        "- Responsive HUD with touch-control clearance, SFX toggle and reduced-motion setting.",
+        "- Visual redesign: natural sand/teal/stone palette, tropical greens, soft blue sky with a",
+        "  warm 15:20 sun, authored materials and shadows, redesigned gate/signage, rarity",
+        "  silhouettes. Gameplay rules and walkable geometry are unchanged. See",
+        "  [VISUAL_CHANGES.md](VISUAL_CHANGES.md) and the renders in `docs/previews/`.", "",
         "## Checks actually executed", "", "| Check | Result |", "|---|---:|",
         f"| Luau core tests (includes 100 × 12-player logical round simulations) | {core_count} passed |",
         f"| Real server/client scripts against mocked Roblox services | {adapter_count} passed |",
         f"| XML/API/geometry export tests | {place_count} passed |",
+        f"| Art-direction gate (palette, hierarchy, legibility, lighting) | {art_count} passed |",
         f"| Official Luau compilation | {len(files)} files passed |",
         "| Strict analysis | 3 authority modules + Config passed |",
         "| Repeat build | Byte-for-byte deterministic |", "| Git whitespace check | Passed |", "",
-        "The headless adapter tests validate code contracts, not Roblox physics, actual networking, UI rendering, or audio.", "",
+        "The headless adapter tests validate code contracts, not Roblox physics, actual networking, UI rendering, or audio.",
+        "`docs/previews/*.jpg` are software renders of the same geometry/colour tables (tools/preview.py),",
+        "not engine captures; rendered lighting and materials still need the Studio pass.", "",
         "## Remaining acceptance work", "",
         "Open `places/BrainrotArena-QuickTest.rbxlx` in Roblox Studio and use its Test tab to start **2 clients**.",
         "Confirm collecting, jumping during low gravity, the winner card, and the next round on both clients.",

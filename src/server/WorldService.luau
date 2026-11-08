@@ -1,7 +1,9 @@
 --!strict
 -- The downloadable place already contains the map. Rojo users get this exact map at runtime.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local Data = require(script.Parent.WorldData)
+local ArtDirection = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("ArtDirection"))
 local WorldService = {}
 WorldService.__index = WorldService
 
@@ -35,8 +37,10 @@ local function makeSign(parent: BasePart, lines)
 		label.TextColor3 = rgb(line.Color)
 		label.TextScaled = true
 		label.TextWrapped = true
-		label.Font = Enum.Font.GothamBold
-		label.TextStrokeTransparency = 0.8
+		label.Font = Enum.Font[line.Font or "GothamBold"]
+		-- A warm, low-contrast stroke keeps signage legible against bright sand.
+		label.TextStrokeColor3 = Color3.fromRGB(28, 34, 40)
+		label.TextStrokeTransparency = 0.55
 		label.Parent = gui
 		y += height
 	end
@@ -61,7 +65,8 @@ function WorldService.new()
 			part.CanCollide = spec.Collide
 			part.CanTouch = spec.Class == "SpawnLocation"
 			part.CanQuery = spec.Collide
-			part.CastShadow = spec.Material ~= "Neon"
+			-- Neon never casts shadows; the exporter marks every other surface.
+			part.CastShadow = spec.CastShadow == true and spec.Material ~= "Neon"
 			part.Transparency = spec.Transparency
 			part.TopSurface = Enum.SurfaceType.Smooth
 			part.BottomSurface = Enum.SurfaceType.Smooth
@@ -73,12 +78,14 @@ function WorldService.new()
 				part.Duration = 0
 				part.AllowTeamChangeOnTouch = false
 			end
-			if spec.Name == "ChaosAccent_BeaconTop" then
+			local lightSpec = ArtDirection.Lights[spec.Name]
+			if lightSpec then
 				local light = Instance.new("PointLight")
-				light.Name = "BeaconLight"
-				light.Color = Color3.fromRGB(255, 130, 221)
-				light.Brightness = 1.5
-				light.Range = 28
+				light.Name = lightSpec.Name
+				light.Color = rgb(lightSpec.Color)
+				light.Brightness = lightSpec.Brightness
+				light.Range = lightSpec.Range
+				light.Shadows = lightSpec.Shadows
 				light.Parent = part
 			end
 			part.Parent = model
@@ -112,9 +119,11 @@ function WorldService.spawnCFrame(_self, arena: boolean, index: number): CFrame
 	return CFrame.lookAt(position, target)
 end
 
+-- Low-gravity feedback: the beacon ring and gate rails pulse prismatic. Only the
+-- reserved gameplay accents change, so the natural environment stays stable.
 function WorldService.setLowGravity(self, active: boolean)
 	for _, part in self.accents do
-		part.Color = if active then Color3.fromRGB(177, 122, 255) else part:GetAttribute("RestColor")
+		part.Color = if active then rgb(ArtDirection.EventAccent) else part:GetAttribute("RestColor")
 	end
 end
 

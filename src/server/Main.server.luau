@@ -11,6 +11,7 @@ local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
+local ArtService = require(script.Parent.ArtService)
 
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
@@ -21,6 +22,8 @@ local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.
 	return random:NextNumber()
 end)
 local movement = MovementGuard.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
+-- Appearance only. Idempotent with the lighting rig baked into the place file.
+ArtService.apply()
 local world = WorldService.new()
 Workspace.Gravity = Config.NormalGravity
 Workspace.FallenPartsDestroyHeight = -160
@@ -102,7 +105,7 @@ local function applyHalo(player: Player)
 		segment.Name = "Glow"
 		segment.Size = Vector3.new(0.8, 0.16, 0.25)
 		segment.Material = Enum.Material.Neon
-		segment.Color = Color3.fromRGB(83, 238, 255)
+		segment.Color = Color3.fromRGB(126, 226, 250)
 		segment.CanCollide = false
 		segment.CanTouch = false
 		segment.CanQuery = false
