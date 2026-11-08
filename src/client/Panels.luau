@@ -84,7 +84,7 @@ Panels.glyph = glyph
 -- --------------------------------------------------------------------------- #
 -- Top HUD: brand, brain-cell counter, round clock, coin counter
 -- --------------------------------------------------------------------------- #
-function Panels.topHud(parent)
+function Panels.topHud(parent, handlers)
 	local root = Kit.instance("Frame", {
 		Name = "TopHud",
 		Size = UDim2.new(1, 0, 0, 96),
@@ -157,8 +157,20 @@ function Panels.topHud(parent)
 	})
 	local coinScale = Kit.instance("UIScale", { Scale = 1 }, coins)
 
+	-- Collection progress chip: always-on reminder that there are six specimens,
+	-- with a live count of how many this player has logged. Clicking opens the log.
+	local specimens = Kit.button(root, "Specimens", "", UDim2.fromOffset(152, 34),
+		UDim2.new(1, -Space.xl, 0, Space.lg + 60), function()
+			if handlers and handlers.Specimens then handlers.Specimens() end
+		end, { accent = C.Cyan, zIndex = 2, radius = 10, variant = "Micro" })
+	specimens.Label.Size = UDim2.new(1, -12, 1, 0)
+	specimens.Label.TextXAlignment = Enum.TextXAlignment.Center
+	local specimenText = specimens.Label
+
 	return {
 		root = root,
+		specimens = specimens,
+		specimenText = specimenText,
 		brand = brand,
 		cells = cells,
 		cellValue = cellValue,

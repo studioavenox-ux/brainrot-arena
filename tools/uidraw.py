@@ -27,6 +27,8 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
+import creatures  # noqa: E402
+import preview  # noqa: E402
 import ui  # noqa: E402
 
 OUT = ROOT / "docs" / "previews"
@@ -151,6 +153,10 @@ def glyph(canvas, x, y, kind, accent, size=20):
             piece(3, 5, 8.5 + math.cos(angle) * 7, 8.5 + math.sin(angle) * 7, 1)
     elif kind == "rank":
         piece(8, 8, 3, 3, 2)
+    elif kind == "specimen":
+        # a pinned specimen: a disc on a stem
+        piece(12, 12, 4, 2, 12, 0.55)
+        piece(3, 9, 8.5, 11, 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -247,6 +253,19 @@ def draw_hud(canvas, state):
         canvas.panel(chip_x, chip_y, chip_w, chip_h, color="NavyRaised", radius=12)
         canvas.text(chip_x + chip_w / 2, chip_y + chip_h / 2, "RANKS", T["Micro"], color="Violet",
                     anchor="mm")
+
+    # SPECIMENS chip: the way into the collection log, under the coin counter.
+    # Mirrors Panels.topHud: Cyan until all six are logged, then Amber.
+    spec_w, spec_h = (112 if short else 116), 30
+    spec_x = width - pad - spec_w
+    spec_y = coin_y + coin_h + SP["xs"]
+    caught = state.get("specimens", 0)
+    spec_color = "Amber" if caught >= 6 else "Cyan"
+    canvas.panel(spec_x, spec_y, spec_w, spec_h, color="NavyRaised", radius=11)
+    glyph(canvas, spec_x + 9, spec_y + 6, "specimen", spec_color, 16)
+    canvas.text(spec_x + 30, spec_y + spec_h / 2 + 1,
+                f"SPECIMENS {caught} / 6", T["Micro"], color=spec_color, anchor="lm",
+                width=spec_w - 38)
 
     # help chip
     help_x = pad if compact else SP["xl"]
@@ -411,6 +430,125 @@ def modal_card(canvas, width, height, compact, short, modal):
                 color="Muted", anchor="mm")
 
 
+_THUMBS = {}
+
+
+def specimen_thumb(name, width, height):
+    """One character rendered by the arena's own renderer, on a dark card stage.
+
+    Same part table, same tint and same camera maths as the in-game viewport, so a
+    card on this plate cannot show a different creature from the one in the arena.
+    """
+    key = (name, width, height)
+    if key in _THUMBS:
+        return _THUMBS[key]
+    value = creatures.CREATURES[name]["Value"]
+    base = preview.kinds_by_value[value]
+    parts = preview.creature_parts(name, 0, 0, 0, base, yaw=0.0)
+    plinth_w, plinth_h, _ = creatures.EXHIBIT["Plinth"]
+    bottom = creatures.bottom_of(name)
+    parts.append({
+        "Name": "ThumbPlinth", "Position": [0, bottom - .10, 0],
+        "Size": [plinth_w, .12, plinth_w], "Color": [22, 30, 48],
+        "Rotation": [0, 0, 0], "Material": "SmoothPlastic", "CastShadow": False,
+        "Collide": False, "Shape": "Block", "Class": "Part", "Transparency": 0.0,
+        "Role": "hero", "Layer": 3, "Island": "Lobby",
+    })
+    studio = {"dir": preview.normalise(np.array([-0.30, 0.78, 0.55])),
+              "sun": np.array([1.0, 0.97, 0.92]) * 1.02,
+              "ambient": np.array([0.42, 0.46, 0.54]),
+              "bounce": np.array([0.24, 0.26, 0.30])}
+    path = OUT / "_thumb.jpg"
+    OUT.mkdir(parents=True, exist_ok=True)
+    centre = (creatures.top_of(name) + bottom) / 2
+    image = preview.render(
+        parts, path, eye=(0, centre + .26, 4.1), target=(0, centre, 0), fov=30,
+        width=width, height=height, light=studio, background=(14, 20, 34),
+        transparent=True,
+    )
+    path.unlink(missing_ok=True)
+    _THUMBS[key] = image
+    return image
+
+
+def draw_collection(canvas, state):
+    """The specimen log, transcribed from src/client/Collection.luau:resize().
+
+    Six cards, three across on desktop and two on phones; each card is a viewport
+    with the real model on a plinth, its name, rarity, reward and whether it has
+    been caught. Uncaught cards are dimmed silhouettes that read NOT SEEN YET.
+    """
+    width, height = canvas.width, canvas.height
+    compact = width < 780
+    pad = SP["md"]
+    entries = state["specimens_entries"]
+    caught_names = set(state.get("caught") or ())
+
+    canvas.rect(0, 0, width, height, "Void", .18)
+    px, py = (12 if compact else 24), (12 if compact else 24)
+    pw, ph = width - px * 2, height - py * 2
+    canvas.panel(px, py, pw, ph, color="Navy", radius=18)
+
+    canvas.text(px + SP["xl"], py + SP["xl"], COPY["CollectionTitle"],
+                18 if compact else T["Title"], color="White")
+    if not compact:
+        canvas.text(px + SP["xl"], py + SP["xl"] + 28,
+                    "%d / 6 CHARACTERS LOGGED  •  %d CELLS CAUGHT THIS SESSION  •  %d COINS"
+                    % (len(caught_names), state.get("cells", 0), state.get("coins", 0)),
+                    T["Label"], color="Muted", bold=False)
+        canvas.text(px + SP["xl"], py + SP["xl"] + 46, COPY["CollectionHint"],
+                    T["Micro"], color="Dim", bold=False)
+    canvas.text(px + pw - 36 - SP["md"], py + SP["xl"] + 2,
+                "%d / 6" % len(caught_names), T["Title"],
+                color="Amber" if len(caught_names) == 6 else "Cyan", anchor="ra")
+    canvas.panel(px + pw - 36, py + SP["xl"], 36, 36, color="NavyRaised", radius=12)
+    canvas.text(px + pw - 18, py + SP["xl"] + 18, "X", T["Body"], color="Muted", anchor="mm")
+
+    columns = 2 if compact else 3
+    grid_x = px + SP["xl"]
+    grid_y = py + SP["xl"] + 64
+    grid_w = pw - SP["xl"] * 2
+    grid_h = py + ph - SP["xl"] - grid_y
+    cell_w = (grid_w - (columns - 1) * 10) // columns
+    cell_h = min(196 if not compact else 178, (grid_h - 10) // 2)
+    rows = (len(entries) + columns - 1) // columns
+    # Centre the block vertically: the log is a full screen, not a top-left list.
+    grid_y += max(0, (grid_h - (rows * (cell_h + 10) - 10)) // 2)
+    for index, entry in enumerate(entries):
+        caught = entry["name"] in caught_names
+        rarity = entry["rarity"]
+        accent = {"Common": "Cyan", "Rare": "Amber", "Legendary": "Violet"}[rarity]
+        cx = grid_x + (index % columns) * (cell_w + 10)
+        cy = grid_y + (index // columns) * (cell_h + 10)
+        canvas.panel(cx, cy, cell_w, cell_h, color="NavyRaised", radius=12,
+                     alpha=0.5, edge=accent, edge_alpha=A["Hairline"] if not caught else 0.55)
+        # viewport: dim silhouette when uncaught, full colour when caught
+        view_h = cell_h - 88
+        canvas.rect(cx + 2, cy + 2, cell_w - 4, view_h, "Navy", 1.0, 10)
+        thumb = specimen_thumb(entry["name"], 260, max(48, int(260 * view_h / (cell_w - 4))))
+        thumb = thumb.resize((int(cell_w - 4), int(view_h)), Image.LANCZOS)
+        if not caught:
+            # Silhouette: same shape, no colour — you can see what you are missing.
+            grey = thumb.convert("L").convert("RGB")
+            grey = Image.eval(grey, lambda v: int(v * 0.30))
+            thumb = Image.blend(thumb, grey, 0.88)
+            thumb = Image.eval(thumb, lambda v: int(v * 0.55))
+        canvas.image.alpha_composite(thumb.convert("RGBA"), (int(cx + 2), int(cy + 2)))
+        canvas.draw = ImageDraw.Draw(canvas.image)
+        canvas.rect(cx + 10, cy + cell_h - 72, 10, 10, accent if caught else "Dim", 1.0, 10)
+        canvas.text(cx + 24, cy + cell_h - 84, entry["label"], T["Label"],
+                    color="White" if caught else "Dim", width=cell_w - 34)
+        canvas.text(cx + 24, cy + cell_h - 66,
+                    "%s  +%d" % (rarity.upper(), entry["value"]), T["Micro"],
+                    color=accent, alpha=1.0 if caught else 0.45, width=cell_w - 34)
+        canvas.text(cx + 9, cy + cell_h - 50,
+                    COPY["CollectionCount"] + "  ×" + str(entry["caught"]) if caught
+                    else COPY["CollectionMissing"],
+                    T["Body"], color="Muted" if caught else "Dim", width=cell_w - 16)
+        canvas.text(cx + 9, cy + cell_h - 30, entry["blurb"], T["Micro"],
+                    color="Dim", bold=False, width=cell_w - 16)
+
+
 def mock(kind, width, height, **overrides):
     state = {
         "phase": "Intermission",
@@ -500,6 +638,27 @@ def mock(kind, width, height, **overrides):
                 "primary": None,
             },
         })
+    elif kind.startswith("collection"):
+        caught = {"brain", "frog", "fish"} if kind != "collection-full" else None
+        entries = []
+        for index, order in enumerate([n for value in (1, 5, 10) for n in creatures.FAMILY[value]]):
+            spec = creatures.CREATURES[order]
+            entries.append({
+                "name": order, "label": spec["Label"], "rarity": spec["Rarity"],
+                "value": spec["Value"], "blurb": spec["Blurb"].upper(),
+                "caught": 3 + index,
+            })
+        state.update({
+            "phase": "Playing", "phaseLabel": COPY["PlayingStatus"], "clock": "02:41",
+            "cells": 27, "coins": 55, "lobby": None, "specimens": 3,
+            "rows": [
+                {"name": "MintBrain", "score": 34, "mine": True},
+                {"name": "Orbital", "score": 27},
+                {"name": "WetSock", "score": 22},
+            ],
+            "specimens_entries": entries,
+            "caught": (caught if caught is not None else [e["name"] for e in entries]),
+        })
     state.update(overrides)
     canvas = Canvas(width, height, C["Void"])
     backdrop = _backdrop(width, height)
@@ -515,6 +674,9 @@ def mock(kind, width, height, **overrides):
     scrim(canvas, height - min(150, max(100, height * 0.2)),
           min(150, max(100, height * 0.2)), top=False)
     draw_hud(canvas, state)
+    if state.get("specimens_entries"):
+        draw_collection(canvas, state)
+        return canvas
     if state.get("modal"):
         # The modal layer sits above everything, including the action bar.
         modal_card(canvas, width, height, width < 780, height < 520, state["modal"])
@@ -532,6 +694,9 @@ PLATES = {
     "ui-inventory": ("inventory", 1280, 720),
     "ui-settings": ("settings", 1280, 720),
     "ui-phone-shop": ("shop", 390, 800),
+    "ui-collection": ("collection", 1280, 720),
+    "ui-collection-full": ("collection-full", 1280, 720),
+    "ui-phone-collection": ("collection", 390, 800),
 }
 
 

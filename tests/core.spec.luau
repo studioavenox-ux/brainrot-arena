@@ -4,6 +4,7 @@ local RoundMachine = require("../src/server/core/RoundMachine")
 local PickupLedger = require("../src/server/core/PickupLedger")
 local MovementGuard = require("../src/server/core/MovementGuard")
 local ArenaRoute = require("../src/server/core/ArenaRoute")
+local Creatures = require("../src/shared/Creatures")
 local Config = require("../src/shared/Config")
 local passed, failed = 0, 0
 local function test(name, fn)
@@ -245,5 +246,132 @@ test("route: stats report arrivals and fallbacks", function()
 	eq(r:stats().tracked, 0)
 end)
 
-print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))
 assert(failed == 0, "Core test failures")
+
+-- --------------------------------------------------------------------------- --
+-- Character system: species ownership and the collection record
+-- --------------------------------------------------------------------------- --
+test("species: every reward maps to exactly two named characters", function()
+	for _, value in { 1, 5, 10 } do
+		local family = Creatures.Family[value]
+		eq(#family, 2)
+		for _, name in family do
+			assert(Creatures.Characters[name], "missing character " .. tostring(name))
+			eq(Creatures.Characters[name].Value, value)
+		end
+	end
+	eq(#Creatures.Order, 6)
+end)
+test("species: the choice is deterministic for a slot and covers both variants", function()
+	local seen = {}
+	for slot = 1, 48 do
+		local name = Creatures.SpeciesOf(slot, 1)
+		eq(name, Creatures.SpeciesOf(slot, 1))
+		seen[name] = true
+	end
+	eq(seen["brain"], true); eq(seen["frog"], true)
+	-- Same slot, different rarity families: the character follows the rarity.
+	for _, value in { 5, 10 } do
+		local name = Creatures.SpeciesOf(7, value)
+		assert(name == Creatures.Family[value][1] or name == Creatures.Family[value][2])
+	end
+end)
+test("ledger: the server stamps a species on every slot and every receipt", function()
+	local l = PickupLedger.new(positions, Config.Kinds, 4.5, 5,
+		function() return 0.5 end, function(slotId, value) return Creatures.SpeciesOf(slotId, value) end)
+	l:beginRound(1)
+	for _, slot in l.slots do
+		assert(slot.species ~= "", "slot has no species")
+		assert(Creatures.Characters[slot.species], "unknown species " .. tostring(slot.species))
+	end
+	local receipt = l:tryClaim(1, l.slots[1].generation, context(-1, positions[1], 1), 10)
+	assert(receipt, "claim failed")
+	assert(Creatures.Characters[receipt.species], "receipt has no valid species")
+	eq(receipt.value, 1)
+end)
+test("ledger: a respawned slot gets a species that matches its new rarity", function()
+	local l = PickupLedger.new(positions, Config.Kinds, 4.5, 5,
+		function() return 0 end, function(slotId, value) return Creatures.SpeciesOf(slotId, value) end)
+	l:beginRound(1)
+	local slot = l.slots[1]
+	assert(slot.available)
+	l:tryClaim(1, slot.generation, context(-1, positions[1], 1), 10)
+	l:step(100)   -- respawn
+	assert(slot.available, "slot never respawned")
+	local family = Creatures.Family[Config.Kinds[slot.kindIndex].Value]
+	assert(slot.species == family[1] or slot.species == family[2],
+		"respawned species does not match its rarity")
+end)
+test("award: the collection record tracks each character separately", function()
+	local m = playing(1)
+	local id = -1
+	eq(m:distinct(id), 0)
+	eq(m:award(id, 1, m.roundId, "brain"), true)
+	eq(m:award(id, 1, m.roundId, "brain"), true)
+	eq(m:award(id, 10, m.roundId, "sock"), true)
+	local row = m:rows()[1]
+	eq(row.collection["brain"], 2)
+	eq(row.collection["sock"], 1)
+	eq(row.collected, 2)
+	eq(row.score, 12)
+	eq(m:distinct(id), 2)
+end)
+test("award: a species cannot change the reward", function()
+	local m = playing(1)
+	local id = -1
+	-- Legendary character, common reward: the *value* is what the server pays.
+	eq(m:award(id, 1, m.roundId, "sock"), true)
+	eq(m:rows()[1].score, 1)
+	eq(m:rows()[1].collection["sock"], 1)
+	-- An invalid denomination is still rejected, whatever the species says.
+	eq(m:award(id, 7, m.roundId, "sock"), false)
+	eq(id, -1)
+end)
+test("award: a collection never leaks into another round or another player", function()
+	local m = playing(2)
+	local a, b = -1, -2
+	eq(m:award(a, 5, m.roundId, "fish"), true)
+	-- Rows are sorted by score then id, so look the other player up by name rather
+	-- than trusting a position.
+	local function rowOf(id)
+		for _, row in m:rows() do
+			if row.id == id then return row end
+		end
+		return nil
+	end
+	eq(rowOf(b).collection["fish"], nil)
+	eq(rowOf(b).collected, 0)
+	-- Advance to a new round: the species record survives, the round score does not.
+	-- (Step in small increments: the machine asserts a monotonic clock.)
+	-- `playing()` already stepped the machine to 104; start the clock there.
+	local now = 104
+	local function advance(seconds)
+		local left = seconds
+		while left > 0 do
+			local dt = math.min(1, left)
+			m:step(now + dt)
+			now += dt
+			left -= dt
+		end
+	end
+	advance(Config.FastTiming.Round + 1)                    -- round ends
+	advance(Config.FastTiming.Results + 1)                  -- results end
+	advance(Config.FastTiming.Intermission + 1)             -- next round starts
+	local row = rowOf(a)
+	eq(row.name, "Brain 1")
+	eq(row.score, 0)          -- the round score resets every round
+	eq(row.collection["fish"], 1)   -- the collection is a session record
+end)
+test("award: a collection entry without a species is still a legal pickup", function()
+	local m = playing(1)
+	eq(m:award(-1, 1, m.roundId), true)
+	eq(m:rows()[1].score, 1)
+	eq(m:rows()[1].collected, 0)
+end)
+
+print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))
+-- The Luau CLI exits non-zero on an uncaught error, so a failing suite fails CI
+-- instead of printing a red line into a passing run.
+if failed > 0 then
+	error(string.format("%d core test(s) failed", failed), 0)
+end

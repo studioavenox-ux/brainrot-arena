@@ -5,7 +5,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
-local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
+local Shared = ReplicatedStorage:WaitForChild("BrainrotShared")
+local Config = require(Shared:WaitForChild("Config"))
+local CharacterManifest = require(Shared:WaitForChild("Creatures"))
 local RoundMachine = require(script.Parent.core.RoundMachine)
 local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
@@ -19,8 +21,12 @@ local fast = RunService:IsStudio() and Config.StudioFastMode
 settings.Timing = if fast then Config.FastTiming else Config.Timing
 local machine = RoundMachine.new(settings)
 local random = Random.new()
+-- Species is rolled here, on the server, from the ledger's own slot id and rarity, so
+-- the receipt a client animates names the character that player really collected.
 local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.PickupRadius, Config.PickupRespawn, function()
 	return random:NextNumber()
+end, function(slotId: number, value: number): string
+	return CharacterManifest.SpeciesOf(slotId, value)
 end)
 local movement = MovementGuard.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
 -- Arena access. Every rail trip goes through this router: it asserts a destination
@@ -239,6 +245,11 @@ local function updatePickup(slotId: number)
 	part.Transparency = if slot.available then 0 else 1
 	part:SetAttribute("Kind", kind.Name)
 	part:SetAttribute("Value", kind.Value)
+	-- A display id that changes with every generation, so the client can tell "the
+	-- same cell respawned" from "a different character took its place" and animate
+	-- the swap instead of silently recolouring.
+	part:SetAttribute("Species", slot.species)
+	part:SetAttribute("DisplayId", slot.species .. ":" .. slot.generation)
 	part:SetAttribute("Generation", slot.generation)
 	part:SetAttribute("Active", slot.available)
 end
@@ -456,7 +467,8 @@ RunService.Heartbeat:Connect(function(dt: number)
 			if slot.available then
 				local receipt = ledger:tryClaim(slot.id, slot.generation, context, now)
 				if receipt then
-					assert(machine:award(receipt.userId, receipt.value, receipt.roundId), "Atomic award rejected")
+					assert(machine:award(receipt.userId, receipt.value, receipt.roundId, receipt.species),
+						"Atomic award rejected")
 					updatePickup(slot.id)
 					pickupRemote:FireAllClients(receipt)
 					dirty = true

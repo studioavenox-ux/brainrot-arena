@@ -13,12 +13,12 @@ SOURCE_FILES = (
     "src/client/Effects.luau", "src/client/Hud.luau", "src/client/Iconography.luau",
     "src/client/Creatures.luau", "src/client/CreatureData.luau",
     "src/client/Kit.luau", "src/client/Panels.luau", "src/client/Theme.luau",
-    "src/client/Main.client.luau",
+    "src/client/Collection.luau", "src/client/Main.client.luau",
     "src/server/ArtService.luau", "src/server/Main.server.luau", "src/server/WorldData.luau",
     "src/server/WorldService.luau",
     "src/server/core/ArenaRoute.luau", "src/server/core/MovementGuard.luau",
     "src/server/core/PickupLedger.luau", "src/server/core/RoundMachine.luau",
-    "src/shared/ArtDirection.luau", "src/shared/Config.luau",
+    "src/shared/ArtDirection.luau", "src/shared/Config.luau", "src/shared/Creatures.luau",
 )
 PLACE_FILES = ("places/BrainrotArena.rbxlx", "places/BrainrotArena-QuickTest.rbxlx")
 
@@ -40,7 +40,10 @@ def main():
         "docs/BUILD_REPORT.md", "docs/TESTING.md", "docs/ARCHITECTURE.md", "docs/DEPENDENCIES.md",
         "docs/VISUAL_CHANGES.md", "docs/VISUAL_CHANGES_PHASE2.md",
         "docs/UI_IMPLEMENTATION_PHASE3.md", "docs/PHASE3_GAMEPLAY_FIXES.md",
-        "docs/previews/cast.jpg",
+        "docs/CHARACTERS_PHASE4.md",
+        "docs/previews/cast.jpg", "docs/previews/collection.jpg",
+        "docs/previews/ui-collection.jpg", "docs/previews/ui-collection-full.jpg",
+        "docs/previews/ui-phone-collection.jpg",
         "docs/previews/arena.jpg", "docs/previews/lobby.jpg", "docs/previews/palms.jpg",
         "docs/previews/play.jpg", "docs/previews/overview.jpg",
         "docs/previews/arena-legacy.jpg", "docs/previews/lobby-legacy.jpg",
@@ -49,7 +52,8 @@ def main():
         "assets/README.md", "assets/asset-manifest.json", "artifacts/verification.json",
         "tools/build_place.py", "tools/world.py", "tools/theme.py", "tools/verify_place.py",
         "tools/artcheck.py", "tools/preview.py", "tools/check.py", "tools/package_release.py",
-        "tools/terrain_aug.py", "tools/creatures.py", "tools/ui.py",
+        "tools/terrain_aug.py", "tools/creatures.py", "tools/ui.py", "tools/exhibit.py",
+        "tools/uidraw.py", "tools/bootstrap_luau.py",
         "tests/fixtures/roblox-api.json", "tests/fixtures/world-baseline.json",
     ]
     missing = [name for name in required if not (ROOT / name).is_file()]

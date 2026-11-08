@@ -28,11 +28,13 @@ StarterPlayer/StarterPlayerScripts/BrainrotClient
   Main                                 listeners, core UI configuration, HUD clock tick
   Hud                                  responsive panels, leaderboard, dialogs, input
   Iconography                          rarity silhouettes (world marks + HUD glyphs)
-  Creatures                            builds the original critter cast per cell
-  CreatureData                         GENERATED cast table (tools/creatures.py)
+  Creatures                            builds the six character Models, labels, idle/collect
+  CreatureData                         GENERATED cast part tables (tools/creatures.py)
+  Collection                           specimen log: six live viewports, progress, status
   Effects                              local cell models, animation, sparks, sound, tint
 Workspace
   BrainrotWorld                        824 anchored parts + 7 sign boards, 7 signs, lobby spawn
+  BrainrotCharacters                   the six character Models + plinths (the asset library)
   BrainrotPickups                       48 server roots during Playing only
   BrainrotClientFX                      client-only visual models / short-lived effects
 ```
@@ -67,9 +69,10 @@ pink / gold / prism hues are reserved for gameplay objects, the beacon and UI. T
 full rationale, palette and before/after renders are in
 [VISUAL_CHANGES.md](VISUAL_CHANGES.md).
 
-Original geometry only: cylinders, wedges, blocks and six-lobed procedural brains. No
-toolbox packages, uploaded meshes, copyrighted meme characters, external scripts or
-web requests.
+Original geometry only: cylinders, balls, blocks and character assemblies of those
+primitives. The six characters are also baked into the place as editable Models —
+see [CHARACTERS_PHASE4.md](CHARACTERS_PHASE4.md). No toolbox packages, uploaded
+meshes, copyrighted meme characters, external scripts or web requests.
 
 - **Hierarchy is explicit data**, not a convention: every part is classified into
   layer 1 ground, 2 nature/rock, 3 built prop or 4 hero object in `tools/world.py`,
@@ -82,9 +85,9 @@ web requests.
   `tools/terrain_aug.py` and use the same primitive vocabulary as the terrain.
 - **48** simple server pickup roots. Touch/query/collision disabled on pickup and
   decorative roots.
-- Each client builds one of **six original critters** per cell from the generated
-  `CreatureData` table (rarity -> family, slot id -> variant, decided client-side
-  only), culls visuals beyond 150 studs and updates bob/spin at **30 Hz**. Models are
+- Each client builds one of **six original characters** per cell from the generated
+  `CreatureData` table (the species chosen server-side per slot, arriving in the
+  receipt), culls visuals beyond 150 studs and updates bob/spin at **30 Hz**. Models are
   rebuilt only when a cell's rarity changes; rarity marks (ring / crossed arms) are
   allocated lazily, so +1 cells cost no extra parts. Static world + server cell roots
   + worst-case local visuals total **1,496 parts**, excluding avatars, optional halos

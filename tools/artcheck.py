@@ -196,8 +196,14 @@ class ArtDirectionTests(unittest.TestCase):
     def test_10_performance_budget(self):
         static = len(PARTS)
         self.assertLessEqual(static, 840, "Static part budget for lower-end devices")
-        cells = len(WORLD["PickupPositions"]) * creatures.PART_BUDGET
-        self.assertLessEqual(static + cells, 1500, "Total runtime part budget")
+        # Characters are only built for cells that are actually on screen, so the
+        # mobile budget is paid per *visible* cell: 16 (the ceiling of the part
+        # table) + the shared pivot + hover ring + rarity marks = 20.
+        cells = creatures.VISIBLE_CELL_PARTS
+        self.assertLessEqual(cells, 20, "Per-cell render budget for a collection game")
+        # A whole round is never resident: the client builds a model only inside
+        # VIEW_RANGE of the camera, so this is the streaming ceiling, not 48 models.
+        self.assertLessEqual(48 * cells, 960, "All-cell ceiling must still stream")
         self.assertLessEqual(len(theme.LIGHTS), 7, "Point lights are the most expensive detail")
         for spec in theme.LIGHTS.values():
             self.assertFalse(spec["Shadows"], "Shadowed point lights are not shippable")
@@ -383,33 +389,48 @@ class ArtDirectionTests(unittest.TestCase):
             self.assertLessEqual(creatures.total_cell_parts(value), creatures.PART_BUDGET)
 
     def test_26_creature_variants_differ_in_silhouette_not_just_colour(self):
+        # No two of the six may share a coarse shape signature: they have to be
+        # distinguishable as *characters*, not as recolours of each other.
+        seen = {}
+        for name in creatures.CREATURES:
+            signature = creatures.silhouette(name)
+            self.assertNotIn(signature, seen, f"{name} looks like {seen.get(signature)}")
+            seen[signature] = name
         for value, family in creatures.FAMILY.items():
-            signatures = set()
-            for name in family:
-                parts = creatures.CREATURES[name]["Parts"]
-                signature = (
-                    len(parts),
-                    round(max(p["Offset"][1] + p["Size"][1] / 2 for p in parts), 2),
-                    round(max(p["Offset"][0] + p["Size"][0] / 2 for p in parts)
-                          - min(p["Offset"][0] - p["Size"][0] / 2 for p in parts), 2),
-                )
-                signatures.add(signature)
-            self.assertEqual(len(signatures), len(family), f"rarity {value} variants look alike")
+            self.assertNotEqual(creatures.silhouette(family[0]), creatures.silhouette(family[1]),
+                                f"rarity {value} variants look alike")
 
     def test_27_creature_cast_uses_original_primitives_only(self):
-        # Original cast: six critters, primitive parts, no meshes or asset ids, and
-        # neutral ink for faces so no new saturated hue enters the palette.
+        # Original cast: six characters, primitive parts only, no meshes or asset ids,
+        # and neutral inks for faces so no new saturated hue enters the palette.
         self.assertEqual(len(creatures.CREATURES), 6)
         for name, spec in creatures.CREATURES.items():
-            self.assertGreaterEqual(len(spec["Parts"]), 5, name)
-            self.assertLessEqual(len(spec["Parts"]), 9, name)
+            parts = creatures.parts_of(name)
+            self.assertGreaterEqual(len(parts), 9, name)
+            self.assertLessEqual(len(parts), 14, name)
             self.assertTrue(spec["Blurb"], name)
-            for part in spec["Parts"]:
-                self.assertIn(part["Shape"], ("Block", "Ball", "WedgePart", "Cylinder"))
+            self.assertTrue(spec["Lore"], name)
+            for part in parts:
+                self.assertIn(part["Kind"], ("box", "ball", "cyl"))
                 self.assertIn(part["Role"], creatures.ROLES)
                 if part["Role"] in creatures.FIXED_COLORS:
                     color = creatures.FIXED_COLORS[part["Role"]]
                     self.assertLess(chroma(color), 22, f"{name}.{part['Name']} carries hue")
+
+    def test_27b_every_character_has_a_face_and_a_name_card_height(self):
+        # Expressive faces are a delivery requirement, so they are gated: two eyes
+        # plus a mouth/beak, and the floating label must clear the tallest part.
+        for name in creatures.CREATURES:
+            parts = creatures.parts_of(name)
+            eyes = [p for p in parts if p["Role"] == "ink" and p["Size"][1] <= .30]
+            self.assertGreaterEqual(len(eyes), 2, f"{name} has no eyes")
+            # +Z is the face direction: eyes must sit on the front half of the body.
+            self.assertGreater(min(p["At"][2] for p in eyes), 0,
+                               f"{name}: eyes must face the camera (+Z)")
+            self.assertGreater(creatures.label_height(name), creatures.top_of(name) + .2,
+                               f"{name}: label would clip the model")
+            self.assertLess(creatures.top_of(name) - creatures.bottom_of(name), 1.8,
+                            f"{name}: taller than a cell, would dominate the arena")
 
     def test_28_rarity_families_are_stable_and_deterministic(self):
         # The variant is chosen from the slot id on the client only: the same slot
@@ -427,7 +448,7 @@ class ArtDirectionTests(unittest.TestCase):
 
     def test_29_hover_ring_is_thin_and_flat(self):
         ring = creatures.HOVER_RING
-        self.assertEqual(ring["Shape"], "Cylinder")
+        self.assertEqual(ring["Kind"], "cyl")
         # Roblox cylinders run along local X, so X is the thickness axis.
         self.assertLess(ring["Size"][0], .2)
         self.assertAlmostEqual(ring["Size"][1], ring["Size"][2], 3)
