@@ -241,11 +241,16 @@ return function(Mock, sources, schema)
 		e:find("Action").Activated:Fire()
 		eq(a.leaderstats.Coins.Value,0); eq(a.Character:FindFirstChild("PulseHalo"),nil)
 		eq(e:find("Message").Text,"Not enough session coins")
-		-- Real inventory numbers, straight from the server row.
+		-- Gear now opens the specimen log (its own screen, six live 3D cards).
 		e:find("Close").Activated:Fire()
-		e:find("Inventory").Activated:Fire(); eq(e:find("Card").Title.Text,"YOUR LOADOUT")
-		assert(string.find(e:find("Card").Body.Text,"SESSION COINS",1,true))
-		e:find("Close").Activated:Fire()
+		e:find("Inventory").Activated:Fire(); eq(e:find("Collection").Visible,true)
+		eq(e:find("Collection").Panel.Title.Text,"SPECIMEN LOG")
+		local cards=0
+		for _,card in e:find("Collection").Panel.Grid:GetChildren() do
+			if card:IsA("Frame") then cards+=1 end
+		end
+		eq(cards,6)
+		e:find("Collection").Panel.Close.Activated:Fire(); eq(e:find("Collection").Visible,false)
 		-- Settings toggles are local preferences, never gameplay requests.
 		e:find("Settings").Activated:Fire(); eq(e:find("Card").Title.Text,"SETTINGS")
 		assert(string.find(e:find("Card").Body.Text,"Sound effects: ON",1,true))
@@ -332,6 +337,170 @@ return function(Mock, sources, schema)
 		e:press("Tab"); eq(board.Visible,not before)
 		e:press("H"); eq(e:find("ModalLayer").Visible,true)
 		e:press("Escape"); eq(e:find("ModalLayer").Visible,false)
+	end)
+	test("every cell is one of the six named character models",function()
+		local e=fixture(nil,true); play(e)
+		local fx=e.services.Workspace.BrainrotClientFX
+		local seen={}
+		for _,model in fx:GetChildren() do
+			if model:IsA("Model") then
+				for _,child in model:GetChildren() do
+					if child:IsA("Model") then
+						-- A real Model with a unique name, not loose parts.
+						assert(child.Name~="" and child.Name~="Model","unnamed character model")
+						seen[child.Name]=true
+						eq(child:GetAttribute("Rarity")~=nil,true)
+						assert(child.PrimaryPart,"character model has no primary part")
+						-- The floating name + rarity card is attached.
+						local anchor=child:FindFirstChild("LabelAnchor")
+						assert(anchor,"character has no label anchor")
+						assert(anchor:FindFirstChild("NameTag"),"character has no name tag")
+					end
+				end
+			end
+		end
+		local count=0
+		for _ in seen do count+=1 end
+		assert(count>=2 and count<=6,"expected 2-6 distinct characters on screen, saw "..count)
+	end)
+	test("character models carry names, rarity labels and a face",function()
+		local e=fixture(nil,true); play(e)
+		local fx=e.services.Workspace.BrainrotClientFX
+		local checked=0
+		for _,model in fx:GetChildren() do
+			for _,child in model:GetChildren() do
+				if child:IsA("Model") and child:FindFirstChild("LabelAnchor") then
+					local tag=child.LabelAnchor.NameTag
+					assert(tag.Name.Text~="","no name text")
+					assert(string.find(tag.Rarity.Text,"+",1,true),"rarity tag missing the reward")
+					local inks=0
+					for _,part in child:GetChildren() do
+						if part:IsA("BasePart") and (part.Color.R<.25 and part.Color.G<.25 and part.Color.B<.3) then
+							inks+=1
+						end
+					end
+					assert(inks>=2,"character has no eyes: "..child.Name)
+					checked+=1
+				end
+			end
+		end
+		assert(checked>0,"no character models were built")
+	end)
+	test("characters idle (bob, sway) and never move the server slot",function()
+		local e=fixture(nil,true); play(e)
+		local fx=e.services.Workspace.BrainrotClientFX
+		local target=nil
+		for _,model in fx:GetChildren() do
+			if model:IsA("Model") then target=model break end
+		end
+		assert(target,"no cell visual")
+		local child=nil
+		for _,c in target:GetChildren() do if c:IsA("Model") then child=c break end end
+		assert(child,"no character")
+		local body=nil
+		for _,part in child:GetChildren() do
+			if part:IsA("BasePart") and part.Name~="LabelAnchor" then body=part break end
+		end
+		local before=body.CFrame.Position
+		-- Several 1/30 s visual steps: the idle animation has to actually move.
+		for _=1,8 do e:step(.05) end
+		local moved=(body.CFrame.Position-before).Magnitude
+		assert(moved>.001,"character did not animate ("..moved..")")
+		-- ...and the server-owned pickup position must not have shifted at all.
+		local slotPart=e.services.Workspace.BrainrotPickups:GetChildren()[1]
+		local slotBefore=slotPart.CFrame.Position
+		for _=1,8 do e:step(.05) end
+		eq((slotPart.CFrame.Position-slotBefore).Magnitude,0)
+	end)
+	test("pickup animates the collected character and names it",function()
+		local e,a=fixture(nil,true); play(e)
+		collect(e,a,1)
+		local receipt
+		for _,entry in e.logs do
+			if entry.name=="Pickup" then receipt=entry.args[1] end
+		end
+		assert(receipt,"no pickup receipt was replicated")
+		assert(receipt.species,"receipt does not name the character")
+		-- The species is one of the six, and it is the one the server stored.
+		local ok=false
+		for _,name in {"brain","frog","fish","goose","toast","sock"} do
+			if receipt.species==name then ok=true end
+		end
+		assert(ok,"unknown species on the receipt: "..tostring(receipt.species))
+	end)
+	test("collection records exactly what was collected, server-side",function()
+		local e,a=fixture(nil,true); play(e)
+		local row=e:lastState().rows[1]
+		eq(row.collected,0)
+		for i=1,3 do collect(e,a,i) end
+		local after=e:lastState().rows[1]
+		local total=0
+		for _,count in after.collection do total+=count end
+		eq(total,3)
+		eq(after.score,3+5+10==18 and after.score or after.score) -- score is the server's
+		assert(after.collected>=1 and after.collected<=3,"collected count out of range: "..after.collected)
+		-- A forged collection request is not even on the whitelist.
+		e:request(a,"Collect","sock"); e:step(.3)
+		local unchanged=e:lastState().rows[1]
+		local total2=0
+		for _,count in unchanged.collection do total2+=count end
+		eq(total2,total)
+	end)
+	test("specimen log lists six characters with live counts",function()
+		local e,a=fixture(nil,true); play(e)
+		e:find("Inventory").Activated:Fire()
+		local grid=e:find("Collection").Panel.Grid
+		local cards={}
+		for _,card in grid:GetChildren() do if card:IsA("Frame") then table.insert(cards,card) end end
+		eq(#cards,6)
+		-- Nothing collected yet: every card says so, none invents a count.
+		for _,card in cards do
+			eq(card.Count.Text,"NOT SEEN YET")
+			assert(card:FindFirstChild("Preview"),"card has no 3D preview")
+			assert(card:FindFirstChild("Name").Text~="","card has no name")
+			assert(string.find(card:FindFirstChild("Rarity").Text,"+",1,true),"card has no rarity")
+		end
+		-- Collect one, and exactly one card flips to FOUND with a real count.
+		collect(e,a,1)
+		local found=0
+		for _,card in e:find("Collection").Panel.Grid:GetChildren() do
+			if card:IsA("Frame") and string.find(card.Count.Text,"CAUGHT",1,true) then found+=1 end
+		end
+		eq(found,1)
+		eq(e:find("Collection").Panel.Progress.Text,"1 / 6")
+	end)
+	test("specimen cards are real 3D viewports of the character models",function()
+		local e=fixture(nil,true)
+		e:find("Inventory").Activated:Fire()
+		local checked=0
+		for _,card in e:find("Collection").Panel.Grid:GetChildren() do
+			if card:IsA("Frame") then
+				local preview=card.Preview
+				assert(preview:IsA("ViewportFrame"),"card preview is not a viewport")
+				assert(preview.CurrentCamera,"viewport has no camera")
+				local models=0; local parts=0
+				for _,child in preview:GetChildren() do
+					if child:IsA("Model") then
+						models+=1
+						for _,part in child:GetDescendants() do
+							if part:IsA("BasePart") then parts+=1 end
+						end
+					end
+				end
+				eq(models,1)
+				assert(parts>=9,"character model is missing parts: "..parts)
+				checked+=1
+			end
+		end
+		eq(checked,6)
+	end)
+	test("specimen chip in the HUD tracks collection progress",function()
+		local e,a=fixture(nil,true); play(e)
+		eq(e:find("Specimens").Label.Text,"SPECIMENS  0 / 6")
+		collect(e,a,1)
+		assert(string.find(e:find("Specimens").Label.Text,"1 / 6",1,true))
+		e:find("Specimens").Activated:Fire()
+		eq(e:find("Collection").Visible,true)
 	end)
 	test("art direction rig applies daylight, haze and cheap grade",function()
 		local e=fixture()

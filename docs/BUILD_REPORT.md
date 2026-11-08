@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-08T14:06:05+00:00**.
+Verified: **2026-11-08T14:47:11+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -26,16 +26,24 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
   warm 15:20 sun, authored materials and shadows, redesigned gate/signage, rarity
   silhouettes. Gameplay rules and walkable geometry are unchanged. See
   [VISUAL_CHANGES.md](VISUAL_CHANGES.md) and the renders in `docs/previews/`.
+- Six original characters as real, separate Roblox Models — BRAINY (brain, Common, +1),
+  BLORBO (frog, Common, +1), GLORP (fish, Rare, +5), HJONK (goose, Rare, +5), CRUSTY
+  (toast, Legendary, +10), WHIFFERS (sock, Legendary, +10) — procedurally built from
+  primitives, baked into `Workspace.BrainrotCharacters` in both places as editable models
+  on plinths with floating name/rarity cards, and instantiated at runtime for the 48 cells.
+  Per-character idle and collect animation, pickup burst, and a collection screen of six
+  live viewports. Server owns the species roll and the reward. See
+  [CHARACTERS_PHASE4.md](CHARACTERS_PHASE4.md) and `docs/previews/cast.jpg`.
 
 ## Checks actually executed
 
 | Check | Result |
 |---|---:|
-| Luau core tests (includes 100 × 12-player logical round simulations) | 82 passed |
-| Real server/client scripts against mocked Roblox services | 52 passed |
-| XML/API/geometry export tests | 30 passed |
-| Art-direction gate (palette, hierarchy, legibility, lighting) | 34 passed |
-| Official Luau compilation | 22 files passed |
+| Luau core tests (includes 100 × 12-player logical round simulations) | 90 passed |
+| Real server/client scripts against mocked Roblox services | 60 passed |
+| XML/API/geometry export tests | 36 passed |
+| Art-direction gate (palette, hierarchy, legibility, lighting) | 35 passed |
+| Official Luau compilation | 24 files passed |
 | Strict analysis | 3 authority modules + Config passed |
 | Repeat build | Byte-for-byte deterministic |
 | Git whitespace check | Passed |
@@ -49,6 +57,8 @@ not engine captures; rendered lighting and materials still need the Studio pass.
 Open `places/BrainrotArena-QuickTest.rbxlx` in Roblox Studio and use its Test tab to start **2 clients**.
 Confirm both players are pulled into the arena (including from a seated character), collecting,
 jumping during low gravity, the winner card, the Shop purchase, and the next round on both clients.
+Then walk the lobby exhibit (all six characters should be visible, named and animating), press
+**C** to open the specimen log, catch one of each species, and confirm the log fills to 6 / 6
 Use Device Emulator to verify touch controls/text and check Output for errors. See [TESTING.md](TESTING.md).
 No code pasting, plugin installation, API keys, asset uploads, or monetization setup is required.
 
@@ -61,7 +71,7 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 ## Export integrity
 
-Source SHA-256: `21cf89e603bac8b0aacc5a2917b28ee10ab2a2aaff7abc479fb0e616f752b8e7`
+Source SHA-256: `07d49691281e354da80ccbed6c85e008cb1a84038e9c515146d063545fdaaab5`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,449,193 bytes; SHA-256 `a03ac5752357d2b35710ca0b641594d5bd5cb27526dfd5015b0f7015cc37adf8`
-- `BrainrotArena.rbxlx` — 1,449,194 bytes; SHA-256 `05f1666fa33a0225eaca149dbcb36fd9405304961a28cdd5370b51d47a825b1c`
+- `BrainrotArena-QuickTest.rbxlx` — 1,603,336 bytes; SHA-256 `92595a0cb39ac424e00218039f6bade64e969efc8360fcd288ac5cadc8ad3f4d`
+- `BrainrotArena.rbxlx` — 1,603,337 bytes; SHA-256 `c724dde201b9bb32f76917e2dfa22f7428a36a554185cff7de7758070fb94953`

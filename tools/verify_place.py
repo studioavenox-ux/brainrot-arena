@@ -8,6 +8,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from world import make_world
 from build_place import cframe
+import creatures
+import exhibit
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = json.loads((ROOT / "tests/fixtures/roblox-api.json").read_text())
@@ -52,6 +54,11 @@ def source_paths():
         elif filename.endswith(".client"):
             filename, cls = filename.removesuffix(".client"), "LocalScript"
         yield file, "/".join([base, *bits[1:-1], filename]), cls
+
+
+def cframe_position(obj):
+    frame = obj.find("Properties/CoordinateFrame[@name='CFrame']")
+    return tuple(float(frame.findtext(key)) for key in ("X", "Y", "Z"))
 
 
 def supported(x, z, radius=0):
@@ -271,6 +278,134 @@ class PlaceTests(unittest.TestCase):
             for component in p["Position"] + p["Size"] + p["Rotation"]:
                 self.assertTrue(math.isfinite(component))
             self.assertTrue(all(v > 0 for v in p["Size"]))
+
+    # ----------------------------------------------------------------------- #
+    # The character exhibit: six real Models in the place, not just runtime code.
+    # ----------------------------------------------------------------------- #
+    def exhibit_folder(self):
+        return resolve(self.regular, "Workspace/BrainrotCharacters")
+
+    def models(self):
+        folder = self.exhibit_folder()
+        return {name(i): i for i in folder.findall("Item") if i.attrib["class"] == "Model"}
+
+    def test_29_exhibit_holds_six_named_character_models(self):
+        folder = self.exhibit_folder()
+        self.assertEqual(folder.attrib["class"], "Folder")
+        self.assertEqual(sorted(self.models()), sorted(exhibit.model_names()))
+        for label, model in self.models().items():
+            species = next(n for n, s in creatures.CREATURES.items() if s["Label"] == label)
+            parts = [p for p in model.findall("Item") if p.attrib["class"] == "Part"]
+            expected = creatures.part_count(species) + 1        # + the label anchor
+            self.assertEqual(len(parts), expected, label)
+            # PrimaryPart resolves to a part inside this model, so Studio pivots on
+            # the character's body instead of the model's bounding-box corner.
+            primary = model.findtext("Properties/Ref[@name='PrimaryPart']")
+            self.assertIn(primary, [p.attrib["referent"] for p in parts], label)
+
+    def test_30_exhibit_parts_are_the_same_data_the_game_builds(self):
+        for label, model in self.models().items():
+            species = next(n for n, s in creatures.CREATURES.items() if s["Label"] == label)
+            x, y, z = next(row[1:] for row in exhibit.layout() if row[0] == species)
+            expected = {e["Name"]: e for e in exhibit.parts_for(species, (x, y, z))}
+            actual = [p for p in model.findall("Item")
+                      if p.attrib["class"] == "Part" and name(p) != "LabelAnchor"]
+            self.assertEqual(sorted(name(p) for p in actual), sorted(expected), label)
+            for part in actual:
+                spec = expected[name(part)]
+                coords = [float(v.text) for v in part.find("Properties/CoordinateFrame[@name='CFrame']")]
+                for element, value in zip(coords, cframe(spec["Position"], spec["Rotation"])):
+                    self.assertAlmostEqual(element, value, places=5)
+                size = [float(v.text) for v in part.find("Properties/Vector3[@name='size']")]
+                for element, value in zip(size, spec["Size"]):
+                    self.assertAlmostEqual(element, value, places=5)
+                self.assertEqual(part.findtext("Properties/token[@name='shape']"),
+                                 str(exhibit.SHAPE_TOKEN[spec["Kind"]]), name(part))
+
+    def test_31_exhibit_stands_on_its_plinths_and_out_of_the_floor(self):
+        folder = self.exhibit_folder()
+        plinths = {name(i).removeprefix("Plinth_"): i for i in folder.findall("Item")
+                   if i.attrib["class"] == "Part" and name(i).startswith("Plinth_")}
+        self.assertEqual(sorted(plinths), sorted(creatures.CREATURES))
+        for label, model in self.models().items():
+            species = next(n for n, s in creatures.CREATURES.items() if s["Label"] == label)
+            plinth = plinths[species]
+            px, py, pz = cframe_position(plinth)
+            height = float(plinth.findtext("Properties/Vector3[@name='size']/Y"))
+            # Plinth stands on the terrace and holds the row at one shared height.
+            self.assertAlmostEqual(py + height / 2, exhibit.PLINTH_TOP, places=5, msg=label)
+            self.assertAlmostEqual(py - height / 2, exhibit.ORIGIN[1], places=5, msg=label)
+            for part in model.findall("Item"):
+                if part.attrib["class"] != "Part" or name(part) == "LabelAnchor":
+                    continue
+                size = [float(v.text) for v in part.find("Properties/Vector3[@name='size']")]
+                x, y, z = cframe_position(part)
+                # Feet on the plinth's top face: nothing floats, nothing sinks.
+                self.assertGreaterEqual(y - size[1] / 2, exhibit.PLINTH_TOP - 1e-6, name(part))
+                # And each character stays over its own plinth.
+                self.assertLessEqual(abs(x - px), exhibit.PLINTH_SIZE[0] / 2, name(part))
+                self.assertLessEqual(abs(z - pz), exhibit.PLINTH_SIZE[2] / 2, name(part))
+
+    def test_32_exhibit_labels_read_the_same_as_the_game(self):
+        for label, model in self.models().items():
+            species = next(n for n, s in creatures.CREATURES.items() if s["Label"] == label)
+            spec = creatures.CREATURES[species]
+            anchor = child(model, "LabelAnchor")
+            self.assertEqual(anchor.findtext("Properties/float[@name='Transparency']"), "1")
+            tag = child(anchor, "NameTag")
+            self.assertEqual(tag.attrib["class"], "BillboardGui")
+            self.assertEqual(child(tag, "Name").findtext("Properties/string[@name='Text']"), spec["Label"])
+            rarity = child(tag, "Rarity").findtext("Properties/string[@name='Text']")
+            self.assertEqual(rarity, f"{spec['Rarity'].upper()}  \u2022  +{spec['Value']}")
+            # The card hangs where the runtime anchor puts it: on the model's axis,
+            # a hand above the tallest part, never inside the mesh.
+            anchor_y = cframe_position(anchor)[1]
+            self.assertGreater(anchor_y, exhibit.PLINTH_TOP + creatures.top_of(species), label)
+            # Model origin has the feet on the plinth, so the anchor inherits that
+            # lift: exactly LabelHeight above the model origin the runtime uses.
+            self.assertAlmostEqual(
+                anchor_y,
+                exhibit.PLINTH_TOP - creatures.bottom_of(species) + creatures.label_height(species),
+                places=5)
+            # Centred on the character's own axis, so the card never drifts sideways.
+            x, _, z = cframe_position(anchor)
+            cx, _, cz = next(row[1:] for row in exhibit.layout() if row[0] == species)
+            self.assertAlmostEqual(x, cx, places=5)
+            self.assertAlmostEqual(z, cz, places=5)
+
+    def test_33_exhibit_collision_is_plinth_only(self):
+        folder = self.exhibit_folder()
+        for model in folder.findall("Item"):
+            if model.attrib["class"] != "Model":
+                continue
+            for part in model.findall("Item"):
+                if part.attrib["class"] != "Part":
+                    continue
+                self.assertEqual(part.findtext("Properties/bool[@name='Anchored']"), "true", name(part))
+                self.assertEqual(part.findtext("Properties/bool[@name='CanCollide']"), "false", name(part))
+                self.assertEqual(part.findtext("Properties/bool[@name='CanTouch']"), "false", name(part))
+        for name_ in ("Plinth_" + s for s in creatures.CREATURES):
+            plinth = child(folder, name_)
+            self.assertEqual(plinth.findtext("Properties/bool[@name='Anchored']"), "true")
+            self.assertEqual(plinth.findtext("Properties/bool[@name='CanCollide']"), "true")
+
+    def test_34_exhibit_fits_on_the_lobby_terrace(self):
+        # Every plinth is wholly inside Lobby_Terrace_Step_0 (34 x .6 x 5.2 studs,
+        # centred at z 197.5) so no part of the exhibit hangs over the void or clips
+        # the palms, the shrubs, the bridges or the central sculpture.
+        sx, sy, sz = [float(v.text) for v in child(self.world, "Lobby_Terrace_Step_0")
+                      .find("Properties/Vector3[@name='size']")]
+        cx, cy, cz = cframe_position(child(self.world, "Lobby_Terrace_Step_0"))
+        self.assertAlmostEqual(cy + sy / 2, exhibit.ORIGIN[1], places=5)
+        folder = self.exhibit_folder()
+        for part in folder.findall("Item"):
+            if part.attrib["class"] != "Part":
+                continue
+            x, y, z = cframe_position(part)
+            width = float(part.findtext("Properties/Vector3[@name='size']/X"))
+            depth = float(part.findtext("Properties/Vector3[@name='size']/Z"))
+            self.assertLessEqual(abs(x - cx) + width / 2, sx / 2, name(part))
+            self.assertLessEqual(abs(z - cz) + depth / 2, sz / 2, name(part))
 
     def test_28_generated_files_below_one_megabyte_each(self):
         for place in (ROOT / "places").glob("*.rbxlx"):

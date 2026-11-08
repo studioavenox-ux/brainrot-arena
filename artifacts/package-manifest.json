@@ -15,13 +15,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 10865,
-      "sha256": "d960c1a68d071aaa08be20f400ecfeb92515aa83ac8e66541e23b5922968df29"
+      "bytes": 11796,
+      "sha256": "81a498031f5877bd8ea10368622546c5b0f3ec9f9a7de9b8a2d73b04ff486710"
     },
     {
       "path": "artifacts/verification.json",
       "bytes": 1839,
-      "sha256": "798473c9f0226acd85d462b6606121caa05e646acf366673d410bd857b0c1513"
+      "sha256": "028af6da4e0fbb90daab79d80e103411399c90db7759e569ad8435f4ea767330"
     },
     {
       "path": "assets/README.md",
@@ -40,13 +40,18 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 10802,
-      "sha256": "351678116f3af088660b48c552e2683875f1fa3292abf9123aa8d9b8f237a7f3"
+      "bytes": 11142,
+      "sha256": "03eaaf9faa092e0a8463d7325cfef045682c13a9fafb6e3699ef175623db9126"
     },
     {
       "path": "docs/BUILD_REPORT.md",
-      "bytes": 3994,
-      "sha256": "bc03ec8501b3e85f21f18688abad9185bc20e41658fe7aa182a7018634a29659"
+      "bytes": 4860,
+      "sha256": "c576d6c196e034333048f66a86babf2a27e01f23a99d94416435301c13bef454"
+    },
+    {
+      "path": "docs/CHARACTERS_PHASE4.md",
+      "bytes": 6340,
+      "sha256": "9335f7f20bfdf5ab7a259e79615533bd9f657a58eef258299c414c58a68df65a"
     },
     {
       "path": "docs/DEPENDENCIES.md",
@@ -85,13 +90,18 @@
     },
     {
       "path": "docs/previews/arena.jpg",
-      "bytes": 108690,
-      "sha256": "069cbcef1910dba6d04fe02e18c8e840f831872648ffbbdf713019d2b2941590"
+      "bytes": 108674,
+      "sha256": "b6868e923327bd16ac9b0386ee23a41aa78849c804dafe9d8903494d2fc05fdc"
     },
     {
       "path": "docs/previews/cast.jpg",
-      "bytes": 55294,
-      "sha256": "112b00dd2ce299d95f8cedbc6a18da6d71ccc9e40c796bf2d0fcbd0c9998fb6a"
+      "bytes": 112037,
+      "sha256": "9a513d62d2e0e0adc9765a21a36d1018268deb82b0a2ecb4c977fab7e3e45188"
+    },
+    {
+      "path": "docs/previews/collection.jpg",
+      "bytes": 110237,
+      "sha256": "83d5d7923f249c66389419019af0d8304dcd05ef04d8eceb5f3f1fb29a9c06b4"
     },
     {
       "path": "docs/previews/lobby-legacy.jpg",
@@ -100,8 +110,8 @@
     },
     {
       "path": "docs/previews/lobby.jpg",
-      "bytes": 154200,
-      "sha256": "b2fbb78ed209549db5fa43f2ea761903a3c60ad17cf301593b25d532f07c0846"
+      "bytes": 154180,
+      "sha256": "23dd7257b43b5bff9b592356a153930cbb2f0a9180aaa0ffbbffdba1d80d3657"
     },
     {
       "path": "docs/previews/overview-legacy.jpg",
@@ -110,8 +120,8 @@
     },
     {
       "path": "docs/previews/overview.jpg",
-      "bytes": 104012,
-      "sha256": "7e4ee5e20aa30ac8eead6cb9440f8e7af23e90d95ef77b8d8bdcab1f3164db1a"
+      "bytes": 103916,
+      "sha256": "75f497976c306ba9d43944854f00e9b3c6fae077326bc890664adbd96cce474c"
     },
     {
       "path": "docs/previews/palms-legacy.jpg",
@@ -120,8 +130,8 @@
     },
     {
       "path": "docs/previews/palms.jpg",
-      "bytes": 124748,
-      "sha256": "223124f736e11085d515f0600921f940e420b654fd1365f0662e894810e22b43"
+      "bytes": 124624,
+      "sha256": "d06ba2e6af9a7832454ebe1941a47f15df37eb019a08725eb5e3f4e335c0286d"
     },
     {
       "path": "docs/previews/play-legacy.jpg",
@@ -130,88 +140,108 @@
     },
     {
       "path": "docs/previews/play.jpg",
-      "bytes": 119330,
-      "sha256": "9036b0054056eaaf7ef1b1f3bf7f43e1321187bbcf1d5c1404f7a9d901d4535d"
+      "bytes": 118558,
+      "sha256": "7daf323c14cd2830bcf34149826b75140dfbe0e217550dd0888d56c1b3f4a6d3"
+    },
+    {
+      "path": "docs/previews/ui-collection-full.jpg",
+      "bytes": 103694,
+      "sha256": "49334db3e76fe66fbe2098f1c1403bfcf40ce08b1a466ba487016e36dd70a225"
+    },
+    {
+      "path": "docs/previews/ui-collection.jpg",
+      "bytes": 98552,
+      "sha256": "59ed7509da2ac0d48cdf55b3535ddcfe3a705a77ce09febef41cb64899af34ed"
     },
     {
       "path": "docs/previews/ui-desktop.jpg",
-      "bytes": 187005,
-      "sha256": "253ef3d9e0814748f5720ca5090e8d5a1db52e0aa957470acb75ec790d203ea9"
+      "bytes": 188439,
+      "sha256": "9bbc14b9ed57ee7b313b4c421dc98e988478e270fe3945f55f9954ae86067689"
     },
     {
       "path": "docs/previews/ui-inventory.jpg",
-      "bytes": 123387,
-      "sha256": "e06f3bdc040a2f4f9e92bb2054667a8ae010f7bd892625e873210b25112c89ad"
+      "bytes": 124367,
+      "sha256": "aed214274e13cf481ce4bfd5964cdb53a466935c359be36cf23d20d3608e9b55"
     },
     {
       "path": "docs/previews/ui-laptop.jpg",
-      "bytes": 157507,
-      "sha256": "5ea99b0e05dbbae703d963707ebdc039a775e6f55c805973e28abddf4bba803f"
+      "bytes": 159201,
+      "sha256": "7b6d6353c5ab3a7ec039ad9cedc1061e8ee2bfef6a54936b3630127544639b38"
     },
     {
       "path": "docs/previews/ui-lobby.jpg",
-      "bytes": 177954,
-      "sha256": "b3f538dc77177cebaf91ffed0f2a7784b86ab3d48ef627b8a79ee297f39da856"
+      "bytes": 179401,
+      "sha256": "8e2e9058aa41858b33ce36568c80bdb0f9d0727b51b2d1868cb372e5b60f618f"
+    },
+    {
+      "path": "docs/previews/ui-phone-collection.jpg",
+      "bytes": 59348,
+      "sha256": "710307a8b29e98b8bba32c3ceb86d33d3840541bbe527e62b6ea055236690c65"
     },
     {
       "path": "docs/previews/ui-phone-landscape.jpg",
-      "bytes": 80653,
-      "sha256": "6fd34e80280ec1d79640d0e1633e08454060db1fa8486916bce117a1b9dd2364"
+      "bytes": 81932,
+      "sha256": "99014167b3b6e615c80e4f3b4e44fef9f7bba2f917630938eb4da777c4465511"
     },
     {
       "path": "docs/previews/ui-phone-shop.jpg",
-      "bytes": 55739,
-      "sha256": "49529afec96c1ed14da2ebfc5f471cbbff7ddf82b48c6051239cf69b14bcda39"
+      "bytes": 56455,
+      "sha256": "2e6b98e990190ca129d2ada5deaf8d453a0e1b19aae32c3d42058aa2f39703b8"
     },
     {
       "path": "docs/previews/ui-phone.jpg",
-      "bytes": 87391,
-      "sha256": "63882b6a8988e0a59df9047b6fecc1cf7e9b58bac9301ede9f739f41065b624f"
+      "bytes": 88241,
+      "sha256": "14ab81ec94b63ec324362c7178666dde94c123cdb5df5fb610f2a8e217fd554f"
     },
     {
       "path": "docs/previews/ui-results.jpg",
-      "bytes": 170212,
-      "sha256": "eb6f4949d563415dea1ce314e7214847f13da558e90e6eb197c7c20e842baae4"
+      "bytes": 171802,
+      "sha256": "d7e8a3256b1b1c89870c445c07bc81c63d42cc9e569d7302f77f82c590512be2"
     },
     {
       "path": "docs/previews/ui-settings.jpg",
-      "bytes": 123593,
-      "sha256": "85e372a59c8a5a02092acdf7f22db5c564c914d9e182459d425de854c880b22e"
+      "bytes": 124792,
+      "sha256": "83ed8565e9677e878dda31cdc49e644fc25a28160528396e2c0d75402307002f"
     },
     {
       "path": "docs/previews/ui-shop.jpg",
-      "bytes": 123929,
-      "sha256": "b8d7618f872d1f9d344565b95e16e4b28b46d17ab543e1a6ccd86f6c6ce4d8bd"
+      "bytes": 125161,
+      "sha256": "c736f5a859696b94a3bea5870df07ade300e27d38a741c4475537da793884b75"
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1449193,
-      "sha256": "a03ac5752357d2b35710ca0b641594d5bd5cb27526dfd5015b0f7015cc37adf8"
+      "bytes": 1603336,
+      "sha256": "92595a0cb39ac424e00218039f6bade64e969efc8360fcd288ac5cadc8ad3f4d"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1449194,
-      "sha256": "05f1666fa33a0225eaca149dbcb36fd9405304961a28cdd5370b51d47a825b1c"
+      "bytes": 1603337,
+      "sha256": "c724dde201b9bb32f76917e2dfa22f7428a36a554185cff7de7758070fb94953"
+    },
+    {
+      "path": "src/client/Collection.luau",
+      "bytes": 11310,
+      "sha256": "df4ead9235cf2831d99b42efbe691127ffb192570219edea235b6df157dd2bbb"
     },
     {
       "path": "src/client/CreatureData.luau",
-      "bytes": 9485,
-      "sha256": "1a8549144933850957378b8e87616eb94f1b058bc0f6c48b1193fe590ae1d39a"
+      "bytes": 15029,
+      "sha256": "e2ab342a827652c13f9dea6e76d9bec8cc5839f2dbfceadc57fd2f3cd279eca2"
     },
     {
       "path": "src/client/Creatures.luau",
-      "bytes": 3758,
-      "sha256": "3823df1a860dbe674b10731ba739eb418000dcc55ef852504b58ed53ddbb0042"
+      "bytes": 11305,
+      "sha256": "5ce80715bdab03b72de085c45b7337cf334db48998235640c05e187cf70e7e5b"
     },
     {
       "path": "src/client/Effects.luau",
-      "bytes": 8875,
-      "sha256": "9f70719957ca63e6454dd121afc8493bef3d15fa4f9827d17d4c8d209513b967"
+      "bytes": 13399,
+      "sha256": "55a90a186dd76b6c1bfa12d7ae8d0404a41d12d522f473e9efb7e0d152b47110"
     },
     {
       "path": "src/client/Hud.luau",
-      "bytes": 24290,
-      "sha256": "977665ac0109dd3170ee14aba0e989e43f6aafdcd7290b2501ffffc457b5fe47"
+      "bytes": 25581,
+      "sha256": "2f1c4af929a5a26670a7701bd216859b7b3eef6c5819b24ee009503dc032adca"
     },
     {
       "path": "src/client/Iconography.luau",
@@ -230,13 +260,13 @@
     },
     {
       "path": "src/client/Panels.luau",
-      "bytes": 13639,
-      "sha256": "18ba62490561856ca2126dbf127232eda27d8b99cc45f699ee77969969335e5b"
+      "bytes": 14290,
+      "sha256": "f367d371b2be081e7f16786e99d0fbf549097d428dd26f45251655514151fb99"
     },
     {
       "path": "src/client/Theme.luau",
-      "bytes": 3323,
-      "sha256": "954538743114ffc8929deb5924e3c0bf98ebe3c0859044e445c6a9cfc984aae1"
+      "bytes": 3509,
+      "sha256": "549a99042951615ebae139665e42da42957568d71314556011d401041cd226fa"
     },
     {
       "path": "src/server/ArtService.luau",
@@ -245,8 +275,8 @@
     },
     {
       "path": "src/server/Main.server.luau",
-      "bytes": 18146,
-      "sha256": "2bc3d6430770dcc0375676aefb63f2ea0be0401f55c5ff4304dcd7150ec9ffa8"
+      "bytes": 18857,
+      "sha256": "e624db27c2484e92525ee5be89d4887747380319481287b2d37ef37585f81c1a"
     },
     {
       "path": "src/server/WorldData.luau",
@@ -270,13 +300,13 @@
     },
     {
       "path": "src/server/core/PickupLedger.luau",
-      "bytes": 4382,
-      "sha256": "caa9aed06d9b37e06c01e7207d7ddb1d689fe0c2b4ab7a58b4f7b4b6d42dcbbd"
+      "bytes": 5006,
+      "sha256": "bd0f4c9cdb336bf76a95e3f0d63f6ad8605eb2792c7b6e9b217e3110eedad7c8"
     },
     {
       "path": "src/server/core/RoundMachine.luau",
-      "bytes": 7818,
-      "sha256": "99bc29f66c7ea0c8e0da079ac6e428185027606edb79d2dc0338d599df31b2a1"
+      "bytes": 8828,
+      "sha256": "80665c57bbcd2525b8e792858616904702ce4c2354ce18d943eca3a351512ea8"
     },
     {
       "path": "src/shared/ArtDirection.luau",
@@ -289,19 +319,24 @@
       "sha256": "82825300d74702da484e213bc688fec32343967130bc05bf90458c0aca2f2184"
     },
     {
+      "path": "src/shared/Creatures.luau",
+      "bytes": 1765,
+      "sha256": "7b753b1af4922366ab8e9ef2694ff593c736f6f03cc336d08cac5bae3cb59269"
+    },
+    {
       "path": "tests/adapters.spec.luau",
-      "bytes": 22905,
-      "sha256": "ec1ec6f7ccbe1e39fd72cd07149144a354e648606f6656239891e1282c8a0534"
+      "bytes": 29658,
+      "sha256": "ee8f4b290109f06b9b549a9c83a60b0bf448680cf3a475d15ce5fe919c3c8ce6"
     },
     {
       "path": "tests/core.spec.luau",
-      "bytes": 19771,
-      "sha256": "edd25cc396aa5eff75a586c4329a761c30709dd5a72939bf75129d2ed7b7febe"
+      "bytes": 24827,
+      "sha256": "bcce3d7f2640edd655339570eb30fccdfb97b6972e5d4636a3723d057c8138f2"
     },
     {
       "path": "tests/fixtures/roblox-api.json",
-      "bytes": 71910,
-      "sha256": "822e97449ada17ce148b031e6e65f6eb6158bc49d0b29832104012e76b36d5e2"
+      "bytes": 88991,
+      "sha256": "b56e1bf04319358bfe578cbef574f0d3cca6698e218280cc3587806d3d973c20"
     },
     {
       "path": "tests/fixtures/world-baseline.json",
@@ -310,13 +345,13 @@
     },
     {
       "path": "tests/roblox_mock.luau",
-      "bytes": 18779,
-      "sha256": "9e95966643e1deae3cc0d4462055d0e272d68f124e351c5d01342fb97af6f437"
+      "bytes": 19204,
+      "sha256": "0e538a1861432fd4aadd64b59e73f00e44b2d88320f4c35d04db3e8f364ed13e"
     },
     {
       "path": "tools/artcheck.py",
-      "bytes": 24684,
-      "sha256": "3005c5b2fda91324d175153e12a144262dd3b0e4bd17330e526a71357e5eee55"
+      "bytes": 26201,
+      "sha256": "7887cd93b9eb57ebdc23dd0ab9d9f1da44cb94287ed28ee0b04392a86ef45cf6"
     },
     {
       "path": "tools/bootstrap_luau.py",
@@ -325,28 +360,33 @@
     },
     {
       "path": "tools/build_place.py",
-      "bytes": 21261,
-      "sha256": "8676c70ff80ee91cba49b6dcd11ea16e78c3083adfe078ca9068d4dfa4a07619"
+      "bytes": 30292,
+      "sha256": "d28faaa670c57fc971b75fc713fc3f834b26bd8930984ad3f2ba2fdeabcf1fe6"
     },
     {
       "path": "tools/check.py",
-      "bytes": 10003,
-      "sha256": "6211224d5bea1e1adbcb50f3398a3a5d2100e71775695f95a63f447cc7bb273d"
+      "bytes": 10979,
+      "sha256": "82c73fc95f802497672575aa233e7bb04fc4cd33fba35b0c011dceb021504cd6"
     },
     {
       "path": "tools/creatures.py",
-      "bytes": 12177,
-      "sha256": "ff4b8f738559b1d64812471e2df42e8be85ac9163023a32e8578034ee0c01ed1"
+      "bytes": 24225,
+      "sha256": "dc331b782179563b3fb23098c93c2705e0ee29418e11fb23c46216362cca143d"
+    },
+    {
+      "path": "tools/exhibit.py",
+      "bytes": 3113,
+      "sha256": "35a5b3c89f0cc4c700833dad08dc32e8aeead0df2f9ce7e46ff247fb25820328"
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 8574,
-      "sha256": "fc1833dee21c86e309a86a7dc649bd580aaa50119d884f05a6fcdfc84f824d6c"
+      "bytes": 8908,
+      "sha256": "f08e653b7c4dfc0e5653c90824686bd941eeda9c8e09433fdc73a91ce185ad21"
     },
     {
       "path": "tools/preview.py",
-      "bytes": 27736,
-      "sha256": "7b7d180f939cf00a9672fdae5fade7549a2ad02ce5a5948ff94ae4c679c089fa"
+      "bytes": 32728,
+      "sha256": "c3b12cef395703b10a9aef72f7dfa6117f54077d860891252d319d72c0bdc272"
     },
     {
       "path": "tools/terrain_aug.py",
@@ -365,18 +405,18 @@
     },
     {
       "path": "tools/ui.py",
-      "bytes": 10273,
-      "sha256": "89289d8c898697e23382b1abe2a701626992e0f1aa994888fdb39426a5b0af61"
+      "bytes": 10474,
+      "sha256": "b1384cc4fd68aa01e2624cd57741fa8c8c79643bb49232ba3963fe44908eaa3a"
     },
     {
       "path": "tools/uidraw.py",
-      "bytes": 26383,
-      "sha256": "28ed45ddafa70f79fed6a065bd8a36a24cf6ac3d4c99fc421ad1fa9a78d94a19"
+      "bytes": 34652,
+      "sha256": "5681340af40059cce4e8d4fe26a86e18f05e349af169f805e672038de787101a"
     },
     {
       "path": "tools/verify_place.py",
-      "bytes": 13573,
-      "sha256": "e55f11a94d8115533592422934b576d2fd018649020e2430247dd707365cab32"
+      "bytes": 22048,
+      "sha256": "b058f20359407b33bc9bb33dc7cde51d5bae7b822c244b21fe00b9130ebe29ac"
     },
     {
       "path": "tools/world.py",
@@ -384,12 +424,12 @@
       "sha256": "45ede7af7cde560938d05e1487bd2f20017916db6c6a2f58f5890c938e1bbdbe"
     }
   ],
-  "file_count_excluding_manifest": 76,
-  "production_script_count": 19,
+  "file_count_excluding_manifest": 84,
+  "production_script_count": 21,
   "place_count": 2,
-  "source_sha256": "21cf89e603bac8b0aacc5a2917b28ee10ab2a2aaff7abc479fb0e616f752b8e7",
-  "prior_verification_timestamp_utc": "2026-11-08T14:06:05+00:00",
-  "prior_automated_tests_passed": 198,
+  "source_sha256": "07d49691281e354da80ccbed6c85e008cb1a84038e9c515146d063545fdaaab5",
+  "prior_verification_timestamp_utc": "2026-11-08T14:47:11+00:00",
+  "prior_automated_tests_passed": 221,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",

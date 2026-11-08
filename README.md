@@ -51,9 +51,21 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for the complete included/missi
 ## Implemented
 
 - **One original lobby + Synapse Circuit arena:** 824 anchored map parts in a natural tropical art direction — pale sand and teal stone courts, a tea pavilion, lookout tower, beach bar and shore shrine on the arena promenade, a kiosk/pergola/terrace lobby, a warm-lit gate, one brain beacon and an ocean horizon — plus four bridged satellite platforms, each with its own landmark. [Phase 1 report →](docs/VISUAL_CHANGES.md) · [Phase 2 report →](docs/VISUAL_CHANGES_PHASE2.md)
-- **Six original collectibles:** brain cell / brick frog (+1), wobble fish / silly goose (+5), toaster cat / sentient sock (+10) — built from primitives, chosen client-side from the slot id, so rarity stays a server-only value.
+- **Six original characters as real 3D Models:** **BRAINY** the brain and **BLORBO** the frog (+1),
+  **GLORP** the fish and **HJONK** the goose (+5), **CRUSTY** the toast and **WHIFFERS** the sock
+  (+10). Each is a separate, named, low-poly Model built from primitives — no image, no uploaded
+  mesh — with a face, its own proportions, idle and collect motion, a floating name + rarity card
+  and a pickup burst. All six are baked into the places under `Workspace → BrainrotCharacters`
+  (each on a plinth in the lobby exhibit) *and* instantiated in the arena. The server rolls the
+  species and the reward; the client can only animate the receipt.
+  [Phase 4 report →](docs/CHARACTERS_PHASE4.md)
+- **Specimen log:** a collection screen of six live 3D viewports showing name, rarity, reward,
+  catch count and whether the character has been seen. Uncaught entries render as silhouettes
+  reading `NOT SEEN YET`. Open it with the gear card, the `SPECIMENS n / 6` chip or **C**.
 - **Automatic multiplayer lifecycle:** waiting → 12s intermission → **180s round** → 9s results → repeat. Solo testing also works. Late joiners enter the active round at zero.
-- **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**; five-second respawns. Atomic claiming prevents double rewards.
+- **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**
+  (displayed as Common / Rare / Legendary); five-second respawns. Atomic claiming prevents
+  double rewards, and each cell resolves to one specific character.
 - **Low gravity:** activates 60 seconds into each standard round for 25 seconds, with UI and lighting feedback, then restores normal gravity.
 - **Complete game UI:** a top HUD (brain cells, coins, synchronized round clock), a live server-driven leaderboard, centre notifications (round flow, chaos events, winner/tie), a bottom bar with **Shop**, **Gear** and **Settings**, and a lobby panel with the next-round countdown. Dark navy translucent panels, cyan/violet/amber accents, rounded corners and short tweens; it reflows for desktop, tablet and phone in both orientations.
 - **Recovery:** death/reset rejoins the current arena; falling rescues the player without losing points; round cleanup removes cells and resets gravity.
@@ -64,7 +76,7 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for the complete included/missi
 
 ### Controls
 
-Use Roblox's normal **WASD / Space / mouse** controls on desktop or the default **thumbstick / jump** controls on mobile. Walk into cells; no pickup button is required. **Tab** toggles the leaderboard, **H** opens the how-to card, **B** opens the shop, **Esc** closes a card. Every one of those also has an on-screen button. On phones the action bar sits above the thumbstick and jump zones, and the leaderboard collapses behind **RANKS** so it never covers the round clock.
+Use Roblox's normal **WASD / Space / mouse** controls on desktop or the default **thumbstick / jump** controls on mobile. Walk into cells; no pickup button is required. **Tab** toggles the leaderboard, **H** opens the how-to card, **B** opens the shop, **C** opens the specimen log, **Esc** closes a card. Every one of those also has an on-screen button. On phones the action bar sits above the thumbstick and jump zones, and the leaderboard collapses behind **RANKS** so it never covers the round clock.
 
 ## Included files
 
@@ -77,7 +89,7 @@ src/server/ArtService.luau    Applies the shared lighting rig (idempotent)
 src/shared/ArtDirection.luau  Generated palette/lighting mirror of tools/theme.py
 src/server/WorldData.luau     Generated runtime geometry and spawn data
 src/shared/Config.luau       Timings, physics, rarity, coin and cosmetic settings
-src/client/                 HUD (HUD, Panels, Kit, generated Theme), silhouettes, cell FX, preferences
+src/client/                 HUD (HUD, Panels, Kit, generated Theme), character Models, specimen log, silhouettes, cell FX, preferences
 tests/                      Core tests + production-script contract tests + API fixture
 tools/                      Deterministic place build, verification, art checks, previews and packaging
 docs/                       Acceptance checklist, architecture and actual build report
@@ -96,4 +108,4 @@ python3 tools/package_release.py
 
 On Linux/macOS with `make` and `g++`, `python3 tools/bootstrap_luau.py` builds pinned official **Luau 0.744** locally. Existing tools on `PATH` are also supported. [Architecture / editing notes →](docs/ARCHITECTURE.md)
 
-The test suite executes 72 core Luau tests (including 100 simulated 12-player logical rounds), 32 production-adapter tests against explicit Roblox service doubles, 30 XML/API/geometry tests and 24 art-direction tests. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.
+The test suite executes 90 core Luau tests (including 100 simulated 12-player logical rounds), 60 production-adapter tests against explicit Roblox service doubles, 36 XML/API/geometry tests and 35 art-direction tests — 221 in total. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.

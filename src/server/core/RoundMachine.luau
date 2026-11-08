@@ -12,10 +12,12 @@ export type Settings = {
 export type Player = {
 	id: number, name: string, score: number, coins: number, wins: number, pickups: number,
 	participating: boolean, haloOwned: boolean, haloEquipped: boolean,
+	collection: { [string]: number },
 }
 export type Row = {
 	id: number, name: string, score: number, coins: number, wins: number, pickups: number,
-	haloOwned: boolean, haloEquipped: boolean,
+	haloOwned: boolean, haloEquipped: boolean, collection: { [string]: number },
+	collected: number,
 }
 export type Results = {
 	roundId: number, winners: { Row }, topScore: number, rewards: { [string]: number },
@@ -51,6 +53,7 @@ function RoundMachine.addPlayer(self: Machine, id: number, name: string): boolea
 	self.players[id] = {
 		id = id, name = string.sub(name, 1, 50), score = 0, coins = 0, wins = 0, pickups = 0,
 		participating = self.phase == "Playing", haloOwned = false, haloEquipped = false,
+		collection = {},
 	}
 	return true
 end
@@ -64,7 +67,16 @@ function RoundMachine.isParticipating(self: Machine, id: number): boolean
 	return self.phase == "Playing" and player ~= nil and player.participating
 end
 
-function RoundMachine.award(self: Machine, id: number, value: number, roundId: number): boolean
+-- `species` is the character the player actually collected. It is recorded for the
+-- collection screen only: it never changes the reward, which stays pinned to the
+-- server's denomination table.
+function RoundMachine.award(
+	self: Machine,
+	id: number,
+	value: number,
+	roundId: number,
+	species: string?
+): boolean
 	if roundId ~= self.roundId or not self:isParticipating(id) then
 		return false
 	end
@@ -75,7 +87,25 @@ function RoundMachine.award(self: Machine, id: number, value: number, roundId: n
 	local player = self.players[id]
 	player.score += value
 	player.pickups += 1
+	if species and species ~= "" then
+		player.collection[species] = (player.collection[species] or 0) + 1
+	end
 	return true
+end
+
+-- Number of distinct characters collected this session (0-6).
+function RoundMachine.distinct(self: Machine, id: number): number
+	local player = self.players[id]
+	if not player then
+		return 0
+	end
+	local count = 0
+	for _, amount in player.collection do
+		if amount > 0 then
+			count += 1
+		end
+	end
+	return count
 end
 
 function RoundMachine.haloAction(self: Machine, id: number): (boolean, string)
@@ -99,10 +129,19 @@ end
 function RoundMachine.rows(self: Machine): { Row }
 	local rows: { Row } = {}
 	for _, player in self.players do
+		local collection: { [string]: number } = {}
+		local collected = 0
+		for species, amount in player.collection do
+			collection[species] = amount
+			if amount > 0 then
+				collected += 1
+			end
+		end
 		table.insert(rows, {
 			id = player.id, name = player.name, score = player.score, coins = player.coins,
 			wins = player.wins, pickups = player.pickups,
 			haloOwned = player.haloOwned, haloEquipped = player.haloEquipped,
+			collection = collection, collected = collected,
 		})
 	end
 	table.sort(rows, function(a: Row, b: Row)

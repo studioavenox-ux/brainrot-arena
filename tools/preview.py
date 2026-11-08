@@ -27,7 +27,9 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-import theme
+import theme  # noqa: E402
+import creatures  # noqa: E402
+import exhibit  # noqa: E402
 from creatures import CREATURES, creature_for  # noqa: E402
 from world import make_world  # noqa: E402
 
@@ -103,6 +105,7 @@ class Frame:
         self.focal = (height / 2) / math.tan(math.radians(fov) / 2)
 
     def project(self, points):
+        """World -> screen (pixels) and camera-space depth."""
         rel = points - self.eye
         cam = rel @ self.basis.T
         depth = cam[:, 2]
@@ -112,10 +115,10 @@ class Frame:
         return np.stack([x, y], axis=1), depth
 
 
-FIXED_INKS = {
-    "eye": (32, 37, 43), "glint": (250, 250, 248),
-    "accent_wood": (122, 92, 68), "accent_cream": (238, 230, 212),
-}
+FIXED_INKS = dict(creatures.FIXED_COLORS)
+
+SHAPE_NAME = {"box": "Block", "ball": "Ball", "cyl": "Cylinder"}
+kinds_by_value = {1: (255, 94, 190), 5: (255, 213, 67), 10: (83, 238, 255)}
 
 
 def tint(base, role):
@@ -123,37 +126,79 @@ def tint(base, role):
     if role in ("body", "neon"):
         return list(base)
     if role == "body_light":
-        return [round(c + (255 - c) * .24) for c in base]
+        return [round(c + (255 - c) * .26) for c in base]
     if role == "body_dark":
-        return [round(c + ((36, 41, 51)[i] - c) * .40) for i, c in enumerate(base)]
+        return [round(c + ((34, 40, 50)[i] - c) * .42) for i, c in enumerate(base)]
+    if role == "blush":
+        return [round(c + ((255, 150, 190)[i] - c) * .55) for i, c in enumerate(base)]
     return list(FIXED_INKS.get(role, base))
 
 
 def creature_parts(name, x, y, z, base, *, yaw=0.0):
-    """One creature instance from tools/creatures.py, placed at a pickup slot."""
-    spec = CREATURES[name]
+    """One character from tools/creatures.py, standing at a pickup slot."""
     out = []
-    cos, sin = math.cos(yaw), math.sin(yaw)
-    for item in spec["Parts"]:
-        ox, oy, oz = item["Offset"]
-        size = item["Size"]
-        rot = item["Rotation"]
-        if item["Shape"] == "Ball":
-            # Spheres are rotation-invariant: cheap to skip the transform.
-            pos = (x + ox, y + oy, z + oz)
-            rot = (0, 0, 0)
-        else:
-            pos = (x + ox * cos - oz * sin, y + oy, z + ox * sin + oz * cos)
-            rot = (rot[0], rot[1] + math.degrees(yaw), rot[2])
+    for item in creatures.mount_parts(name, (x, y, z), yaw):
         out.append({
-            "Name": f"{name}_{item['Name']}", "Position": list(pos), "Size": list(size),
-            "Color": tint(base, item["Role"]), "Rotation": list(rot),
-            "Material": "SmoothPlastic", "CastShadow": False, "Collide": False,
-            "Shape": "Block" if item["Shape"] == "WedgePart" else item["Shape"],
-            "Class": "WedgePart" if item["Shape"] == "WedgePart" else "Part",
+            "Name": item["Name"], "Position": list(item["Position"]),
+            "Size": list(item["Size"]), "Color": tint(base, item["Role"]),
+            "Rotation": list(item["Rotation"]),
+            "Material": item["Material"], "CastShadow": False, "Collide": False,
+            "Shape": SHAPE_NAME[item["Kind"]], "Class": "Part",
             "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
         })
     return out
+
+
+def creature_label(name, value, x, y, z, *, yaw=0.0):
+    """The floating name + rarity plate every character carries in game."""
+    rarity = creatures.RARITY[value]["Label"]
+    return {
+        "Signs": [{
+            "Part": f"Label_{name}",
+            "Lines": [
+                {"Text": CREATURES[name]["Label"], "Fraction": .62, "Color": (238, 243, 255),
+                 "Font": "GothamBlack"},
+                {"Text": rarity, "Fraction": .38,
+                 "Color": (255, 199, 92) if value == 10 else ((255, 213, 67) if value == 5
+                                                             else (255, 94, 190)),
+                 "Font": "GothamBold"},
+            ],
+        }],
+    }
+
+
+def annotate_cast(image, frame, base):
+    """Draw the floating name + rarity card over each character, in 2D.
+
+    A BillboardGui is a screen-space element the software renderer cannot draw, so
+    the plate labels each character itself — the same two strings, in the same
+    colours, a player reads over its head at gameplay distance.
+    """
+    draw = ImageDraw.Draw(image)
+    name_font, rarity_font = _font(19), _font(13)
+    order = [n for value in (1, 5, 10) for n in creatures.FAMILY[value]]
+    # One shared label row: names line up across the sheet instead of stepping up
+    # and down with each character's own height.
+    ceiling = base[1] + max(creatures.top_of(n) for n in order) + .72
+    for index, name in enumerate(order):
+        x = base[0] + (index - (len(order) - 1) / 2) * 2.55
+        z = base[2]
+        value = CREATURES[name]["Value"]
+        color = (255, 118, 196) if value == 1 else ((255, 213, 67) if value == 5 else (83, 238, 255))
+        # Name on top, rarity underneath: the same stack as the in-game card.
+        point = np.array([[x, ceiling, z], [x, ceiling - .26, z]])
+        screen, depth = frame.project(point)
+        if depth.min() <= 0.2:
+            continue
+        (sx, sy_name), (_, sy_rarity) = screen
+        for text, font, fill, sy in (
+                (CREATURES[name]["Label"], name_font, (240, 245, 252), sy_name),
+                (creatures.RARITY[value]["Label"] + "  •  +" + str(value),
+                 rarity_font, color, sy_rarity)):
+            width = draw.textlength(text, font=font)
+            draw.text((sx - width / 2 + 1, sy + 1), text, font=font, fill=(10, 14, 20))
+            draw.text((sx - width / 2, sy), text, font=font, fill=fill)
+    return image
 
 
 def add_cells(parts, pickup_positions, kinds=((255, 94, 190), (255, 213, 67), (83, 238, 255))):
@@ -193,39 +238,50 @@ def add_cells(parts, pickup_positions, kinds=((255, 94, 190), (255, 213, 67), (8
     return out
 
 
-def cast_lineup(base=(0, 28.4, 0)):
-    """The six-critter cast sheet: one row, deterministic yaws, halo + rarity marks."""
+def cast_lineup(base=(0, 28.4, 0), spacing=2.55):
+    """The six-character cast sheet: one row, each on its own little plinth.
+
+    Sized so every face is legible at plate resolution — the point of a cast sheet is
+    to judge expression and silhouette, not to fit the whole roster on a phone screen.
+    """
     out = []
-    names = ["brain", "frog", "fish", "goose", "toast", "sock"]
-    values = {"brain": 1, "frog": 1, "fish": 5, "goose": 5, "toast": 10, "sock": 10}
-    kinds = {1: (255, 94, 190), 5: (255, 213, 67), 10: (83, 238, 255)}
-    for index, name in enumerate(names):
-        value = values[name]
-        x = base[0] - 6.75 + index * 2.7
+    order = [name for value in (1, 5, 10) for name in creatures.FAMILY[value]]
+    for index, name in enumerate(order):
+        value = CREATURES[name]["Value"]
+        kind = kinds_by_value[value]
+        x = base[0] + (index - (len(order) - 1) / 2) * spacing
         y, z = base[1], base[2]
-        # Faces are authored toward -Z; turn them to the camera for the sheet.
-        out.extend(creature_parts(name, x, y, z, kinds[value], yaw=math.pi + math.radians(20)))
+        plinth_w, plinth_h, _ = creatures.EXHIBIT["Plinth"]
         out.append({
-            "Name": "CellHalo", "Position": [x, y - .05, z], "Size": [.09, 1.62, 1.62],
-            "Color": [255, 255, 255], "Rotation": [0, 0, 90], "Material": "SmoothPlastic",
-            "CastShadow": False, "Collide": False, "Shape": "Cylinder", "Class": "Part",
-            "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+            "Name": f"CastPlinth_{name}", "Position": [x, y + creatures.bottom_of(name) - .09, z],
+            "Size": [plinth_w * .92, .18, plinth_w * .92],
+            "Color": (226, 214, 190), "Rotation": [0, 0, 0], "Material": "Slate",
+            "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
+            "Transparency": 0.0, "Role": "hero", "Layer": 3, "Island": "Arena",
         })
-        if value == 5:
-            out.append({
-                "Name": "CellMark", "Position": [x, y + 1.12, z], "Size": [.10, .74, .74],
-                "Color": list(kinds[value]), "Rotation": [0, 0, 90], "Material": "Neon",
-                "CastShadow": False, "Collide": False, "Shape": "Cylinder", "Class": "Part",
-                "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
-            })
-        elif value == 10:
-            for angle in (38, -38):
-                out.append({
-                    "Name": "CellMark", "Position": [x, y - .06, z + .62], "Size": [.12, .12, .92],
-                    "Color": list(kinds[value]), "Rotation": [0, 0, angle], "Material": "Neon",
-                    "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
-                    "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
-                })
+        # Faces are authored toward +Z and this sheet's camera sits on +Z.
+        out.extend(creature_parts(name, x, y, z, kind, yaw=0.0))
+    return out
+
+
+def exhibit_stage(base, spacing=2.6):
+    """Six characters on individual plinths — the lobby exhibit, drawn to data."""
+    out = []
+    order = [name for value in (1, 5, 10) for name in creatures.FAMILY[value]]
+    kinds = kinds_by_value
+    for index, name in enumerate(order):
+        x = base[0] - (len(order) - 1) * spacing / 2 + index * spacing
+        y, z = base[1], base[2]
+        value = CREATURES[name]["Value"]
+        plinth_w, plinth_h, plinth_d = creatures.EXHIBIT["Plinth"]
+        out.append({
+            "Name": f"Plinth_{name}", "Position": [x, y - .72, z],
+            "Size": [plinth_w, plinth_h, plinth_d],
+            "Color": (226, 214, 190), "Rotation": [0, 0, 0], "Material": "SmoothPlastic",
+            "CastShadow": False, "Collide": True, "Shape": "Block", "Class": "Part",
+            "Transparency": 0.0, "Role": "hero", "Layer": 3, "Island": "Lobby",
+        })
+        out.extend(creature_parts(name, x, y, z, kinds[value], yaw=0.0))
     return out
 
 
@@ -548,9 +604,16 @@ VIEWS = {
         title="PLAYER EYE — Brain Cells read clearly over sand and stone",
     ),
     "cast": dict(
-        eye=(0, 29.6, 11.6), target=(0, 27.6, 0), fov=46, width=1000, height=560,
-        title="THE CAST — six original critters: brain/frog +1, fish/goose +5, toast/sock +10",
+        eye=(0, 29.6, 12.3), target=(0, 28.6, 0), fov=30, width=1560, height=620,
+        title="THE CAST — six characters on their plinths: +1 Common, +5 Rare, +10 Legendary",
         lineup=True,
+    ),
+    "collection": dict(
+        # Three-quarter view from the spawn pad: the plinths read as separate
+        # objects instead of a row of slabs, and every face still shows.
+        eye=(-5.0, 24.9, 185.9), target=(1.9, 22.9, 199.3), fov=52, width=1180, height=620,
+        title="LOBBY EXHIBIT — the six characters as Models, on the terrace plinths",
+        exhibit=True,
     ),
     "overview": dict(
         eye=(168, 158, 236), target=(0, 20, 46), fov=48, width=1180, height=620,
@@ -588,16 +651,17 @@ def main():
         view["width"] = int(view["width"] * args.scale)
         view["height"] = int(view["height"] * args.scale)
         lineup = view.pop("lineup", False)
+        is_exhibit = view.pop("exhibit", False)
         path = OUT / f"{name}{suffix}.jpg"
         if lineup:
             # A neutral studio plinth so the cast is judged on its own silhouette.
             stage = [{
-                "Name": "CastStage", "Position": [0, 26.2, 0], "Size": [26, .6, 14],
-                "Color": [66, 82, 88], "Rotation": [0, 0, 0], "Material": "Slate",
+                "Name": "CastStage", "Position": [0, 27.6, 0], "Size": [24, .6, 9],
+                "Color": [58, 74, 80], "Rotation": [0, 0, 0], "Material": "Slate",
                 "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
                 "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
             }, {
-                "Name": "CastBackdrop", "Position": [0, 30.0, -6.4], "Size": [26, 13, .6],
+                "Name": "CastBackdrop", "Position": [0, 31.4, -4.6], "Size": [20, 11, .6],
                 "Color": [52, 66, 72], "Rotation": [0, 0, 0], "Material": "Slate",
                 "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
                 "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
@@ -606,7 +670,41 @@ def main():
                       "sun": np.array([1.0, 0.98, 0.95]) * .94,
                       "ambient": np.array([0.44, 0.50, 0.56]),
                       "bounce": np.array([0.26, 0.30, 0.34])}
-            render(stage + cast_lineup((0, 27.0, 0)), path, signs=[], light=studio, **view)
+            # The cast sheet draws the same character data the arena instantiates,
+            # with the name + rarity card a player reads over each head in game.
+            image = render(stage + cast_lineup((0, 28.6, 0)), path, signs=[], light=studio,
+                           **view)
+            if not view.get("transparent"):
+                frame2d = Frame(view["eye"], view["target"], view["fov"], view["width"],
+                                view["height"])
+                image = annotate_cast(image.convert("RGB"), frame2d, (0, 28.6, 0))
+                image.save(path, quality=92)
+            continue
+        if is_exhibit:
+            # The baked exhibit, drawn from the same data build_place.py writes:
+            # plinths on the lobby terrace, characters standing on their top faces.
+            stage = list(world["Parts"])
+            for name, x, y, z in exhibit.layout():
+                stage.append({
+                    "Name": "Plinth_" + name, "Position": [x, exhibit.plinth_y(), z],
+                    "Size": list(exhibit.PLINTH_SIZE), "Color": list(exhibit.PLINTH_COLOR),
+                    "Rotation": [0, 0, 0], "Material": "Limestone", "CastShadow": True,
+                    "Collide": True, "Shape": "Block", "Class": "Part",
+                    "Transparency": 0.0, "Role": "hero", "Layer": 3, "Island": "Lobby",
+                })
+                stage.extend(creature_parts(name, x, y, z,
+                                            kinds_by_value[CREATURES[name]["Value"]],
+                                            yaw=math.radians(exhibit.YAW)))
+            # Exhibit light: open sky above the terrace, so the plinths read as stone
+            # instead of black slabs while the characters keep their own shading.
+            sky_light = {
+                "dir": normalise(np.array([-0.24, 0.84, 0.49])),
+                "sun": np.array([1.0, 0.97, 0.92]) * .72,
+                "ambient": np.array([0.62, 0.63, 0.65]),
+                "bounce": np.array([0.24, 0.22, 0.19]),
+            }
+            render(stage, path, signs=world["Signs"], light=sky_light, **view)
+            print(f"wrote {path.relative_to(ROOT)}")
             continue
         render(parts, path, signs=world["Signs"], light=light, **view)
         print(f"wrote {path.relative_to(ROOT)}")

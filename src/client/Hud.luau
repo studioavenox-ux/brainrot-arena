@@ -10,6 +10,7 @@ local Kit = require(script.Parent.Kit)
 local Theme = require(script.Parent.Theme)
 local Panels = require(script.Parent.Panels)
 local Iconography = require(script.Parent.Iconography)
+local Collection = require(script.Parent.Collection)
 local CreatureData = require(script.Parent.CreatureData)
 local Hud = {}
 Hud.__index = Hud
@@ -62,7 +63,9 @@ function Hud.new(config, request)
 	self.scrimBottom = Kit.scrim(self.root, 130, false, { zIndex = 0 })
 
 	-- ---- top HUD: brand, brain cells, round timer, coins --------------------
-	self.top = Panels.topHud(self.root)
+	self.top = Panels.topHud(self.root, {
+		Specimens = function() self:showCollection() end,
+	})
 
 	-- ---- leaderboard (right) ----------------------------------------------
 	self.board = Panels.leaderboard(self.root)
@@ -72,7 +75,7 @@ function Hud.new(config, request)
 	-- ---- bottom action bar: shop / inventory / settings --------------------
 	self.actions = Panels.actionBar(self.root, {
 		Shop = function() self:showModal("Shop") end,
-		Inventory = function() self:showModal("Inventory") end,
+		Inventory = function() self:showCollection() end,
 		Settings = function() self:showModal("Settings") end,
 	})
 
@@ -158,6 +161,9 @@ function Hud.new(config, request)
 		UDim2.new(1, -36, 0, 0), function() self:closeModal() end, { accent = C.NavyEdge, zIndex = 22 })
 	self.modalClose.Label.TextSize = Type.Body
 
+	-- ---- collection screen (six 3D specimen cards) --------------------------
+	self.collection = Collection.new(self.root, self.config)
+
 	-- ---- persistent secondary buttons -------------------------------------
 	self.helpButton = Kit.button(self.root, "Help", "?", UDim2.fromOffset(36, 36),
 		UDim2.fromOffset(Space.xl, 148), function() self:showModal("Help") end,
@@ -176,8 +182,12 @@ function Hud.new(config, request)
 			self.ranksTouched = true
 		elseif input.KeyCode == Enum.KeyCode.H then
 			if self.modal.Visible then self:closeModal() else self:showModal("Help") end
+		elseif input.KeyCode == Enum.KeyCode.Escape and self.collection:isVisible() then
+			self:hideCollection()
 		elseif input.KeyCode == Enum.KeyCode.Escape and self.modal.Visible then
 			self:closeModal()
+		elseif input.KeyCode == Enum.KeyCode.C then
+			if self.collection:isVisible() then self:hideCollection() else self:showCollection() end
 		elseif input.KeyCode == Enum.KeyCode.B then
 			self:showModal("Shop")
 		end
@@ -230,6 +240,11 @@ function Hud:resize()
 	top.coins.Position = UDim2.new(1, -Space.md, 0, if compact then Space.sm else Space.lg)
 	top.coinValue.TextSize = if compact then 18 else Type.Title
 	top.coinValue.Size = UDim2.new(1, -40, 0, 24)
+	-- Specimen chip sits under the coin counter, same width, so the right column
+	-- reads as one stack.
+	top.specimens.Size = UDim2.fromOffset(if compact then 112 else 152, 30)
+	top.specimens.Position = UDim2.new(1, -Space.md, 0,
+		if compact then (if short then 96 else 66) else (Space.lg + 60))
 
 	-- leaderboard
 	local board = self.board
@@ -276,6 +291,7 @@ function Hud:resize()
 	self.modalPrimary.Size = UDim2.new(1, -56, 0, 44)
 	self.modalBody.TextSize = if short then 12 elseif compact then 13 else Type.Body
 	self.modalTitle.TextSize = if compact then 18 else Type.Title
+	self.collection:resize(width, height)
 
 	if self.state then self:updateLocalValues() end
 end
@@ -333,6 +349,7 @@ function Hud:update(state)
 	self:updateLocalValues()
 	self:updateResults(state)
 	self:updateBanners(state)
+	self.collection:update(self.localRow)
 	self:tick()
 end
 
@@ -342,6 +359,9 @@ function Hud:updateLocalValues()
 	local coins = if row then row.coins else 0
 	self.top.cellValue.Text = tostring(cells)
 	self.top.coinValue.Text = tostring(coins)
+	local collected = if row then row.collected else 0
+	self.top.specimenText.Text = "SPECIMENS  " .. collected .. " / 6"
+	self.top.specimenText.TextColor3 = if collected >= 6 then C.Amber else C.Cyan
 	if self.state then
 		-- On phones the clock is narrow: the round number alone still fits.
 		local round = string.format("ROUND %02d", self.state.roundId or 0)
@@ -433,6 +453,7 @@ function Hud:tick()
 	if self.results.Visible then
 		self.resultNext.Text = "INTERMISSION IN " .. timeString(remaining)
 	end
+	self.collection:step(now, self.reducedMotion)
 end
 
 -- --------------------------------------------------------------------------- #
@@ -472,6 +493,15 @@ end
 function Hud:closeModal()
 	self.modal.Visible = false
 	self.modalKind = nil
+end
+
+function Hud:showCollection()
+	self.collection:show()
+	self.collection:update(self.localRow)
+end
+
+function Hud:hideCollection()
+	self.collection:hide()
 end
 
 function Hud:refreshModal()
@@ -557,6 +587,7 @@ end
 
 function Hud:destroy()
 	for _, connection in self.connections do connection:Disconnect() end
+	self.collection:destroy()
 	self.screen:Destroy()
 end
 

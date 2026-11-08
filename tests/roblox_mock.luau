@@ -222,6 +222,16 @@ function Mock.new(sources, schema, options)
 		self.Parent=nil
 	end
 	function methods:ClearAllChildren() for _,child in children(self) do child:Destroy() end end
+	function methods:Clone()
+		local copy=new(self._class)
+		for key,value in self._props do
+			if key~="Parent" and type(value)~="table" then copy._props[key]=value
+			elseif key~="Parent" and value and value._type then copy._props[key]=value end
+		end
+		for key,value in self._attributes do copy._attributes[key]=value end
+		for _,child in self._children do local clone=child:Clone(); clone.Parent=copy end
+		return copy
+	end
 	function methods:GetPivot()
 		if self.PrimaryPart then return self.PrimaryPart.CFrame end
 		if self._pivot then return self._pivot end

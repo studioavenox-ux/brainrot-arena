@@ -7,18 +7,18 @@ export type Position = { x: number, y: number, z: number }
 export type Kind = { Name: string, Value: number, Weight: number, Color: { number } }
 export type Slot = {
 	id: number, position: Position, generation: number, available: boolean,
-	readyAt: number, kindIndex: number,
+	readyAt: number, kindIndex: number, species: string,
 }
 export type Context = {
 	userId: number, roundId: number, active: boolean, alive: boolean, position: Position,
 }
 export type Receipt = {
 	userId: number, roundId: number, slotId: number, generation: number,
-	kindIndex: number, value: number, position: Position,
+	kindIndex: number, value: number, position: Position, species: string,
 }
 type Fields = {
 	slots: { Slot }, kinds: { Kind }, radius: number, respawn: number,
-	roundId: number, running: boolean, choose: () -> number,
+	roundId: number, running: boolean, choose: () -> number, species: (number, number) -> string,
 }
 export type Ledger = typeof(setmetatable({} :: Fields, PickupLedger))
 
@@ -29,7 +29,14 @@ local function validPosition(p: Position): boolean
 	return finite(p.x) and finite(p.y) and finite(p.z)
 end
 
-function PickupLedger.new(positions: { Position }, kinds: { Kind }, radius: number, respawn: number, choose: () -> number): Ledger
+function PickupLedger.new(
+	positions: { Position },
+	kinds: { Kind },
+	radius: number,
+	respawn: number,
+	choose: () -> number,
+	species: ((number, number) -> string)?
+): Ledger
 	assert(radius > 0 and respawn > 0 and #kinds > 0, "Invalid pickup rules")
 	for _, kind in kinds do
 		assert(kind.Value == 1 or kind.Value == 5 or kind.Value == 10, "Invalid server denomination")
@@ -38,11 +45,19 @@ function PickupLedger.new(positions: { Position }, kinds: { Kind }, radius: numb
 	local slots: { Slot } = {}
 	for id, position in positions do
 		assert(validPosition(position), "Invalid server spawn point")
-		table.insert(slots, { id = id, position = position, generation = 0, available = false, readyAt = 0, kindIndex = 1 })
+		table.insert(slots, {
+			id = id, position = position, generation = 0, available = false,
+			readyAt = 0, kindIndex = 1, species = "",
+		})
+	end
+	-- Which of the two characters for a rarity a slot shows. Pure and deterministic,
+	-- so a cell looks the same for every client and the receipt is authoritative.
+	local speciesOf = species or function(slotId: number, _value: number): string
+		return "brain" .. tostring(slotId % 2)
 	end
 	return setmetatable({
 		slots = slots, kinds = kinds, radius = radius, respawn = respawn,
-		roundId = 0, running = false, choose = choose,
+		roundId = 0, running = false, choose = choose, species = speciesOf,
 	}, PickupLedger)
 end
 
@@ -69,6 +84,7 @@ function PickupLedger.beginRound(self: Ledger, roundId: number)
 		slot.available = true
 		slot.readyAt = 0
 		slot.kindIndex = self:rollKind()
+		slot.species = self.species(slot.id, self.kinds[slot.kindIndex].Value)
 	end
 end
 
@@ -109,6 +125,7 @@ function PickupLedger.tryClaim(self: Ledger, slotId: number, generation: number,
 	return {
 		userId = context.userId, roundId = self.roundId, slotId = slotId, generation = generation,
 		kindIndex = slot.kindIndex, value = self.kinds[slot.kindIndex].Value, position = slot.position,
+		species = slot.species,
 	}, "ok"
 end
 
@@ -121,6 +138,7 @@ function PickupLedger.step(self: Ledger, now: number): { number }
 		if not slot.available and now >= slot.readyAt then
 			slot.generation += 1
 			slot.kindIndex = self:rollKind()
+			slot.species = self.species(slot.id, self.kinds[slot.kindIndex].Value)
 			slot.available = true
 			table.insert(changed, slot.id)
 		end
