@@ -15,13 +15,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 10079,
-      "sha256": "8df58c9105cdf82c5f61530ff3b9baac43e91b3a2776dde4ed68cce28ec6cc43"
+      "bytes": 10496,
+      "sha256": "3fff7a7dd65b4b2c9bc6091503a47e97855346e8d2b266dba6acf13768712377"
     },
     {
       "path": "artifacts/verification.json",
       "bytes": 1839,
-      "sha256": "766a98c65ea72e27404641b0c5ee83fa964147e74f81d9b7bc0e604a38c810c2"
+      "sha256": "1f2725e7f200c97b26c087c5de79fd150cae13467a598022486528a4ca535f91"
     },
     {
       "path": "assets/README.md",
@@ -40,18 +40,18 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 10346,
-      "sha256": "0914276d6609d6ddf9bc39f05774b4705b84c5d35fcfb2b7ec6aa1d1a5d21a68"
+      "bytes": 10802,
+      "sha256": "351678116f3af088660b48c552e2683875f1fa3292abf9123aa8d9b8f237a7f3"
     },
     {
       "path": "docs/BUILD_REPORT.md",
-      "bytes": 3309,
-      "sha256": "ca0c83cf2c82a2273e64bb3c45d9d2d587f2d0def6508a90bdd0391fc4448ed8"
+      "bytes": 3308,
+      "sha256": "9e84a4d54bdcf7b91f23ce5abea63ea078d9891325f486488bf4eebd5a4d6b95"
     },
     {
       "path": "docs/DEPENDENCIES.md",
       "bytes": 6500,
-      "sha256": "fa8e1f111107cd47204fdf88bd749491a792473dd9d28a35e41b872b9dc49e09"
+      "sha256": "fd8bc8ada1ecc63640fd8378e163f7de3d5e53ebf371404d273cbc8ea7fcbceb"
     },
     {
       "path": "docs/TESTING.md",
@@ -64,79 +64,99 @@
       "sha256": "07d8fa4efc0bbb579f65930b3c3c367b1d989df9f004e4a4014180c14540ce3b"
     },
     {
+      "path": "docs/VISUAL_CHANGES_PHASE2.md",
+      "bytes": 16990,
+      "sha256": "bd7f890bc762f9caf85776a46aba9540a95f0c6ceb40aae42077ba00ff3c53bc"
+    },
+    {
       "path": "docs/previews/arena-legacy.jpg",
-      "bytes": 100207,
-      "sha256": "0529f0193db4db9c759866628d991545126576c6aa4679a150bee240dff7d7d0"
+      "bytes": 107180,
+      "sha256": "158d3947293d14bfb1a7c52ad19fe49842dc794cf6eaf20e579601e29c3994f5"
     },
     {
       "path": "docs/previews/arena.jpg",
-      "bytes": 103375,
-      "sha256": "db2c4c9621fb6aa3de2c37a0f11f2b057a653ee735ca3c35576108337be185ae"
+      "bytes": 108690,
+      "sha256": "069cbcef1910dba6d04fe02e18c8e840f831872648ffbbdf713019d2b2941590"
+    },
+    {
+      "path": "docs/previews/cast.jpg",
+      "bytes": 55294,
+      "sha256": "112b00dd2ce299d95f8cedbc6a18da6d71ccc9e40c796bf2d0fcbd0c9998fb6a"
     },
     {
       "path": "docs/previews/lobby-legacy.jpg",
-      "bytes": 132899,
-      "sha256": "efdf8e3a23ebc9c6d86e1ee57c9ca75eadcfd406b028628763e0b4bd91b16c5f"
+      "bytes": 142654,
+      "sha256": "3be2f4fe9907761b850502e34f933edfd48705a88757ee4067a7e1b65dc9da2f"
     },
     {
       "path": "docs/previews/lobby.jpg",
-      "bytes": 146289,
-      "sha256": "791a61f6add5bd9e49d451baeca3b36ae9fe4c07a38f64d3822dc9e93d0ff835"
+      "bytes": 154200,
+      "sha256": "b2fbb78ed209549db5fa43f2ea761903a3c60ad17cf301593b25d532f07c0846"
     },
     {
       "path": "docs/previews/overview-legacy.jpg",
-      "bytes": 93170,
-      "sha256": "c4cdd06b58067c9477deaeb3cd41567b2d6b005f45281f9839475a9352a68f91"
+      "bytes": 99767,
+      "sha256": "68fffc417a031d06721c6aab46c7e5f356eb4fba209138ac52db2d57f2538f4a"
     },
     {
       "path": "docs/previews/overview.jpg",
-      "bytes": 95297,
-      "sha256": "5fb85c01aab6fcb3c1b10907964a1b144d4a7177e5567653f60f71e1bda62a75"
+      "bytes": 104012,
+      "sha256": "7e4ee5e20aa30ac8eead6cb9440f8e7af23e90d95ef77b8d8bdcab1f3164db1a"
     },
     {
       "path": "docs/previews/palms-legacy.jpg",
-      "bytes": 119192,
-      "sha256": "7a5c724ad60ee59758fc0d2a01b1c6a6dbc6254e58896b86907f991f37ab8834"
+      "bytes": 126644,
+      "sha256": "31d1a89908b038b22a0d2a4b5dabe4ecf1d7973f760e447579d080432e39c52e"
     },
     {
       "path": "docs/previews/palms.jpg",
-      "bytes": 118601,
-      "sha256": "95116aaa6761309145da588d1046c2235899092ce4003ed4bce0ac27fdc9bab6"
+      "bytes": 124748,
+      "sha256": "223124f736e11085d515f0600921f940e420b654fd1365f0662e894810e22b43"
     },
     {
       "path": "docs/previews/play-legacy.jpg",
-      "bytes": 102958,
-      "sha256": "c595be06b754b5dfa6c43b4731043bd0ca2a27225b2acfd0a87e921150547d81"
+      "bytes": 116287,
+      "sha256": "22381f4c39d14cba18facef3fff758c0366fbe945b8975032882534c2c7d2d9a"
     },
     {
       "path": "docs/previews/play.jpg",
-      "bytes": 110672,
-      "sha256": "f4b441e7f7dac616efbf9ea7bcd807bcb4a66c4c93065b3869142dc79008996c"
+      "bytes": 119330,
+      "sha256": "9036b0054056eaaf7ef1b1f3bf7f43e1321187bbcf1d5c1404f7a9d901d4535d"
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1023162,
-      "sha256": "c424465aa3aa1cd883c83ebd1967c57791b4a13e20aefa45ce95aa045c1fcaad"
+      "bytes": 1411092,
+      "sha256": "148af6f7a6e1ae48a077e2c883cf6db6840d522097a1bca6f81b634139b7e245"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1023163,
-      "sha256": "60d5dd9dcb0b27475344d2232dd79d7ca5f90c027f605fb98ddb6c24f3186945"
+      "bytes": 1411093,
+      "sha256": "5ad8a3c05c32180f14bc1a556a91a5889b4874dc435a46c60b9748d661ea95e9"
+    },
+    {
+      "path": "src/client/CreatureData.luau",
+      "bytes": 9485,
+      "sha256": "1a8549144933850957378b8e87616eb94f1b058bc0f6c48b1193fe590ae1d39a"
+    },
+    {
+      "path": "src/client/Creatures.luau",
+      "bytes": 3758,
+      "sha256": "3823df1a860dbe674b10731ba739eb418000dcc55ef852504b58ed53ddbb0042"
     },
     {
       "path": "src/client/Effects.luau",
-      "bytes": 8822,
-      "sha256": "8ad9948ede051e04cbbced07dbc7358e1b2579696a5389f36f09be8e5ad7eec7"
+      "bytes": 8875,
+      "sha256": "9f70719957ca63e6454dd121afc8493bef3d15fa4f9827d17d4c8d209513b967"
     },
     {
       "path": "src/client/Hud.luau",
-      "bytes": 24157,
-      "sha256": "f879e0ecf24ab18740b3847ef2dbda307ecebbde20048768bad688aff179f7a1"
+      "bytes": 27001,
+      "sha256": "78b0881e0d788ffcf74b9f978a295142a81f2c854f8345901dadc9576d0d8e0b"
     },
     {
       "path": "src/client/Iconography.luau",
-      "bytes": 3906,
-      "sha256": "6631e9d7d3aec58c295fe0e2c01c972652a056dce7ac958dc0687ce0b1c91a83"
+      "bytes": 4383,
+      "sha256": "563b7162e4ffa4bb812386dd3eea29e61e6628918f1d19b4c2afef56463f1526"
     },
     {
       "path": "src/client/Main.client.luau",
@@ -155,8 +175,8 @@
     },
     {
       "path": "src/server/WorldData.luau",
-      "bytes": 155542,
-      "sha256": "628c3c9f5fef0c10ee6f9a0df8509f7d884e8e3c5c86fcd3fb96a7f1178e9433"
+      "bytes": 216996,
+      "sha256": "faf78b28b62d05fa03ff886cd122dfedbef30f62e2163ba926a9e71f871b64e6"
     },
     {
       "path": "src/server/WorldService.luau",
@@ -180,8 +200,8 @@
     },
     {
       "path": "src/shared/ArtDirection.luau",
-      "bytes": 2925,
-      "sha256": "807f26740349c3f6e6efd24cedc702aa697ec1cdea76508bcf9d836233bd7d2e"
+      "bytes": 2926,
+      "sha256": "5be4f86d53c3eb518cc2e1e2589259840604253e0e3ff7870be14d425e147566"
     },
     {
       "path": "src/shared/Config.luau",
@@ -190,8 +210,8 @@
     },
     {
       "path": "tests/adapters.spec.luau",
-      "bytes": 13029,
-      "sha256": "680fc25ebfa350588b5279c5af199fdd9522d317650d7faf21c750e7bfd5f134"
+      "bytes": 13079,
+      "sha256": "4f25181f96dfcb4f947c1e3976f62d3c438929731bc6597a16d965f41eb7dbc3"
     },
     {
       "path": "tests/core.spec.luau",
@@ -215,8 +235,8 @@
     },
     {
       "path": "tools/artcheck.py",
-      "bytes": 17623,
-      "sha256": "63730071f481aba08dcd3702edba8ca1684ae62ec273ef124194dd9c5ab6397e"
+      "bytes": 22089,
+      "sha256": "1833ea3cb42966db60643c0cfbd39f55b9bcd9ad35a0ebf0abd85eac2b51010d"
     },
     {
       "path": "tools/bootstrap_luau.py",
@@ -225,23 +245,33 @@
     },
     {
       "path": "tools/build_place.py",
-      "bytes": 16429,
-      "sha256": "f71dd03de8bb458fb57954f09962445c9e6cd3b116bc2f3665491b1119bf3f09"
+      "bytes": 18998,
+      "sha256": "76102fab9fb374fc6ba26ee924a656f785fdae28fc9ed01ce993d07a410c7c4b"
     },
     {
       "path": "tools/check.py",
-      "bytes": 9230,
-      "sha256": "70b9c98664f6d9be1669cca5079d6e1fc88d0c87bd9706622c37bc8d7f7bf243"
+      "bytes": 9229,
+      "sha256": "1f6ebd204286e8073232fda51e8df4b670b6888c5317e0c6350082b365a12fc8"
+    },
+    {
+      "path": "tools/creatures.py",
+      "bytes": 12177,
+      "sha256": "ff4b8f738559b1d64812471e2df42e8be85ac9163023a32e8578034ee0c01ed1"
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 8183,
-      "sha256": "108b70e482246baeea1a64a5f81c53e4c06f280494e65f68006c3dc954a01362"
+      "bytes": 8369,
+      "sha256": "813e47c38bbfe13ab1ad16d3eb7cceb7fbed9f1f47b827b5219e1fda8eeb2431"
     },
     {
       "path": "tools/preview.py",
-      "bytes": 22595,
-      "sha256": "a3cbd47852d441e76efb86b1820a4e269bdab1159520aea63f07fa4a2f7785c8"
+      "bytes": 27736,
+      "sha256": "7b7d180f939cf00a9672fdae5fade7549a2ad02ce5a5948ff94ae4c679c089fa"
+    },
+    {
+      "path": "tools/terrain_aug.py",
+      "bytes": 26743,
+      "sha256": "b4842c54fe2c428ad1a89fa473a7b73dc2fa377d48204c2440dee0135275eaa9"
     },
     {
       "path": "tools/test_adapters.py",
@@ -250,31 +280,31 @@
     },
     {
       "path": "tools/theme.py",
-      "bytes": 11258,
-      "sha256": "3b579f71b9b64d097ee69b60f7f9c57c6aa51aca9b2f6ab808204e5ddeac0bab"
+      "bytes": 11953,
+      "sha256": "1891e0baa8bb54031a1f036735704d9a2848935170e102d0167d8ed7f80d0542"
     },
     {
       "path": "tools/verify_place.py",
-      "bytes": 13356,
-      "sha256": "357e384292c0e724a28ce686337ec86d2a1864f64f801ba6038522f70e38afa5"
+      "bytes": 13573,
+      "sha256": "e55f11a94d8115533592422934b576d2fd018649020e2430247dd707365cab32"
     },
     {
       "path": "tools/world.py",
-      "bytes": 26874,
-      "sha256": "8d902dde731c12d57a9d7a4622f2e75245216b30dd66d6d3a4a6d45aa0b750a2"
+      "bytes": 31910,
+      "sha256": "45ede7af7cde560938d05e1487bd2f20017916db6c6a2f58f5890c938e1bbdbe"
     }
   ],
-  "file_count_excluding_manifest": 52,
-  "production_script_count": 13,
+  "file_count_excluding_manifest": 58,
+  "production_script_count": 15,
   "place_count": 2,
-  "source_sha256": "2538c9bf8e68a943bd19c5dc20c5b13317fc1158005401baa87bbbaf3f0f2a1d",
-  "prior_verification_timestamp_utc": "2026-11-08T12:15:46+00:00",
-  "prior_automated_tests_passed": 158,
+  "source_sha256": "440ea4f6b66c482fb56d5c646663d7ef3235c0a352db90cc127e1b91b7c40d98",
+  "prior_verification_timestamp_utc": "2026-11-08T12:57:07+00:00",
+  "prior_automated_tests_passed": 164,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",
     "preview_renders": "docs/previews/ (software render, not engine captures)",
-    "world_parts": 588,
+    "world_parts": 824,
     "walkable_geometry_unchanged": true,
     "gameplay_scripts_changed": [
       "Main.server.luau (ArtService call + halo tint only)",

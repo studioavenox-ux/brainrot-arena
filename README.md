@@ -50,7 +50,8 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for the complete included/missi
 
 ## Implemented
 
-- **One original lobby + Synapse Circuit arena:** 588 anchored map parts in a natural tropical art direction — pale sand and teal stone courts, tropical palms, a warm-lit gate and a single brain beacon — plus four bridged satellite platforms. [Visual change report →](docs/VISUAL_CHANGES.md)
+- **One original lobby + Synapse Circuit arena:** 824 anchored map parts in a natural tropical art direction — pale sand and teal stone courts, a tea pavilion, lookout tower, beach bar and shore shrine on the arena promenade, a kiosk/pergola/terrace lobby, a warm-lit gate, one brain beacon and an ocean horizon — plus four bridged satellite platforms, each with its own landmark. [Phase 1 report →](docs/VISUAL_CHANGES.md) · [Phase 2 report →](docs/VISUAL_CHANGES_PHASE2.md)
+- **Six original collectibles:** brain cell / brick frog (+1), wobble fish / silly goose (+5), toaster cat / sentient sock (+10) — built from primitives, chosen client-side from the slot id, so rarity stays a server-only value.
 - **Automatic multiplayer lifecycle:** waiting → 12s intermission → **180s round** → 9s results → repeat. Solo testing also works. Late joiners enter the active round at zero.
 - **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**; five-second respawns. Atomic claiming prevents double rewards.
 - **Low gravity:** activates 60 seconds into each standard round for 25 seconds, with UI and lighting feedback, then restores normal gravity.

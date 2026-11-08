@@ -4,14 +4,14 @@
 return {
 	Lighting = {
 		Brightness = 2.2,
-		ClockTime = 15.4,
+		ClockTime = 16.15,
 		GeographicLatitude = 12.0,
 		GlobalShadows = true,
-		ShadowSoftness = 0.34,
-		ExposureCompensation = 0.06,
+		ShadowSoftness = 0.38,
+		ExposureCompensation = 0.09,
 		Ambient = {96, 108, 122},
 		OutdoorAmbient = {150, 164, 176},
-		ColorShift_Top = {255, 238, 214},
+		ColorShift_Top = {255, 233, 204},
 		ColorShift_Bottom = {122, 140, 152},
 		EnvironmentDiffuseScale = 0.55,
 		EnvironmentSpecularScale = 0.3,

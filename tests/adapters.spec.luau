@@ -44,10 +44,11 @@ return function(Mock, sources, schema)
 	test("server builds original world and safe lobby spawn",function()
 		local e,a=fixture()
 		local w=e.services.Workspace.BrainrotWorld
-		-- 588 runtime geometry parts after the visual redesign (was 358). The exported
+		-- 824 runtime geometry parts after the Phase 2 architecture pass (588 after
+		-- Phase 1, 358 before the redesign). The exported
 		-- place adds 13 bake-only sign boards on top; the budget is asserted in
 		-- tools/verify_place.py and tools/artcheck.py.
-		eq(#w:GetChildren(),588)
+		eq(#w:GetChildren(),824)
 		eq(w.LobbySpawn:IsA("SpawnLocation"),true)
 		eq(a.RespawnLocation,w.LobbySpawn)
 		assert(a.Character.HumanoidRootPart.Position.Z>140)
@@ -58,7 +59,7 @@ return function(Mock, sources, schema)
 		local initial=World.new().root
 		e:addPlayer(-1,"Solo"); e:startServer()
 		eq(e.services.Workspace.BrainrotWorld,initial)
-		eq(#initial:GetChildren(),588)
+		eq(#initial:GetChildren(),824)
 	end)
 	test("server creates only three whitelisted remotes",function()
 		local e=fixture(); local r=e.services.ReplicatedStorage.BrainrotRemotes

@@ -119,16 +119,18 @@ class PlaceTests(unittest.TestCase):
 
     def test_09_map_baked_and_editable(self):
         self.assertEqual(self.world.attrib["class"], "Model")
-        self.assertEqual(len(WORLD["Parts"]), 588)
+        self.assertEqual(len(WORLD["Parts"]), 824)
         # One extra non-colliding board layer per sign carries the SurfaceGui.
         self.assertEqual(len(self.world.findall("Item")), len(WORLD["Parts"]) + len(WORLD["Signs"]))
 
     def test_10_part_budget(self):
-        # Redesign budget for lower-end mobile: 588 static parts (was 358) bought
-        # with zero extra lights beyond the seven shadowless landmark lights.
-        self.assertLessEqual(len(WORLD["Parts"]), 640)
-        # Six lobes, a split, a local pivot and one server root per slot.
-        self.assertLessEqual(len(WORLD["Parts"]) + len(WORLD["PickupPositions"])*9, 1060)
+        # Budget for lower-end mobile: 824 static parts (was 588 after Phase 1, 358
+        # before the redesign) bought with zero extra lights beyond the seven
+        # shadowless landmark lights.
+        self.assertLessEqual(len(WORLD["Parts"]), 840)
+        # Per cell: pivot + creature (<=9) + hover ring + rarity mark (<=2), and one
+        # server root each. 13 is the true worst case, asserted in tools/creatures.py.
+        self.assertLessEqual(len(WORLD["Parts"]) + len(WORLD["PickupPositions"])*14, 1500)
 
     def test_10b_materials_and_shadows_exported_per_part(self):
         SCHEMA_MATERIAL = SCHEMA["Enums"]["Material"]
@@ -210,7 +212,8 @@ class PlaceTests(unittest.TestCase):
             self.assertTrue(bridge["Collide"])
 
     def test_21_signs_present_and_readable(self):
-        self.assertEqual(len(WORLD["Signs"]), 5)
+        # Five Phase 1 signs plus the kiosk board and the lobby wayfinding plaque.
+        self.assertEqual(len(WORLD["Signs"]), 7)
         for sign in WORLD["Signs"]:
             obj = resolve(self.world, sign["Part"] + "_Sign/Sign")
             self.assertEqual(obj.attrib["class"], "SurfaceGui")
@@ -271,7 +274,7 @@ class PlaceTests(unittest.TestCase):
 
     def test_28_generated_files_below_one_megabyte_each(self):
         for place in (ROOT / "places").glob("*.rbxlx"):
-            # 2 MB ceiling: the embedded source + 588-part editable map. Both
+            # 2 MB ceiling: the embedded source + the editable map. Both
             # files stay well inside a typical Studio import budget.
             self.assertLess(place.stat().st_size, 2_000_000)
 

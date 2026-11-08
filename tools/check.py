@@ -93,7 +93,7 @@ def main():
         "This Linux workspace has no Roblox Studio installation or Roblox control connector.", "",
         "## Delivered", "",
         "- Two self-contained Studio-openable `.rbxlx` exports, plus editable Luau source and an optional Rojo project.",
-        "- Redesigned tropical lobby/arena: 588 anchored parts (601 instances incl. 13 baked sign",
+        "- Redesigned tropical lobby/arena: 824 anchored parts (831 instances incl. 7 baked sign",
         "  boards), four connected satellite platforms, and 48 collectible slots.",
         "- 12-second intermission → 180-second round → 9-second results; repeat automatically.",
         "- Atomic server pickups (+1/+5/+10), synchronized HUD/leaderboard, late joins, respawns and fall rescue.",

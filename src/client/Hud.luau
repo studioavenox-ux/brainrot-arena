@@ -5,6 +5,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local Iconography = require(script.Parent.Iconography)
+local CreatureData = require(script.Parent.CreatureData)
 local Hud = {}
 Hud.__index = Hud
 
@@ -12,11 +13,12 @@ Hud.__index = Hud
 -- Contrast checked in tools/artcheck.py; saturated hues are reserved for rarity,
 -- reward and result information so the interface never competes with the world.
 local C = {
-	Ink = Color3.fromRGB(24, 32, 36), Panel = Color3.fromRGB(34, 44, 50),
-	Line = Color3.fromRGB(92, 110, 116), Muted = Color3.fromRGB(176, 190, 190),
-	White = Color3.fromRGB(243, 247, 245), Pink = Color3.fromRGB(255, 108, 186),
+	Ink = Color3.fromRGB(22, 30, 34), Panel = Color3.fromRGB(32, 42, 48),
+	Line = Color3.fromRGB(88, 108, 114), Muted = Color3.fromRGB(178, 192, 192),
+	White = Color3.fromRGB(244, 248, 246), Pink = Color3.fromRGB(255, 108, 186),
 	Cyan = Color3.fromRGB(126, 226, 250), Gold = Color3.fromRGB(255, 205, 96),
-	Purple = Color3.fromRGB(98, 176, 168),
+	Purple = Color3.fromRGB(98, 176, 168), Shore = Color3.fromRGB(46, 72, 76),
+	Hair = Color3.fromRGB(54, 70, 76),
 }
 local function make(className, properties, parent)
 	local instance = Instance.new(className)
@@ -32,6 +34,24 @@ end
 local function stroke(parent, color, transparency)
 	return make("UIStroke", { Color = color or C.Line, Thickness = 1, Transparency = transparency or 0.2 }, parent)
 end
+-- One soft vertical gradient on a panel reads as produced UI rather than a flat box.
+local function gradient(parent, top, bottom, rotation)
+	-- The Roblox mock used by tests/ has no ColorSequence; the gradient is pure
+	-- polish, so degrade to a flat panel rather than failing to build the HUD.
+	if type(ColorSequence) ~= "table" or not ColorSequence.new then return nil end
+	local node = make("UIGradient", {
+		Color = ColorSequence.new(top, bottom),
+		Rotation = rotation or 90,
+	}, parent)
+	return node
+end
+local function divider(parent, y, width)
+	return make("Frame", {
+		Name = "Divider", Size = UDim2.new(1, -(width or 28), 0, 1),
+		Position = UDim2.new(0, (width or 28) / 2, 0, y), BackgroundColor3 = C.Line,
+		BackgroundTransparency = .45, BorderSizePixel = 0,
+	}, parent)
+end
 local function panel(parent, name, size, pos, anchor)
 	local f = make("Frame", {
 		Name = name, Size = size, Position = pos, AnchorPoint = anchor or Vector2.zero,
@@ -39,6 +59,7 @@ local function panel(parent, name, size, pos, anchor)
 	}, parent)
 	corner(f, 18)
 	stroke(f)
+	gradient(f, Color3.fromRGB(38, 50, 56), C.Ink)
 	return f
 end
 local function text(parent, name, content, size, pos, color, font, textSize)
@@ -100,14 +121,21 @@ function Hud.new(config, request)
 	}, Players.LocalPlayer:WaitForChild("PlayerGui"))
 	self.root = make("Frame", { Name = "SafeArea", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, self.screen)
 
-	self.brand = make("Frame", { Name = "Brand", Size = UDim2.fromOffset(220, 88), Position = UDim2.fromOffset(22, 16), BackgroundTransparency = 1 }, self.root)
-	text(self.brand, "Wordmark", "BRAINROT", UDim2.fromOffset(220, 32), UDim2.fromOffset(0, 0), C.Gold, Enum.Font.GothamBlack, 28)
-	text(self.brand, "Arena", "A R E N A", UDim2.fromOffset(220, 27), UDim2.fromOffset(1, 30), C.Pink, Enum.Font.GothamBlack, 23)
-	text(self.brand, "Tagline", "A VERY UNREASONABLE SPORT.", UDim2.fromOffset(220, 18), UDim2.fromOffset(2, 60), C.Muted, Enum.Font.GothamMedium, 10)
+	-- Brand lockup: wordmark, rule, subtitle. Left-aligned to the safe inset.
+	local brand = self.brand
+	brand = make("Frame", { Name = "Brand", Size = UDim2.fromOffset(230, 96), Position = UDim2.fromOffset(22, 16), BackgroundTransparency = 1 }, self.root)
+	self.brand = brand
+	text(brand, "Wordmark", "BRAINROT", UDim2.fromOffset(230, 34), UDim2.fromOffset(0, 0), C.Gold, Enum.Font.GothamBlack, 30)
+	local accentBar = make("Frame", { Name = "AccentBar", Size = UDim2.fromOffset(46, 3), Position = UDim2.fromOffset(2, 36), BackgroundColor3 = C.Pink, BorderSizePixel = 0 }, brand)
+	corner(accentBar, 2)
+	text(brand, "Arena", "A R E N A", UDim2.fromOffset(230, 24), UDim2.fromOffset(1, 42), C.White, Enum.Font.GothamBlack, 20)
+	text(brand, "Tagline", "AN UNREASONABLE SPORT", UDim2.fromOffset(230, 16), UDim2.fromOffset(2, 68), C.Muted, Enum.Font.GothamMedium, 10)
+	text(brand, "Session", "SESSION • LIVE", UDim2.fromOffset(230, 14), UDim2.fromOffset(2, 82), C.Purple, Enum.Font.GothamMedium, 9)
 
 	self.timerPanel = panel(self.root, "RoundClock", UDim2.fromOffset(288, 98), UDim2.new(.5, 0, 0, 12), Vector2.new(.5, 0))
 	self.phaseLabel = centerLabel(self.timerPanel, "Phase", "SYNCING YOUR BRAIN…", UDim2.new(1, -16, 0, 22), UDim2.fromOffset(8, 9), C.Cyan, nil, 12)
 	self.timeLabel = centerLabel(self.timerPanel, "Countdown", "--:--", UDim2.new(1, 0, 0, 48), UDim2.fromOffset(0, 31), C.White, Enum.Font.GothamBlack, 40)
+	divider(self.timerPanel, 76, 44)
 	centerLabel(self.timerPanel, "MapName", "S Y N A P S E   C I R C U I T", UDim2.new(1, -10, 0, 14), UDim2.fromOffset(5, 80), C.Muted, Enum.Font.GothamMedium, 9)
 
 	self.eventPanel = panel(self.root, "Chaos", UDim2.fromOffset(350, 46), UDim2.new(.5, 0, 0, 120), Vector2.new(.5, 0))
@@ -118,23 +146,31 @@ function Hud.new(config, request)
 	self.scoreIcon = brainIcon(self.scorePanel, UDim2.fromOffset(18, 17), 1)
 	self.scoreScale = make("UIScale", { Scale = 1 }, self.scoreIcon)
 	self.scoreLabel = text(self.scorePanel, "Score", "0", UDim2.fromOffset(150, 42), UDim2.fromOffset(88, 4), C.White, Enum.Font.GothamBlack, 36)
-	text(self.scorePanel, "Caption", "YOUR BRAIN CELLS", UDim2.fromOffset(155, 22), UDim2.fromOffset(89, 46), C.Pink, nil, 11)
+	text(self.scorePanel, "Caption", "YOUR BRAIN CELLS", UDim2.fromOffset(155, 16), UDim2.fromOffset(89, 42), C.Pink, nil, 11)
+	self.scoreCreature = text(self.scorePanel, "Creature", CreatureData.Creatures.brain.Label, UDim2.fromOffset(155, 14), UDim2.fromOffset(89, 57), C.Muted, Enum.Font.GothamMedium, 9)
+	self.scoreCreature.TextTruncate = Enum.TextTruncate.AtEnd
 	self.legend = make("Frame", { Name = "RarityKey", Size = UDim2.fromOffset(360, 24), Position = UDim2.new(.5, 0, 1, -112), AnchorPoint = Vector2.new(.5, 1), BackgroundTransparency = 1 }, self.root)
-	for index, entry in { {"PINK +1", C.Pink, 1}, {"GOLD +5", C.Gold, 5}, {"PRISM +10", C.Cyan, 10} } do
+	-- Rarity key: glyph + value + the critter family the value maps to.
+	for index, entry in { {"+1  BRAIN / FROG", C.Pink, 1}, {"+5  FISH / GOOSE", C.Gold, 5}, {"+10  TOAST / SOCK", C.Cyan, 10} } do
 		local slot = make("Frame", { Name = "Rarity" .. index, Size = UDim2.fromOffset(120, 24), Position = UDim2.fromOffset((index-1)*120, 0), BackgroundTransparency = 1 }, self.legend)
-		local label = centerLabel(slot, "Label", entry[1], UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), entry[2], nil, 12)
+		local label = text(slot, "Label", entry[1], UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), entry[2], Enum.Font.GothamMedium, 10)
 		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.TextTruncate = Enum.TextTruncate.AtEnd
 		Iconography.glyph(slot, entry[3], entry[2]).Position = UDim2.fromOffset(2, 3)
 	end
 
 	self.coinsPanel = panel(self.root, "Coins", UDim2.fromOffset(238, 78), UDim2.new(1, -20, 0, 16), Vector2.new(1, 0))
 	text(self.coinsPanel, "Caption", "SESSION COINS", UDim2.new(1, -30, 0, 20), UDim2.fromOffset(16, 8), C.Gold, nil, 10)
 	self.coinsLabel = text(self.coinsPanel, "Amount", "0", UDim2.new(1, -30, 0, 38), UDim2.fromOffset(16, 28), C.White, Enum.Font.GothamBlack, 30)
+	divider(self.coinsPanel, 26, 30)
+	local coin = make("Frame", { Name = "CoinDot", Size = UDim2.fromOffset(9, 9), Position = UDim2.new(1, -24, 0, 12), BackgroundColor3 = C.Gold, BorderSizePixel = 0 }, self.coinsPanel)
+	corner(coin, 9)
 
 	self.ranksButton = button(self.root, "Ranks", "RANKS  /  TAB", UDim2.fromOffset(128, 36), UDim2.new(1, -148, 0, 104))
 	self.board = panel(self.root, "Leaderboard", UDim2.fromOffset(238, 310), UDim2.new(1, -20, 0, 150), Vector2.new(1, 0))
 	text(self.board, "Heading", "THIS ROUND", UDim2.new(1, -30, 0, 27), UDim2.fromOffset(15, 7), C.White, nil, 13)
 	self.boardHint = text(self.board, "Subheading", "MOST CELLS WINS", UDim2.new(1, -30, 0, 17), UDim2.fromOffset(15, 32), C.Muted, Enum.Font.GothamMedium, 9)
+	divider(self.board, 52, 28)
 	self.roster = make("ScrollingFrame", {
 		Name = "Players", Position = UDim2.fromOffset(10, 57), Size = UDim2.new(1, -20, 1, -68),
 		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
@@ -165,6 +201,7 @@ function Hud.new(config, request)
 	self.resultTitle.TextScaled = true
 	make("UITextSizeConstraint", { MinTextSize = 12, MaxTextSize = 27 }, self.resultTitle)
 	self.resultReward = centerLabel(self.resultsPanel, "Reward", "", UDim2.new(1, -40, 0, 34), UDim2.fromOffset(20, 166), C.Pink, nil, 18)
+	self.resultCast = centerLabel(self.resultsPanel, "Cast", "", UDim2.new(1, -40, 0, 16), UDim2.fromOffset(20, 150), C.Muted, Enum.Font.GothamMedium, 10)
 	self.resultNext = centerLabel(self.resultsPanel, "Next", "Next round soon. Keep your neurons warm.", UDim2.new(1, -28, 0, 32), UDim2.fromOffset(14, 213), C.Muted, Enum.Font.GothamMedium, 11)
 
 	self.modal = make("Frame", { Name = "ModalLayer", Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.Ink, BackgroundTransparency = .24, Visible = false, ZIndex = 20, Active = true }, self.root)
@@ -295,7 +332,7 @@ function Hud:showModal(kind)
 		self:updateRewardModal()
 	else
 		self.modalTitle.Text = "A QUICK BRAIN BRIEF"
-		self.modalBody.Text = "01   COLLECT THE GLOW\nPink +1 • Gold +5 • Prism +10\n\n02   KEEP YOUR COOL\nLow gravity hits mid-round. Fall? You pop back with your score.\n\n03   BE THE BIGGEST BRAIN\nMost cells wins. Ties share the crown. Rounds start automatically."
+		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1 • fish or goose +5 • toast or sock +10\n\n02   KEEP YOUR COOL\nLow gravity hits mid-round. Fall? You pop back with your score.\n\n03   BE THE BIGGEST BRAIN\nMost cells wins. Ties share the crown. Rounds start automatically."
 		self.modalAction.Text = "LET'S GO"
 	end
 end
@@ -369,9 +406,10 @@ function Hud:update(state)
 		end
 		local reward = results.rewards[tostring(self.userId)] or 0
 		self.resultReward.Text = if reward > 0 then ("+" .. reward .. " SESSION COINS") else "YOUR NEXT ROUND STARTS SOON"
+		self.resultCast.Text = tostring(results.topScore or 0) .. " CELLS  •  " .. self:castLine(results.roundId or (self.state and self.state.roundId))
 	end
 	if state.phase ~= self.lastPhase then
-		if state.phase == "Playing" then self:notice("GRAB THE GLOW! Pink +1 • Gold +5 • Prism +10") end
+		if state.phase == "Playing" then self:notice("GRAB THE GLOW! Brain +1 • Fish +5 • Toast +10") end
 		self.lastPhase = state.phase
 	end
 	if state.eventActive and not self.lastEvent then self:notice("LOW GRAVITY! Moon feet. Same mission.") end
@@ -400,6 +438,16 @@ function Hud:tick()
 		self.eventPanel.BackgroundColor3 = C.Ink
 	end
 	self.resultNext.Text = "INTERMISSION IN " .. timeString(remaining) .. "  •  KEEP YOUR NEURONS WARM."
+end
+
+-- Deterministic "today's cast" line: the same round always shows the same critter,
+-- purely as flavour (no scoring meaning).
+function Hud:castLine(roundId)
+	local round = math.max(1, math.floor(tonumber(roundId) or 1))
+	local value = if round % 3 == 0 then 10 elseif round % 3 == 1 then 1 else 5
+	local family = CreatureData.Family[value]
+	local spec = CreatureData.Creatures[family[(round % 2) + 1]]
+	return spec.Blurb
 end
 
 function Hud:notice(message)

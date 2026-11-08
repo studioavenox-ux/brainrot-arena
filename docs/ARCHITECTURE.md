@@ -28,9 +28,11 @@ StarterPlayer/StarterPlayerScripts/BrainrotClient
   Main                                 listeners, core UI configuration, HUD clock tick
   Hud                                  responsive panels, leaderboard, dialogs, input
   Iconography                          rarity silhouettes (world marks + HUD glyphs)
-  Effects                              local cell lobes, animation, sparks, sound, tint
+  Creatures                            builds the original critter cast per cell
+  CreatureData                         GENERATED cast table (tools/creatures.py)
+  Effects                              local cell models, animation, sparks, sound, tint
 Workspace
-  BrainrotWorld                        588 anchored parts + 13 sign boards, 5 signs, lobby spawn
+  BrainrotWorld                        824 anchored parts + 7 sign boards, 7 signs, lobby spawn
   BrainrotPickups                       48 server roots during Playing only
   BrainrotClientFX                      client-only visual models / short-lived effects
 ```
@@ -74,15 +76,19 @@ web requests.
   and `tools/artcheck.py` asserts saturation increases across those layers.
 - **Materials**: 14 in use (`Sand, Sandstone, Limestone, Marble, Rock, Basalt,
   Slate, Pebble, Grass, LeafyGrass, WoodPlanks, Fabric, SmoothPlastic, Neon`).
-- **588** static map parts, all anchored (601 instances in the place: 13 extra
+- **824** static map parts, all anchored (831 instances in the place: 7 extra
   non-colliding board layers carry the sign `SurfaceGui`s). `CastShadow` is authored
-  per part — 327 cast, and neon never does.
+  per part — 410 cast, and neon never does. Built structures live in
+  `tools/terrain_aug.py` and use the same primitive vocabulary as the terrain.
 - **48** simple server pickup roots. Touch/query/collision disabled on pickup and
   decorative roots.
-- Each client creates six-lobed cell models, culls distant visuals and updates
-  bob/spin at **30 Hz**. Rarity silhouette marks (crown / arms) are allocated lazily,
-  so common cells cost no extra parts. Static world + server cell roots + local cell
-  visuals total **1,020 parts**, excluding avatars, optional halos and brief sparks.
+- Each client builds one of **six original critters** per cell from the generated
+  `CreatureData` table (rarity -> family, slot id -> variant, decided client-side
+  only), culls visuals beyond 150 studs and updates bob/spin at **30 Hz**. Models are
+  rebuilt only when a cell's rarity changes; rarity marks (ring / crossed arms) are
+  allocated lazily, so +1 cells cost no extra parts. Static world + server cell roots
+  + worst-case local visuals total **1,496 parts**, excluding avatars, optional halos
+  and brief sparks.
 - **7 point lights**, all shadowless and attached to landmarks (beacon, gate, four
   satellite masts). Post-processing is limited to Sky, Atmosphere, Bloom (intensity
   0.22, threshold 1.45) and a neutral ColorCorrection — no depth of field, blur or

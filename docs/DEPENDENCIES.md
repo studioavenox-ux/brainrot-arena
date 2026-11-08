@@ -53,7 +53,7 @@ The development cache, prior temporary logs, compiled Luau binaries and `.git` h
 
 ## Verification boundaries
 
-The report records **72 core Luau tests + 32 mocked production-adapter tests + 30 export tests + 24 art-direction tests = 158 passing tests**. It is included with its original verification timestamp; those results are not relabeled as a new Windows playtest.
+The report records **72 core Luau tests + 32 mocked production-adapter tests + 30 export tests + 30 art-direction tests = 164 passing tests**. It is included with its original verification timestamp; those results are not relabeled as a new Windows playtest.
 
 For this packaging delivery, the XML/source/geometry export checks and archive integrity checks are run again, including a check from a clean ZIP extraction. The packaged production source and both places are identical to the verification hashes recorded in `artifacts/verification.json`.
 
