@@ -8,6 +8,8 @@ local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local Iconography = require(script.Parent.Iconography)
+local Creatures = require(script.Parent.Creatures)
+local CreatureData = require(script.Parent.CreatureData)
 local Effects = {}
 Effects.__index = Effects
 
@@ -43,61 +45,64 @@ function Effects:refresh(part)
 	local view = self.visuals[part]
 	if not view then return end
 	view.active = part:GetAttribute("Active") == true
-	view.value = part:GetAttribute("Value") or 1
+	local value = part:GetAttribute("Value") or 1
 	local base = part.Color
 	for _, kind in self.config.Kinds do
-		if kind.Value == view.value then base = Color3.fromRGB(kind.Color[1], kind.Color[2], kind.Color[3]); break end
+		if kind.Value == value then
+			base = Color3.fromRGB(kind.Color[1], kind.Color[2], kind.Color[3])
+			break
+		end
 	end
-	-- Each cell keeps its rarity colour; brighter halves read as a lit surface
-	-- rather than introducing a second hue.
-	for index, lobe in view.lobes do
-		lobe.Color = if view.value == 10 and index%2 == 0
-			then base:Lerp(Color3.fromRGB(206, 244, 255), .38)
-			else base:Lerp(Color3.new(1, 1, 1), if index%3 == 0 then .13 else 0)
-		lobe.Material = if view.value == 1 then Enum.Material.SmoothPlastic else Enum.Material.Neon
-		lobe.Transparency = if view.active and view.near then 0 else 1
+	self:syncCreature(view, value, base)
+	local shown = view.active and view.near
+	for _, item in view.creature.parts do
+		item.Transparency = if shown then 0 else 1
 	end
-	view.seam.Transparency = if view.active and view.near then 0 else 1
-	-- A neutral (self-lit) halo: one per cell regardless of rarity. It guarantees
-	-- separation from pale sand and stone floors without a neon outline.
-	view.halo.Transparency = if view.active and view.near then .3 else 1
+	-- One neutral self-lit ring per cell: guarantees separation from pale sand and
+	-- stone without tinting the creature itself.
+	view.halo.Transparency = if shown then .34 else 1
 	view.halo.Color = Color3.new(1, 1, 1)
-	-- Silhouette marks make the three rarity classes distinguishable without colour.
-	Iconography.apply(view.marks, view.value, base, view.active and view.near)
+	Iconography.apply(view.marks, view.value, base, shown)
 end
 
 function Effects:add(part)
 	if not part:IsA("BasePart") or self.visuals[part] then return end
 	part.LocalTransparencyModifier = 1
+	local slotId = part:GetAttribute("SlotId") or 0
 	local model = Instance.new("Model")
-	model.Name = "CellVisual_" .. tostring(part:GetAttribute("SlotId") or 0)
+	model.Name = "CellVisual_" .. tostring(slotId)
 	local pivot = fxPart(model, "Pivot", Vector3.new(.1, .1, .1), part.Color)
 	pivot.Transparency = 1
 	pivot.CFrame = CFrame.new(part.Position)
 	model.PrimaryPart = pivot
-	local lobes = {}
-	for side = -1, 1, 2 do
-		for row = 1, 3 do
-			local lobe = fxPart(model, "Lobe", Vector3.new(.98, 1.1, .92), part.Color)
-			lobe.Shape = Enum.PartType.Ball
-			lobe.CFrame = CFrame.new(part.Position) * CFrame.new(side*.38, if row == 2 then .15 else 0, (row-2)*.46)
-			table.insert(lobes, lobe)
-		end
-	end
-	local seam = fxPart(model, "Split", Vector3.new(.09, .95, 1.35), Color3.fromRGB(120, 66, 132))
-	seam.CFrame = CFrame.new(part.Position + Vector3.new(0, .08, 0))
-	local halo = fxPart(model, "Halo", Vector3.new(1.62, .09, 1.62), Color3.new(1, 1, 1))
-	halo.Shape = Enum.PartType.Cylinder
-	halo.Material = Enum.Material.SmoothPlastic
-	halo.CFrame = CFrame.new(part.Position) * CFrame.Angles(0, 0, math.pi / 2)
-	halo.Transparency = 1
-	local marks = Iconography.marks(model, part.Color)
+	local halo = Creatures.halo(model)
+	local view = {
+		model = model, pivot = pivot, halo = halo, slotId = slotId,
+		creature = nil, value = 0, marks = nil,
+		active = true, near = true, phase = slotId * .77,
+	}
 	model.Parent = self.folder
-	local view = { model = model, lobes = lobes, seam = seam, halo = halo, marks = marks,
-		active = true, near = true, value = 1, phase = (part:GetAttribute("SlotId") or 0)*.77 }
 	self.visuals[part] = view
 	view.connection = part.AttributeChanged:Connect(function() self:refresh(part) end)
 	self:refresh(part)
+end
+
+-- Rebuild only when the rarity (and therefore the creature family) changes.
+function Effects:syncCreature(view, value, base)
+	if view.value ~= value or not view.creature then
+		if view.creature then
+			for _, item in view.creature.parts do item:Destroy() end
+		end
+		view.creature = Creatures.build(view.model, view.slotId, value, base)
+		view.value = value
+		if view.marks then
+			for _, item in view.marks.parts do item:Destroy() end
+		end
+		view.marks = Iconography.marks(view.model, base, CreatureData.Mark[value] or "none")
+		Iconography.apply(view.marks, value, base, view.active and view.near)
+	else
+		Creatures.recolour(view.creature, base)
+	end
 end
 
 function Effects:remove(part)
@@ -115,13 +120,31 @@ function Effects:step(dt)
 	local camera = Workspace.CurrentCamera
 	if not camera then return end
 	local now = Workspace:GetServerTimeNow()
+	local reduced = self.hud.reducedMotion
+	local eye = camera.CFrame.Position
 	for part, view in self.visuals do
-		local near = (part.Position-camera.CFrame.Position).Magnitude < 150
-		if view.near ~= near then view.near = near; self:refresh(part) end
+		local near = (part.Position - eye).Magnitude < 150
+		if view.near ~= near then
+			view.near = near
+			self:refresh(part)
+		end
 		if view.active and near then
-			local bob = if self.hud.reducedMotion then 0 else math.sin(now*2+view.phase)*.28
-			local angle = if self.hud.reducedMotion then 0 else (now*.7+view.phase) % (math.pi*2)
-			view.model:PivotTo(CFrame.new(part.Position + Vector3.new(0, bob, 0)) * CFrame.Angles(0, angle, 0))
+			local phase = now + view.phase
+			local hover = if reduced then 0 else math.sin(phase * 1.9) * .24
+			local spin = if reduced then 0 else (phase * .55) % (math.pi * 2)
+			-- Rare cells breathe a little more so value reads before the player is close.
+		local flourish = if reduced or view.value == 1 then 0
+				else math.sin(phase * 2.6) * (if view.value == 10 then .07 else .04)
+			local tilt = if reduced then 0 else math.sin(phase * 1.1) * .05
+			-- Rare cells breathe: the ring tells you it is worth more before you read it.
+			if view.value > 1 then
+				view.halo.Transparency = .26 + math.sin(phase * 3.1) * .1
+			end
+			view.model:PivotTo(
+				CFrame.new(part.Position + Vector3.new(0, hover, 0))
+					* CFrame.Angles(tilt, spin, 0)
+					* CFrame.new(0, flourish, 0)
+			)
 		end
 	end
 end

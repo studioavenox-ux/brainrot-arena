@@ -27,7 +27,8 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-import theme  # noqa: E402
+import theme
+from creatures import CREATURES, creature_for  # noqa: E402
 from world import make_world  # noqa: E402
 
 OUT = ROOT / "docs" / "previews"
@@ -111,6 +112,50 @@ class Frame:
         return np.stack([x, y], axis=1), depth
 
 
+FIXED_INKS = {
+    "eye": (32, 37, 43), "glint": (250, 250, 248),
+    "accent_wood": (122, 92, 68), "accent_cream": (238, 230, 212),
+}
+
+
+def tint(base, role):
+    """Mirror of src/client/Creatures.luau `tint`, so plates match the runtime."""
+    if role in ("body", "neon"):
+        return list(base)
+    if role == "body_light":
+        return [round(c + (255 - c) * .24) for c in base]
+    if role == "body_dark":
+        return [round(c + ((36, 41, 51)[i] - c) * .40) for i, c in enumerate(base)]
+    return list(FIXED_INKS.get(role, base))
+
+
+def creature_parts(name, x, y, z, base, *, yaw=0.0):
+    """One creature instance from tools/creatures.py, placed at a pickup slot."""
+    spec = CREATURES[name]
+    out = []
+    cos, sin = math.cos(yaw), math.sin(yaw)
+    for item in spec["Parts"]:
+        ox, oy, oz = item["Offset"]
+        size = item["Size"]
+        rot = item["Rotation"]
+        if item["Shape"] == "Ball":
+            # Spheres are rotation-invariant: cheap to skip the transform.
+            pos = (x + ox, y + oy, z + oz)
+            rot = (0, 0, 0)
+        else:
+            pos = (x + ox * cos - oz * sin, y + oy, z + ox * sin + oz * cos)
+            rot = (rot[0], rot[1] + math.degrees(yaw), rot[2])
+        out.append({
+            "Name": f"{name}_{item['Name']}", "Position": list(pos), "Size": list(size),
+            "Color": tint(base, item["Role"]), "Rotation": list(rot),
+            "Material": "SmoothPlastic", "CastShadow": False, "Collide": False,
+            "Shape": "Block" if item["Shape"] == "WedgePart" else item["Shape"],
+            "Class": "WedgePart" if item["Shape"] == "WedgePart" else "Part",
+            "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+        })
+    return out
+
+
 def add_cells(parts, pickup_positions, kinds=((255, 94, 190), (255, 213, 67), (83, 238, 255))):
     """Append the 48 Brain Cell silhouettes so previews show gameplay legibility."""
     out = list(parts)
@@ -119,33 +164,65 @@ def add_cells(parts, pickup_positions, kinds=((255, 94, 190), (255, 213, 67), (8
         bucket = index % 25
         kind = kinds[0] if bucket >= 5 else (kinds[1] if bucket >= 1 else kinds[2])
         x, y, z = slot["x"], slot["y"], slot["z"]
-        for side in (-1, 1):
-            for row in (0, 1, 2):
-                out.append({
-                    "Name": "CellLobe", "Position": [x + side * .38, y + (.15 if row == 1 else 0), z + (row - 1) * .46],
-                    "Size": [.98, 1.1, .92], "Color": list(kind), "Rotation": [0, 0, 0],
-                    "Material": "Neon", "CastShadow": False, "Collide": False,
-                    "Shape": "Ball", "Class": "Part", "Transparency": 0.0,
-                    "Role": "hero", "Layer": 4, "Island": "Arena",
-                })
+        value = 1 if kind == kinds[0] else (5 if kind == kinds[1] else 10)
+        name = creature_for(index, value)
+        # The runtime spins cells; bake a gentle per-slot yaw so plates read as 3D.
+        yaw = math.radians((index * 37) % 360)
+        out.extend(creature_parts(name, x, y, z, kind, yaw=yaw))
         out.append({
-            "Name": "CellHalo", "Position": [x, y, z], "Size": [.09, 1.62, 1.62],
+            "Name": "CellHalo", "Position": [x, y - .05, z], "Size": [.09, 1.62, 1.62],
             "Color": [255, 255, 255], "Rotation": [0, 0, 90], "Material": "SmoothPlastic",
             "CastShadow": False, "Collide": False, "Shape": "Cylinder", "Class": "Part",
             "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
         })
-        if kind == kinds[1]:      # gold crown
+        if value == 5:      # gold: floating ring above the head
             out.append({
-                "Name": "CellCrown", "Position": [x, y + .86, z], "Size": [.18, .72, .18],
-                "Color": list(kind), "Rotation": [0, 45, 0], "Material": "Neon",
-                "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
+                "Name": "CellMark", "Position": [x, y + 1.12, z], "Size": [.10, .74, .74],
+                "Color": list(kind), "Rotation": [0, 0, 90], "Material": "Neon",
+                "CastShadow": False, "Collide": False, "Shape": "Cylinder", "Class": "Part",
                 "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
             })
-        elif kind == kinds[2]:    # prism arms
-            for angle in (0, 90):
+        elif value == 10:   # prism: two crossed arms in front of the chest
+            for angle in (38, -38):
                 out.append({
-                    "Name": "CellArm", "Position": [x, y, z], "Size": [.13, .13, 1.28],
-                    "Color": list(kind), "Rotation": [0, angle, 0], "Material": "Neon",
+                    "Name": "CellMark", "Position": [x, y - .06, z + .62], "Size": [.12, .12, .92],
+                    "Color": list(kind), "Rotation": [0, 0, angle], "Material": "Neon",
+                    "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
+                    "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+                })
+    return out
+
+
+def cast_lineup(base=(0, 28.4, 0)):
+    """The six-critter cast sheet: one row, deterministic yaws, halo + rarity marks."""
+    out = []
+    names = ["brain", "frog", "fish", "goose", "toast", "sock"]
+    values = {"brain": 1, "frog": 1, "fish": 5, "goose": 5, "toast": 10, "sock": 10}
+    kinds = {1: (255, 94, 190), 5: (255, 213, 67), 10: (83, 238, 255)}
+    for index, name in enumerate(names):
+        value = values[name]
+        x = base[0] - 6.75 + index * 2.7
+        y, z = base[1], base[2]
+        # Faces are authored toward -Z; turn them to the camera for the sheet.
+        out.extend(creature_parts(name, x, y, z, kinds[value], yaw=math.pi + math.radians(20)))
+        out.append({
+            "Name": "CellHalo", "Position": [x, y - .05, z], "Size": [.09, 1.62, 1.62],
+            "Color": [255, 255, 255], "Rotation": [0, 0, 90], "Material": "SmoothPlastic",
+            "CastShadow": False, "Collide": False, "Shape": "Cylinder", "Class": "Part",
+            "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+        })
+        if value == 5:
+            out.append({
+                "Name": "CellMark", "Position": [x, y + 1.12, z], "Size": [.10, .74, .74],
+                "Color": list(kinds[value]), "Rotation": [0, 0, 90], "Material": "Neon",
+                "CastShadow": False, "Collide": False, "Shape": "Cylinder", "Class": "Part",
+                "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+            })
+        elif value == 10:
+            for angle in (38, -38):
+                out.append({
+                    "Name": "CellMark", "Position": [x, y - .06, z + .62], "Size": [.12, .12, .92],
+                    "Color": list(kinds[value]), "Rotation": [0, 0, angle], "Material": "Neon",
                     "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
                     "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
                 })
@@ -470,6 +547,11 @@ VIEWS = {
         eye=(30, 33, 36), target=(-6, 24, -8), fov=70, width=1000, height=580,
         title="PLAYER EYE — Brain Cells read clearly over sand and stone",
     ),
+    "cast": dict(
+        eye=(0, 29.6, 11.6), target=(0, 27.6, 0), fov=46, width=1000, height=560,
+        title="THE CAST — six original critters: brain/frog +1, fish/goose +5, toast/sock +10",
+        lineup=True,
+    ),
     "overview": dict(
         eye=(168, 158, 236), target=(0, 20, 46), fov=48, width=1180, height=620,
         title="OVERVIEW — arena, four satellites, garden lobby",
@@ -500,12 +582,32 @@ def main():
         parts = add_cells(world["Parts"], world["PickupPositions"])
         light = None
         suffix = ""
-    chosen = args.only or list(VIEWS)
+    chosen = args.only or [name for name in VIEWS if name != "cast"]
     for name in chosen:
         view = dict(VIEWS[name])
         view["width"] = int(view["width"] * args.scale)
         view["height"] = int(view["height"] * args.scale)
+        lineup = view.pop("lineup", False)
         path = OUT / f"{name}{suffix}.jpg"
+        if lineup:
+            # A neutral studio plinth so the cast is judged on its own silhouette.
+            stage = [{
+                "Name": "CastStage", "Position": [0, 26.2, 0], "Size": [26, .6, 14],
+                "Color": [66, 82, 88], "Rotation": [0, 0, 0], "Material": "Slate",
+                "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
+                "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+            }, {
+                "Name": "CastBackdrop", "Position": [0, 30.0, -6.4], "Size": [26, 13, .6],
+                "Color": [52, 66, 72], "Rotation": [0, 0, 0], "Material": "Slate",
+                "CastShadow": False, "Collide": False, "Shape": "Block", "Class": "Part",
+                "Transparency": 0.0, "Role": "hero", "Layer": 4, "Island": "Arena",
+            }]
+            studio = {"dir": normalise(np.array([-0.32, 0.80, 0.52])),
+                      "sun": np.array([1.0, 0.98, 0.95]) * .94,
+                      "ambient": np.array([0.44, 0.50, 0.56]),
+                      "bounce": np.array([0.26, 0.30, 0.34])}
+            render(stage + cast_lineup((0, 27.0, 0)), path, signs=[], light=studio, **view)
+            continue
         render(parts, path, signs=world["Signs"], light=light, **view)
         print(f"wrote {path.relative_to(ROOT)}")
 

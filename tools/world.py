@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import math
 
-from theme import MATERIALS, rgb
+from theme import MATERIALS, rgb, shade
+import terrain_aug
 
 
 def make_world():
@@ -90,12 +91,18 @@ def make_world():
                          rotation=(0, 0, 90), shape=shape, mat=mat, **kwargs)
             _part["Role"] = "walkable" if collide else "island"
             _part["Island"] = name
-        count = facets if facets is not None else (6 if radius > 30 else 3)
+        # Underside: a ring of smaller rock facets. Reads as a broken cliff instead of
+        # two huge flat planes, and keeps every facet out of the walkable volume.
+        count = facets if facets is not None else (10 if radius > 30 else 6)
         for i in range(count):
             a = i * math.tau / count
-            r = radius * 0.55
-            _part = part(f"{name}_Facet_{i}", (x + math.cos(a) * r, 12.5, z + math.sin(a) * r),
-                         (radius * .8, 9, radius * .65), facet_b if i % 2 else facet_a,
+            r = radius * 0.62
+            wobble = 1 + .18 * math.sin(i * 2.1)
+            _part = part(f"{name}_Facet_{i}",
+                         (x + math.cos(a) * r, 13.6 + .8 * math.sin(i * 1.7),
+                          z + math.sin(a) * r),
+                         (radius * .46 * wobble, 6.4 * wobble, radius * .4),
+                         facet_b if i % 2 else facet_a,
                          cls="WedgePart", rotation=(0, -math.degrees(a), 180),
                          mat="rock" if i % 2 else "slate")
             _part["Role"] = "island"
@@ -108,16 +115,19 @@ def make_world():
              rotation=(0, 0, lean), collide=True, mat="planks")
         if base:
             disk(name + "_Base", x, 21.16, z, 1.65, 0.32, "sand_shade", mat="pebble")
-        ball(name + "_Bud", (x + .6, 21 + height, z), (2.4, 2.4, 2.4), "leaf_dark")
-        for i in range(5):
-            a = math.tau * i / 5
-            droop = -12 - (i % 2) * 5
-            part(name + f"_Fan_{i}", (x + .6 + math.cos(a) * 3.1, 21 + height, z + math.sin(a) * 3.1),
-                 (6.6, 1.1, 2.6), "leaf_light" if i % 2 else "leaf",
+        # Four long fronds, each a single tapered wedge: a full crown in 4 parts.
+        for i in range(4):
+            a = math.tau * i / 4 + .4
+            droop = -14 - (i % 2) * 6
+            part(name + f"_Fan_{i}", (x + .6 + math.cos(a) * 3.4, 21 + height - .15,
+                                      z + math.sin(a) * 3.4),
+                 (8.2, 1.2, 2.9), "leaf_light" if i % 2 else "leaf",
                  rotation=(0, -math.degrees(a), droop), cls="WedgePart")
-            part(name + f"_Tip_{i}", (x + .6 + math.cos(a) * 5.35, 21 + height - .55, z + math.sin(a) * 5.35),
-                 (2.5, .55, 1.8), "frond", rotation=(0, -math.degrees(a), droop - 12),
-                 cls="WedgePart", shadow=False)
+            if i % 2 == 0:
+                part(name + f"_Tip_{i}", (x + .6 + math.cos(a) * 5.9, 21 + height - .9,
+                                          z + math.sin(a) * 5.9),
+                     (2.5, .55, 1.8), "frond", rotation=(0, -math.degrees(a), droop - 14),
+                     cls="WedgePart", shadow=False)
 
     # ------------------------------------------------------------- rock gardens
     def boulders(name, x, z, scale=1.0, *, colors=("rock", "rock_light", "teal_stone")):
@@ -126,8 +136,58 @@ def make_world():
         part(f"{name}_1", (x + 1.9 * scale, 21 + .55 * scale, z - .9 * scale),
              (2.2 * scale, 1.5 * scale, 2.0 * scale), colors[1], cls="WedgePart",
              rotation=(0, 28, 180), shadow=False)
-        ball(f"{name}_2", (x - 1.7 * scale, 21 + .4 * scale, z + 1.2 * scale),
-             (1.7 * scale, 1.4 * scale, 1.6 * scale), colors[2], mat="slate", shadow=False)
+
+
+    def beam(name, start, end, thickness, color, *, mat="planks", shadow=True, taper=1.0):
+        """A rotated block spanning two points.
+
+        Two points -> one part: the cheapest way to build masts, guy-wires, braces
+        and roof edges without a mesh. `taper` shrinks the far end into a wedge-ish
+        cross-section by scaling the perpendicular size.
+        """
+        (x1, y1, z1), (x2, y2, z2) = start, end
+        dx, dy, dz = x2 - x1, y2 - y1, z2 - z1
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length <= 1e-6:
+            raise ValueError(f"{name}: zero-length beam")
+        yaw = math.degrees(math.atan2(-dx, -dz)) % 360
+        pitch = math.degrees(math.asin(max(-1.0, min(1.0, dy / length))))
+        mid = ((x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2)
+        size = (thickness * taper, thickness * taper, length)
+        return part(name, mid, size, color, rotation=(0, yaw, pitch), mat=mat, shadow=shadow)
+
+    def rotate2d(x, z, cx, cz, angle):
+        """Rotate a point (x, z) about (cx, cz) by `angle` radians."""
+        dx, dz = x - cx, z - cz
+        cos, sin = math.cos(angle), math.sin(angle)
+        return (cx + dx * cos - dz * sin, cz + dx * sin + dz * cos)
+
+    def cone(name, x, y, z, radius, rise, color, *, sides=8, mat="canvas", shadow=False, yaw=0.0):
+        """Tiered parasol roof: three stacked cylinders with a slight taper.
+
+        Reads as a thatched canopy from any angle, costs three parts, and never
+        produces the huge flat facets a ring of wedges does at close range.
+        `sides` and `yaw` are kept for call-site compatibility.
+        """
+        tiers = 3
+        for i in range(tiers):
+            r = radius * (1 - i * 0.26)
+            h = rise / tiers
+            disk(f"{name}_{i}", x, y + h * (i + .5), z, r, h, color, mat=mat,
+                 shadow=shadow if i == tiers - 1 else False)
+        disk(f"{name}_Eave", x, y - .18, z, radius * 1.06, .22, color, mat=mat, shadow=False)
+
+    def gable_roof(name, x, y, z, width, depth, rise, color, *, yaw=0.0, mat="planks",
+                   shadow=True, overhang=0.5):
+        """Two pitched halves. `yaw` rotates the ridge; 0 runs along Z."""
+        angle = math.degrees(math.atan2(rise, depth / 2))
+        span = math.hypot(depth / 2, rise) + overhang
+        yaw_rad = math.radians(yaw)
+        for sign, tag in ((-1, "A"), (1, "B")):
+            dx, dz = rotate2d(0, sign * depth / 4, 0, 0, yaw_rad)
+            part(f"{name}_{tag}", (x + dx, y + rise / 2, z + dz),
+                 (width + overhang * 2, 0.32, span), color,
+                 rotation=(sign * angle, yaw, 0), mat=mat, shadow=shadow)
 
     def grass_patch(name, x, z, radius, color="leaf"):
         disk(name, x, 21.05, z, radius, 0.1, color, mat="grass", shadow=False)
@@ -144,6 +204,14 @@ def make_world():
              "rift_violet", mat="neon")
         ball(name + "_Stem", (x, y - 2.1 * scale, z), (1.5 * scale, 1.6 * scale, 1.5 * scale),
              "cell_pink")
+
+    # ---------------------------------------------------------------- the sea
+    # One enormous flat disc under everything: the archipelago reads as islands in
+    # an ocean rather than props floating in a void. Two parts, no transparency
+    # sorting cost, and the fog fades it into the horizon.
+    disk("Sea_Shelf", 0, 5.0, 40, 980, 3.0, "sea_deep", mat="slate", shadow=False)
+    disk("Sea_Surface", 0, 6.0, 40, 930, .6, "sea_tint", mat="slate", shadow=False)
+    disk("Sea_Shallow", 0, 6.34, 40, 168, .12, "sea_shallow", mat="slate", shadow=False)
 
     # =========================================================== THE ARENA
     # A sun-bleached stone court on a sand island. Reads as one designed place:
@@ -194,6 +262,7 @@ def make_world():
     # Low perimeter parapet leaves the four cardinal bridge approaches open.
     for i in range(16):
         a = i * math.tau / 16
+        # Cardinal gaps are the four bridge approaches, exactly as before.
         if i % 4 == 0:
             continue
         x, z = math.cos(a) * 50, math.sin(a) * 50
@@ -210,7 +279,7 @@ def make_world():
     disk("ChaosAccent_BeaconRing", 0, 23.08, 0, 7, .17, "beacon_gold", mat="neon", shadow=False)
     disk("Beacon_Plinth", 0, 24, 0, 4.4, 1.8, "basalt", collide=True, mat="basalt")
     disk("ChaosAccent_BeaconTop", 0, 25, 0, 4.8, .3, "beacon_pink", mat="neon", shadow=False)
-    brain("Great_Brain_Beacon", 0, 28.8, 0, 1.55)
+    brain("Great_Brain_Beacon", 0, 29.6, 0, 1.95)
     for i in range(4):
         a = i * math.pi / 2
         for step in range(3):
@@ -392,14 +461,16 @@ def make_world():
 
     # ----------------------------- distant decorative islets (out of play)
     for i, (x, z, y) in enumerate(((-122, -80, 46), (116, -90, 57), (-108, 104, 38), (108, 195, 60))):
+        # Floating islet: grass crown, sand lip, two faceted rock masses and a keel.
         disk(f"SkyShard_{i}_Top", x, y, z, 9, 2, "leaf", mat="leafy")
         disk(f"SkyShard_{i}_Shore", x, y - 1.15, z, 9.3, .5, "sand_shade", mat="sand", shadow=False)
-        part(f"SkyShard_{i}_Rock", (x, y - 5, z), (14, 10, 14), "rock_light",
-             cls="WedgePart", rotation=(0, i * 40, 180), mat="rock")
-        part(f"SkyShard_{i}_Keel", (x, y - 10.4, z), (7, 5, 7), "teal_shadow",
-             cls="WedgePart", rotation=(0, i * 40 + 60, 180), mat="slate", shadow=False)
-        ball(f"SkyShard_{i}_Signal", (x, y + 4, z), (2.6, 2.6, 2.6), "signal_prism", mat="neon",
-             shadow=False)
+        ball(f"SkyShard_{i}_Rock", (x, y - 4.6, z), (15, 7.4, 14), "rock_light", mat="rock")
+        ball(f"SkyShard_{i}_RockLow", (x + 1.4, y - 7.8, z - .8), (9.6, 6.2, 9.0),
+             "rock", mat="rock", shadow=False)
+        ball(f"SkyShard_{i}_Keel", (x - .6, y - 11.0, z + .6), (5.2, 4.4, 5.0), "teal_shadow",
+             mat="slate", shadow=False)
+        ball(f"SkyShard_{i}_Signal", (x + 3.2, y + 3.4, z - 2.4), (2.6, 2.6, 2.6), "signal_prism",
+             mat="neon", shadow=False)
 
     # ------------------------------------------------------------- pickups
     # Unchanged: 48 server-owned collection slots with verified walkable floors.
@@ -419,6 +490,26 @@ def make_world():
         a = (i + .5) * math.tau / 8
         arena_spawns.append([round(math.cos(a) * 36, 4), 25, round(math.sin(a) * 36, 4)])
         lobby_spawns.append([round(math.cos(a) * 6, 4), 25, 187 + round(math.sin(a) * 6, 4)])
+    # ---- Phase 2 built environment: pavilion, lookout, beach bar, shrine, dock,
+    # camp, kiosk, pergolas, terrace and the nature pass. All decorative parts are
+    # non-colliding unless they are structural (posts, decks, stairs, totems).
+    terrain_aug.extend_arena({
+        "part": part, "disk": disk, "ball": ball, "beam": beam, "cone": cone,
+        "gable_roof": gable_roof, "rotate2d": rotate2d,
+    })
+    terrain_aug.extend_satellites({
+        "part": part, "disk": disk, "ball": ball, "beam": beam, "cone": cone,
+        "gable_roof": gable_roof, "rotate2d": rotate2d,
+    })
+    terrain_aug.extend_lobby({
+        "part": part, "disk": disk, "ball": ball, "beam": beam, "cone": cone,
+        "gable_roof": gable_roof, "rotate2d": rotate2d,
+        "signs": signs, "line": line, "board": board,
+    })
+    terrain_aug.extend_nature({
+        "part": part, "disk": disk, "ball": ball, "beam": beam,
+    })
+
     _finalize(parts)
     return {"Version": 1, "Parts": parts, "Signs": signs, "PickupPositions": pickups,
             "ArenaSpawns": arena_spawns, "LobbySpawns": lobby_spawns}
@@ -435,13 +526,19 @@ _ANCHORS = (
     ("Satellite_2", (0, 73)), ("Satellite_3", (0, -73)),
     ("Lobby", (0, 180)),
 )
-_FOLIAGE_MARKERS = ("_Fan_", "_Tip_", "_Trunk", "_Bud", "_Coconut", "_Shrub",
-                    "Lawn", "Palm", "_Top", "_Base")
+_FOLIAGE_MARKERS = ("_Fan_", "_Tip_", "_Trunk", "_Bud", "_Coconut", "_Shrub", "_Hedge",
+                    "Lawn", "Palm", "_Top", "_Base", "Bloom", "_Flower", "Fern", "_Bed",
+                    "Driftwood", "DriftKnot", "Vine", "FlowerPatch")
 
 
 def _finalize(parts):
     for item in parts:
         name, token = item["Name"], item["MaterialToken"]
+        if name.startswith("Sea_"):
+            # The ocean is its own ground plane: it belongs to no island group.
+            item["Role"], item["Layer"] = "sea", 1
+            item["Island"], item["BakeOnly"] = "Sea", False
+            continue
         if name.startswith("ChaosAccent_") or token == "neon":
             role, layer = "accent", 4
         elif "Brain_" in name:

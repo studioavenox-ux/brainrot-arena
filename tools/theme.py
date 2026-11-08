@@ -31,6 +31,10 @@ PALETTE = {
     "teal_stone": (104, 146, 140),
     "teal_deep": (78, 118, 118),
     "teal_shadow": (60, 96, 100),
+    # Sea: cooler than the stone teal so the horizon reads as water, still low chroma.
+    "sea_deep": (52, 92, 108),
+    "sea_tint": (74, 122, 133),
+    "sea_shallow": (104, 152, 152),
     "limestone": (223, 216, 197),
     "stone_path": (208, 197, 174),
     "court_stone": (207, 191, 164),
@@ -42,6 +46,7 @@ PALETTE = {
     "slate": (96, 112, 120),
     "basalt": (74, 84, 92),
     "moss": (118, 140, 104),
+    "rock_shade": (92, 100, 104),
     # --- vegetation --------------------------------------------------------
     "leaf": (88, 142, 76),
     "leaf_light": (124, 172, 90),
@@ -50,10 +55,15 @@ PALETTE = {
     "frond": (104, 158, 82),
     "trunk": (126, 94, 70),
     "trunk_dark": (98, 74, 58),
+    "leaf_deep": (46, 88, 56),
+    "moss_dark": (86, 108, 82),
     # --- built props -------------------------------------------------------
     "wood": (150, 116, 86),
     "wood_light": (180, 146, 110),
     "wood_dark": (112, 84, 64),
+    "wood_mid": (138, 104, 78),
+    "clay": (168, 118, 92),
+    "stone_cool": (186, 190, 184),
     "canvas": (214, 199, 170),   # sun-bleached awning canvas
     "ink": (38, 44, 54),
     "panel": (50, 58, 70),
@@ -153,14 +163,14 @@ NATURAL_MATERIALS = frozenset({
 # ---------------------------------------------------------------------------
 LIGHTING = {
     "Brightness": 2.2,
-    "ClockTime": 15.4,
+    "ClockTime": 16.15,
     "GeographicLatitude": 12.0,        # gentle tropical sun angle
     "GlobalShadows": True,
-    "ShadowSoftness": 0.34,
-    "ExposureCompensation": 0.06,
+    "ShadowSoftness": 0.38,
+    "ExposureCompensation": 0.09,
     "Ambient": (96, 108, 122),         # cool sky-bounce fill, never black
     "OutdoorAmbient": (150, 164, 176),
-    "ColorShift_Top": (255, 238, 214),  # warm sun tint
+    "ColorShift_Top": (255, 233, 204),  # warm sun tint
     "ColorShift_Bottom": (122, 140, 152),
     "EnvironmentDiffuseScale": 0.55,
     "EnvironmentSpecularScale": 0.3,
@@ -214,6 +224,17 @@ def rgb(name):
     if name in PALETTE:
         return list(PALETTE[name])
     raise KeyError(f"Unknown palette colour: {name}")
+
+
+def shade(color, amount):
+    """Lighten (amount > 0) or darken (< 0) a palette name or RGB triple."""
+    base = rgb(color)
+    if amount >= 0:
+        target = (255, 255, 255)
+    else:
+        target = (18, 22, 26)
+        amount = -amount
+    return [round(c + (t - c) * amount) for c, t in zip(base, target)]
 
 
 def hex_color(values):

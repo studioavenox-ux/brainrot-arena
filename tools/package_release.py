@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "artifacts/BrainrotArena-Project.zip"
 SOURCE_FILES = (
     "src/client/Effects.luau", "src/client/Hud.luau", "src/client/Iconography.luau",
+    "src/client/Creatures.luau", "src/client/CreatureData.luau",
     "src/client/Main.client.luau",
     "src/server/ArtService.luau", "src/server/Main.server.luau", "src/server/WorldData.luau",
     "src/server/WorldService.luau",
@@ -36,7 +37,8 @@ def main():
     required = [
         *SOURCE_FILES, *PLACE_FILES, "README.md", "default.project.json", ".gitignore",
         "docs/BUILD_REPORT.md", "docs/TESTING.md", "docs/ARCHITECTURE.md", "docs/DEPENDENCIES.md",
-        "docs/VISUAL_CHANGES.md",
+        "docs/VISUAL_CHANGES.md", "docs/VISUAL_CHANGES_PHASE2.md",
+        "docs/previews/cast.jpg",
         "docs/previews/arena.jpg", "docs/previews/lobby.jpg", "docs/previews/palms.jpg",
         "docs/previews/play.jpg", "docs/previews/overview.jpg",
         "docs/previews/arena-legacy.jpg", "docs/previews/lobby-legacy.jpg",
@@ -45,6 +47,7 @@ def main():
         "assets/README.md", "assets/asset-manifest.json", "artifacts/verification.json",
         "tools/build_place.py", "tools/world.py", "tools/theme.py", "tools/verify_place.py",
         "tools/artcheck.py", "tools/preview.py", "tools/check.py", "tools/package_release.py",
+        "tools/terrain_aug.py", "tools/creatures.py",
         "tests/fixtures/roblox-api.json", "tests/fixtures/world-baseline.json",
     ]
     missing = [name for name in required if not (ROOT / name).is_file()]
@@ -96,7 +99,7 @@ def main():
         "visual_redesign": {
             "report": "docs/VISUAL_CHANGES.md",
             "preview_renders": "docs/previews/ (software render, not engine captures)",
-            "world_parts": 588,
+            "world_parts": 824,
             "walkable_geometry_unchanged": True,
             "gameplay_scripts_changed": ["Main.server.luau (ArtService call + halo tint only)",
                                          "WorldService.luau (materials, shadows, lights, sign fonts)"],

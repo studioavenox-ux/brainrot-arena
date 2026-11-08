@@ -4,9 +4,9 @@
 -- Every gameplay object keeps a unique silhouette *in addition to* its colour, so
 -- the redesign stays readable for colour-blind players and on washed-out phone
 -- screens:
---   pink  +1  -> six-lobed brain with a pale equatorial halo (no extra parts)
---   gold  +5  -> the same brain plus one vertical crown spike
---   prism +10 -> the same brain plus two crossed arms
+--   pink  +1  -> critter only (no extra parts)
+--   gold  +5  -> critter plus one floating ring
+--   prism +10 -> critter plus two crossed arms
 -- Built from part/UI primitives only; no images, decals or asset IDs.
 local Iconography = {}
 
@@ -17,17 +17,22 @@ for index, value in KIND_ORDER do
 	KINDS[value] = index
 end
 
--- Silhouette marks, allocated lazily inside the cell model so common cells cost
--- zero extra parts. Only the rarer cells pay for their own silhouette.
+-- Rarity marks sit *outside* the creature silhouette so the critter stays legible:
+--   gold  +5  -> one floating ring above the head (single part, Neon)
+--   prism +10 -> two crossed arms in front of the chest (two parts, Neon)
+-- Only rarer cells pay for these parts; +1 cells cost nothing.
 local MARK_LAYOUT = {
-	crown = { Size = Vector3.new(.18, .72, .18), Node = Vector3.new(0, .86, 0), Yaw = .785, Name = "Crown" },
-	armX = { Size = Vector3.new(.13, .13, .96), Node = Vector3.new(0, 0, 0), Yaw = 0, Name = "Arm" },
-	armZ = { Size = Vector3.new(.13, .13, .96), Node = Vector3.new(0, 0, 0), Yaw = math.pi / 2, Name = "Arm" },
+	Crown = { Size = Vector3.new(.10, .74, .74), Node = Vector3.new(0, 1.12, 0), Pitch = 0,
+		Name = "MarkCrown", Shape = Enum.PartType.Cylinder },
+	ArmX = { Size = Vector3.new(.12, .12, .92), Node = Vector3.new(0, -.06, .62), Pitch = math.rad(38),
+		Name = "MarkArm", Shape = Enum.PartType.Block },
+	ArmZ = { Size = Vector3.new(.92, .12, .12), Node = Vector3.new(0, -.06, .62), Pitch = -math.rad(38),
+		Name = "MarkArm", Shape = Enum.PartType.Block },
 }
 
-function Iconography.marks(model, _color)
-	-- Returns a lightweight handle; no parts are created here.
-	return { model = model, parts = {} }
+-- A mark handle. No parts are created here; `apply` allocates on demand.
+function Iconography.marks(model, color, kind)
+	return { model = model, color = color, kind = kind or "none", parts = {} }
 end
 
 local function ensure(marks, key, color)
@@ -38,14 +43,17 @@ local function ensure(marks, key, color)
 	end
 	local layout = MARK_LAYOUT[key]
 	local part = Instance.new("Part")
-	part.Name = layout.Name
-	part.Size = layout.Size
+	part.Name, part.Size, part.Shape = layout.Name, layout.Size, layout.Shape
+	part.Material = Enum.Material.Neon
 	part.Color = color
-	part.CFrame = CFrame.new(layout.Node) * CFrame.Angles(0, layout.Yaw, 0)
+	part.CFrame = CFrame.new(layout.Node) * CFrame.Angles(0, 0, layout.Pitch)
+	if key == "Crown" then
+		-- Roblox cylinders are X-axis; lay it flat so it reads as a ring.
+		part.CFrame = CFrame.new(layout.Node) * CFrame.Angles(0, 0, math.pi / 2)
+	end
 	part.Anchored = true
 	part.CanCollide, part.CanTouch, part.CanQuery, part.CastShadow = false, false, false, false
 	part.Massless = true
-	part.Material = Enum.Material.Neon
 	part.Transparency = 1
 	part.Parent = marks.model
 	marks.parts[key] = part
@@ -57,16 +65,17 @@ function Iconography.apply(marks, value, color, visible)
 	if not marks then
 		return
 	end
-	local kind = KINDS[value] or 1
+	local kind = marks.kind or "none"
 	local shown = visible == true
-	if shown and kind >= 2 then
-		-- Created on first use, then reused while the model lives.
-		ensure(marks, "crown", color)
-		ensure(marks, "armX", color)
-		ensure(marks, "armZ", color)
+	if kind == "crown" then
+		ensure(marks, "Crown", color)
+	elseif kind == "arms" then
+		ensure(marks, "ArmX", color)
+		ensure(marks, "ArmZ", color)
 	end
 	for key, part in marks.parts do
-		local active = (kind == 2 and key == "crown") or (kind == 3 and key ~= "crown")
+		local active = (kind == "crown" and key == "Crown")
+			or (kind == "arms" and (key == "ArmX" or key == "ArmZ"))
 		part.Transparency = if shown and active then 0 else 1
 	end
 end
