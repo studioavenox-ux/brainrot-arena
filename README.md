@@ -55,16 +55,16 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for the complete included/missi
 - **Automatic multiplayer lifecycle:** waiting → 12s intermission → **180s round** → 9s results → repeat. Solo testing also works. Late joiners enter the active round at zero.
 - **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**; five-second respawns. Atomic claiming prevents double rewards.
 - **Low gravity:** activates 60 seconds into each standard round for 25 seconds, with UI and lighting feedback, then restores normal gravity.
-- **Responsive HUD:** synchronized clock, custom leaderboard, local score, coin balance, rarity key with shapes as well as colours, help, winner/tie/no-score announcements, touch-friendly buttons, reduced motion, and SFX controls.
+- **Complete game UI:** a top HUD (brain cells, coins, synchronized round clock), a live server-driven leaderboard, centre notifications (round flow, chaos events, winner/tie), a bottom bar with **Shop**, **Gear** and **Settings**, and a lobby panel with the next-round countdown. Dark navy translucent panels, cyan/violet/amber accents, rounded corners and short tweens; it reflows for desktop, tablet and phone in both orientations.
 - **Recovery:** death/reset rejoins the current arena; falling rescues the player without losing points; round cleanup removes cells and resets gravity.
-- **Session rewards:** 10 coins for participation + 2 per point + 30 for each tied winner. Earn 100 coins to unlock/equip the original Pulse Halo through **Rewards**. No Robux, no monetization.
+- **Session rewards:** 10 coins for participation + 2 per point + 30 for each tied winner. Earn 100 coins to unlock/equip the original Pulse Halo from the **Shop**. No Robux, no monetization.
 - **Server boundaries:** no score-submission remote; server-only positions, values, eligibility, payout, prices, and ownership. Requests use two small rate-limited verbs.
 
 **Coins and the halo last only for the current server session.** Persistent saves, extra maps/events, pets, custom character packs, and monetization are deliberately outside this release.
 
 ### Controls
 
-Use Roblox's normal **WASD / Space / mouse** controls on desktop or the default **thumbstick / jump** controls on mobile. Walk into cells; no pickup button is required. **Tab** toggles ranks; **H** opens help. All HUD actions also have buttons. Mobile score panels leave room for the thumbstick and jump button.
+Use Roblox's normal **WASD / Space / mouse** controls on desktop or the default **thumbstick / jump** controls on mobile. Walk into cells; no pickup button is required. **Tab** toggles the leaderboard, **H** opens the how-to card, **B** opens the shop, **Esc** closes a card. Every one of those also has an on-screen button. On phones the action bar sits above the thumbstick and jump zones, and the leaderboard collapses behind **RANKS** so it never covers the round clock.
 
 ## Included files
 
@@ -77,7 +77,7 @@ src/server/ArtService.luau    Applies the shared lighting rig (idempotent)
 src/shared/ArtDirection.luau  Generated palette/lighting mirror of tools/theme.py
 src/server/WorldData.luau     Generated runtime geometry and spawn data
 src/shared/Config.luau       Timings, physics, rarity, coin and cosmetic settings
-src/client/                 HUD, rarity silhouettes, local cell animation, effects and preferences
+src/client/                 HUD (HUD, Panels, Kit, generated Theme), silhouettes, cell FX, preferences
 tests/                      Core tests + production-script contract tests + API fixture
 tools/                      Deterministic place build, verification, art checks, previews and packaging
 docs/                       Acceptance checklist, architecture and actual build report

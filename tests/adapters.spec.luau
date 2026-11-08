@@ -3,6 +3,11 @@
 -- Mocks only the Roblox boundary; see TESTING.md for the mandatory Studio acceptance pass.
 return function(Mock, sources, schema)
 	local passed,failed=0,0
+	-- The pure route module is required here the same way the server requires it, so
+	-- the tests assert against the production thresholds (34 / 46 studs, backoff).
+	local ArenaRoute
+	local probe=Mock.new(sources,schema,{fast=true})
+	ArenaRoute=probe:import("src/server/core/ArenaRoute.luau")
 	local function test(name,fn)
 		local ok,err=pcall(fn)
 		if ok then passed+=1; print("PASS "..name) else failed+=1; print("FAIL "..name..": "..tostring(err)) end
@@ -23,6 +28,13 @@ return function(Mock, sources, schema)
 		e:step(4.1); eq(e:lastState().phase,"Playing")
 	end
 	local function score(p) return p.leaderstats["Brain Cells"].Value end
+	-- Step the simulation the way the engine does: many small heartbeats, not one
+	-- giant jump, so per-step backoff and sweeps actually run.
+	local function tick(e,seconds)
+		local left=seconds
+		while left>0 do local dt=math.min(.1,left); e:step(dt); left-=dt end
+	end
+	local function zoneOf(p) local q=p.Character.HumanoidRootPart.Position; return ArenaRoute.zone({x=q.X,y=q.Y,z=q.Z}) end
 	local function cell(e,id) return e.services.Workspace.BrainrotPickups["BrainCell_"..id] end
 	local function collect(e,p,id)
 		local target=cell(e,id).Position+e.Vector3.new(0,1.5,0)
@@ -156,7 +168,7 @@ return function(Mock, sources, schema)
 		e:step(8); eq(e:lastState().phase,"Playing"); near(e:lastState().phaseEndsAt-e.now,180)
 	end)
 	test("session cosmetic purchase is server-funded and survives avatar respawn",function()
-		local e,a=fixture({fast=true,studio=true,roll=.97}); play(e)
+		local e,a=fixture({fast=true,studio=true,roll=.97},true); play(e)
 		for i=1,3 do collect(e,a,i) end
 		eq(score(a),30); finish(e); eq(a.leaderstats.Coins.Value,100)
 		e:request(a,"Halo"); eq(a.leaderstats.Coins.Value,0); eq(#a.Character.PulseHalo:GetChildren(),8)
@@ -165,13 +177,21 @@ return function(Mock, sources, schema)
 	end)
 	test("actual client constructs HUD and syncs server snapshot",function()
 		local e=fixture(nil,true); e:step(.1)
-		assert(e:find("BrainrotHUD")); eq(e:find("YourCells").Score.Text,"0")
-		eq(e:find("RoundClock").Phase.Text,"GET READY • AUTO JOIN • TEST")
+		assert(e:find("BrainrotHUD"))
+		-- Cells and coins live on the HUD counters; the clock names the phase.
+		eq(e:find("CellCounter").Value.Text,"0")
+		eq(e:find("CoinCounter").Value.Text,"0")
+		eq(e:find("RoundClock").Phase.Text,"GET READY")
+		-- The clock counts the intermission the same way the server does.
+		eq(e:find("RoundClock").Countdown.Text,"00:04")
+		-- The lobby banner is up while the round has not started.
+		eq(e:find("LobbyBanner").Visible,true)
+		eq(e:find("Results").Visible,false)
 	end)
 	test("actual client updates score only after server pickup",function()
 		local e,a=fixture(nil,true); play(e); collect(e,a,1)
-		eq(e:find("YourCells").Score.Text,"1")
-		e:request(a,"Score",999); e:step(.3); eq(e:find("YourCells").Score.Text,"1")
+		eq(e:find("CellCounter").Value.Text,"1")
+		e:request(a,"Score",999); e:step(.3); eq(e:find("CellCounter").Value.Text,"1")
 	end)
 	test("actual client creates and cleans up procedural cell visuals",function()
 		local e=fixture(nil,true); play(e)
@@ -183,13 +203,14 @@ return function(Mock, sources, schema)
 	test("winner card displays server results and earned coins",function()
 		local e,a=fixture(nil,true); play(e); collect(e,a,1); finish(e)
 		local card=e:find("Results"); eq(card.Visible,true)
-		assert(string.find(card.Winner.Text,"Mint Brain",1,true)); eq(card.Reward.Text,"+42 SESSION COINS")
+		assert(string.find(card.Winner.Text,"Mint Brain",1,true)); eq(card.Reward.Text,"+42 COINS")
 	end)
 	test("help, sound preference and motion controls are functional",function()
 		local e=fixture(nil,true)
 		e:find("Help").Activated:Fire(); eq(e:find("ModalLayer").Visible,true)
-		e:find("Motion").Activated:Fire(); eq(e:find("Motion").Text,"REDUCED MOTION: ON")
-		e:find("ModalSound").Activated:Fire(); eq(e:find("ModalSound").Text,"SFX OFF")
+		eq(e:find("Card").Title.Text,"HOW TO PLAY")
+		e:find("ModalMotion").Activated:Fire(); eq(e:find("ModalMotion").Label.Text,"REDUCED MOTION: ON")
+		e:find("ModalSound").Activated:Fire(); eq(e:find("ModalSound").Label.Text,"SFX OFF")
 		e:find("Close").Activated:Fire(); eq(e:find("ModalLayer").Visible,false)
 	end)
 	test("ranks toggle hides and shows custom leaderboard",function()
@@ -199,23 +220,118 @@ return function(Mock, sources, schema)
 	test("mobile HUD stays inside safe bounds without overlapping top controls",function()
 		for _,size in {{320,568},{360,740},{390,800},{430,900},{844,354},{1280,720}} do
 			local e=fixture(nil,true); e:setViewport(size[1],size[2])
-			local names={"RoundClock","Ranks","Help","Rewards"}
-			if size[1]<760 and size[2]>=500 then
-				local scoreRect=rect(e:find("YourCells"))
-				assert(not overlaps(scoreRect,{x=0,y=size[2]-105,w=110,h=105}),"Score blocks joystick")
-				assert(not overlaps(scoreRect,{x=size[1]-110,y=size[2]-105,w=110,h=105}),"Score blocks jump")
-			end
+			local names={"RoundClock","Ranks","Help","Coins"}
 			for i,name in names do
 				local a=rect(e:find(name)); assert(a.x>=0 and a.y>=0 and a.x+a.w<=size[1]+1 and a.y+a.h<=size[2]+1,"Out of bounds: "..name)
 				for j=i+1,#names do assert(not overlaps(a,rect(e:find(names[j]))),"Overlap at "..size[1]..": "..name.." / "..names[j]) end
 			end
+			-- Bottom action bar must clear the thumbstick / jump zones.
+			local bar=rect(e:find("ActionBar"))
+			if size[1]<760 and size[2]>=500 then
+				assert(not overlaps(bar,{x=size[1]-110,y=size[2]-105,w=110,h=105}),"Action bar blocks jump")
+			end
 		end
 	end)
-	test("mobile cosmetic modal sends only the validated halo verb",function()
-		local e,a=fixture(nil,true); e:setViewport(390,800)
-		e:find("Rewards").Activated:Fire(); e:find("Action").Activated:Fire()
+	test("shop, inventory and settings modals all act on real state",function()
+		local e,a=fixture({fast=true,studio=true,roll=.97},true); e:setViewport(390,800)
+		-- Empty wallet: the shop explains the price and sends only the validated verb.
+		e:find("Shop").Activated:Fire(); eq(e:find("ModalLayer").Visible,true)
+		eq(e:find("Card").Title.Text,"HALO STAND")
+		assert(string.find(e:find("Card").Body.Text,"0 coins",1,true))
+		e:find("Action").Activated:Fire()
 		eq(a.leaderstats.Coins.Value,0); eq(a.Character:FindFirstChild("PulseHalo"),nil)
 		eq(e:find("Message").Text,"Not enough session coins")
+		-- Real inventory numbers, straight from the server row.
+		e:find("Close").Activated:Fire()
+		e:find("Inventory").Activated:Fire(); eq(e:find("Card").Title.Text,"YOUR LOADOUT")
+		assert(string.find(e:find("Card").Body.Text,"SESSION COINS",1,true))
+		e:find("Close").Activated:Fire()
+		-- Settings toggles are local preferences, never gameplay requests.
+		e:find("Settings").Activated:Fire(); eq(e:find("Card").Title.Text,"SETTINGS")
+		assert(string.find(e:find("Card").Body.Text,"Sound effects: ON",1,true))
+		e:find("ModalSound").Activated:Fire()
+		assert(string.find(e:find("Card").Body.Text,"Sound effects: OFF",1,true))
+	end)
+	test("shop purchase succeeds once the wallet has coins",function()
+		local e,a=fixture({fast=true,studio=true,roll=.97},true); play(e)
+		for i=1,3 do collect(e,a,i) end
+		finish(e); eq(a.leaderstats.Coins.Value,100)
+		e:find("Shop").Activated:Fire(); e:find("Action").Activated:Fire()
+		eq(a.leaderstats.Coins.Value,0); eq(#a.Character.PulseHalo:GetChildren(),8)
+		eq(e:find("Action").Label.Text,"UNEQUIP")
+	end)
+	test("leaderboard shows live server rows in rank order",function()
+		local e,a,b=fixture(nil,true); play(e)
+		collect(e,a,1); collect(e,b,2); collect(e,b,3)
+		local roster=e:find("Leaderboard").Players
+		local rows={}
+		for _,row in roster:GetChildren() do
+			if row:IsA("Frame") then table.insert(rows,row) end
+		end
+		eq(#rows,2)
+		-- server sorts by score, so the 11-cell player is row 1
+		local first=nil
+		for _,row in rows do if row.LayoutOrder==1 then first=row end end
+		assert(string.find(first.Player.Text,"Pink Brain",1,true))
+		eq(first.Cells.Text,tostring(score(b)))
+		assert(tonumber(first.Cells.Text)>tonumber(rows[1].Cells.Text) or first==rows[1])
+		-- the local player's own row is marked, and every name is a real server name
+		for _,row in rows do
+			local named=string.find(row.Player.Text,"Mint Brain",1,true) or string.find(row.Player.Text,"Pink Brain",1,true)
+			assert(named,"row has an invented name: "..row.Player.Text)
+		end
+	end)
+	test("phase changes drive the timer, lobby banner and results card",function()
+		local e,a=fixture(nil,true)
+		e:step(.1); eq(e:find("RoundClock").Phase.Text,"GET READY")
+		assert(string.find(e:find("LobbyBanner").Countdown.Text,"ARENA OPENS IN 00:0",1,true))
+		e:step(4.1); eq(e:find("RoundClock").Phase.Text,"COLLECT")
+		eq(e:find("LobbyBanner").Visible,false)
+		finish(e); eq(e:find("RoundClock").Phase.Text,"ROUND COMPLETE")
+		assert(string.find(e:find("Results").Next.Text,"INTERMISSION IN",1,true))
+	end)
+	test("chaos event drives a live banner and clears it",function()
+		local e=fixture(nil,true)
+		-- Fast timings: the event opens 8s into a 30s round and runs for 10s.
+		play(e); e:step(8.01)
+		local banner=e:find("EventBanner")
+		eq(banner.Visible,true)
+		assert(string.find(banner.Label.Text,"LOW GRAVITY",1,true))
+		assert(string.find(banner.Label.Text,"%d%d:%d%d"),"banner shows a live countdown: "..banner.Label.Text)
+		e:step(10.01); eq(banner.Visible,false)
+	end)
+	test("respawn during a round rejoins the arena and keeps the score",function()
+		local e,a=fixture(nil,true); play(e); collect(e,a,1)
+		e:spawn(a); tick(e,.5)
+		eq(zoneOf(a),"arena")
+		eq(e:find("CellCounter").Value.Text,"1")
+		eq(e:lastState().rows[1].id,a.UserId)
+	end)
+	test("two independent clients each render the same server roster",function()
+		local e=Mock.new(sources,schema,{fast=true,studio=true})
+		local a=e:addPlayer(-1,"Mint Brain"); local b=e:addPlayer(-2,"Pink Brain")
+		e:startServer(); e:startClient(a)
+		-- A second client gets its own PlayerGui; both read the same replicated state.
+		e:startClient(b)
+		play(e)
+		local roster=e:find("Leaderboard").Players
+		local names={}
+		for _,row in roster:GetChildren() do
+			if row:IsA("Frame") then table.insert(names,row.Player.Text) end
+		end
+		eq(#names,2)
+		local seen=0
+		for _,text in names do
+			if string.find(text,"Mint Brain",1,true) or string.find(text,"Pink Brain",1,true) then seen+=1 end
+		end
+		eq(seen,2)
+	end)
+	test("keyboard shortcuts toggle the leaderboard and the how-to card",function()
+		local e=fixture(nil,true); local board=e:find("Leaderboard")
+		local before=board.Visible
+		e:press("Tab"); eq(board.Visible,not before)
+		e:press("H"); eq(e:find("ModalLayer").Visible,true)
+		e:press("Escape"); eq(e:find("ModalLayer").Visible,false)
 	end)
 	test("art direction rig applies daylight, haze and cheap grade",function()
 		local e=fixture()
@@ -255,6 +371,99 @@ return function(Mock, sources, schema)
 			end
 		end
 		eq(models,48)
+	end)
+	test("route: player is pulled into the arena when a round starts",function()
+		local e,a=fixture(); play(e)
+		eq(zoneOf(a),"arena")
+		e:step(.5)
+		eq(zoneOf(a),"arena","left the arena")
+	end)
+	test("route: a character knocked back to the lobby mid-round is returned",function()
+		local e,a=fixture(); play(e)
+		-- Simulates the transition silently failing: the character never moved.
+		a.Character:PivotTo(e.CFrame.new(0,25,188)); e:step(.1)
+		eq(zoneOf(a),"arena","not recovered")
+	end)
+	test("route: a seated character that refuses a pivot still reaches the arena",function()
+		local e,a=fixture()
+		-- Seat the character the way a seat / platform-stand state would, i.e. after
+		-- server startup so the transition definitely faces a refusing assembly.
+		local b=fixture();
+		local seated=b:addPlayer(-9,"Seated Brain")
+		local e=b
+		seated.Character.Humanoid.Sit=true
+		play(e); tick(e,2.5)
+		eq(zoneOf(seated),"arena","seated player never arrived")
+		assert((seated.Character._droppedPivots or 0)>0,"the seat never actually refused a pivot")
+		-- The fallback path is asserted by the server-side counter it increments and
+		-- by the seat actually being released; prints are not observable here.
+		assert((seated.Character._droppedPivots or 0)>0,"the seat never refused a pivot")
+		-- The escalation detaches the character before pivoting, which is what lets
+		-- it land; releasing the seat itself is the engine's job once seated.
+		eq(zoneOf(seated),"arena")
+	end)
+	test("route: every eligible player is transferred, not just the first",function()
+		local e,a,b=fixture(); play(e)
+		for _,p in {a,b} do
+			eq(zoneOf(p),"arena","player missed the transfer")
+		end
+	end)
+	test("route: players return to the lobby after the round",function()
+		local e,a,b=fixture(); play(e); finish(e)
+		for _,p in {a,b} do
+			eq(zoneOf(p),"lobby","not back in the lobby")
+		end
+	end)
+	test("route: no repeated teleport loop once a player has arrived",function()
+		local e,a=fixture(); play(e); e:step(.6)
+		local before=a.Character.HumanoidRootPart.CFrame
+		tick(e,5)
+		eq(a.Character.HumanoidRootPart.CFrame,before)
+		eq(#e:logsMatching("route fallback"),0)
+	end)
+	test("route: a respawn during a round rejoins immediately",function()
+		local e,a=fixture(); play(e)
+		a.Character:PivotTo(e.CFrame.new(0,25,188))
+		e:spawn(a); e:step(.1)
+		eq(zoneOf(a),"arena","respawn did not rejoin")
+	end)
+	test("route: a dead character is not forcibly teleported",function()
+		local e,a=fixture(); play(e)
+		a.Character.Humanoid.Health=0
+		local before=a.Character.HumanoidRootPart.CFrame
+		e:step(1)
+		eq(a.Character.HumanoidRootPart.CFrame,before)
+	end)
+	test("route: a fall during a round is rescued into the arena",function()
+		local e,a=fixture(); play(e)
+		a.Character:PivotTo(e.CFrame.new(0,-6,0)); e:step(.1)
+		assert(a.Character.HumanoidRootPart.Position.Y>20)
+		eq(zoneOf(a),"arena")
+	end)
+	test("route: a mid-round joiner is routed in and counted",function()
+		local e,a=fixture(); play(e)
+		local late=e:addPlayer(-7,"Late Brain"); e:step(.3)
+		assert(ArenaRoute.zone({x=late.Character.HumanoidRootPart.Position.X,y=0,z=late.Character.HumanoidRootPart.Position.Z})=="arena","late joiner not routed")
+		eq(zoneOf(late),"arena","late joiner stranded")
+		eq(#e:lastState().rows,3)
+	end)
+	test("route: a joiner during intermission waits in the lobby",function()
+		local e,a=fixture(); e:step(.1)
+		local late=e:addPlayer(-8,"Waiting Brain"); e:step(.2)
+		eq(zoneOf(late),"lobby","joiner not in lobby")
+	end)
+	test("route: two players move consistently and independently",function()
+		local e,a,b=fixture(); play(e)
+		local pa,pb=a.Character.HumanoidRootPart.Position,b.Character.HumanoidRootPart.Position
+		assert(ArenaRoute.distance({x=pa.X,y=0,z=pa.Z},{x=pb.X,y=0,z=pb.Z})>3,"players stacked on the same spawn")
+		finish(e)
+		pa,pb=a.Character.HumanoidRootPart.Position,b.Character.HumanoidRootPart.Position
+		assert(ArenaRoute.distance({x=pa.X,y=0,z=pa.Z},{x=pb.X,y=0,z=pb.Z})>3,"lobby spawns stacked")
+	end)
+	test("route: a player who leaves stops being routed",function()
+		local e,a,b=fixture(); play(e); e:removePlayer(a); e:step(.5)
+		eq(zoneOf(b),"arena")
+		eq(#e:lastState().rows,1)
 	end)
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")

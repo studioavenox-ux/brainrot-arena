@@ -1,110 +1,35 @@
 --!nonstrict
--- Original responsive UI. No score, currency, or reward decisions are made here.
+-- The interface. Every value shown here arrives in a server snapshot; nothing is
+-- invented locally. Layout is responsive (desktop / tablet / phone portrait and
+-- landscape) and every button opens a real panel or sends a whitelisted request.
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local Kit = require(script.Parent.Kit)
+local Theme = require(script.Parent.Theme)
+local Panels = require(script.Parent.Panels)
 local Iconography = require(script.Parent.Iconography)
 local CreatureData = require(script.Parent.CreatureData)
 local Hud = {}
 Hud.__index = Hud
 
--- HUD palette: warm charcoal-teal panels over sand, game-rose / gold / prism accents.
--- Contrast checked in tools/artcheck.py; saturated hues are reserved for rarity,
--- reward and result information so the interface never competes with the world.
-local C = {
-	Ink = Color3.fromRGB(22, 30, 34), Panel = Color3.fromRGB(32, 42, 48),
-	Line = Color3.fromRGB(88, 108, 114), Muted = Color3.fromRGB(178, 192, 192),
-	White = Color3.fromRGB(244, 248, 246), Pink = Color3.fromRGB(255, 108, 186),
-	Cyan = Color3.fromRGB(126, 226, 250), Gold = Color3.fromRGB(255, 205, 96),
-	Purple = Color3.fromRGB(98, 176, 168), Shore = Color3.fromRGB(46, 72, 76),
-	Hair = Color3.fromRGB(54, 70, 76),
-}
-local function make(className, properties, parent)
-	local instance = Instance.new(className)
-	for key, value in properties do
-		instance[key] = value
-	end
-	instance.Parent = parent
-	return instance
-end
-local function corner(parent, radius)
-	make("UICorner", { CornerRadius = UDim.new(0, radius or 16) }, parent)
-end
-local function stroke(parent, color, transparency)
-	return make("UIStroke", { Color = color or C.Line, Thickness = 1, Transparency = transparency or 0.2 }, parent)
-end
--- One soft vertical gradient on a panel reads as produced UI rather than a flat box.
-local function gradient(parent, top, bottom, rotation)
-	-- The Roblox mock used by tests/ has no ColorSequence; the gradient is pure
-	-- polish, so degrade to a flat panel rather than failing to build the HUD.
-	if type(ColorSequence) ~= "table" or not ColorSequence.new then return nil end
-	local node = make("UIGradient", {
-		Color = ColorSequence.new(top, bottom),
-		Rotation = rotation or 90,
-	}, parent)
-	return node
-end
-local function divider(parent, y, width)
-	return make("Frame", {
-		Name = "Divider", Size = UDim2.new(1, -(width or 28), 0, 1),
-		Position = UDim2.new(0, (width or 28) / 2, 0, y), BackgroundColor3 = C.Line,
-		BackgroundTransparency = .45, BorderSizePixel = 0,
-	}, parent)
-end
-local function panel(parent, name, size, pos, anchor)
-	local f = make("Frame", {
-		Name = name, Size = size, Position = pos, AnchorPoint = anchor or Vector2.zero,
-		BackgroundColor3 = C.Ink, BackgroundTransparency = 0.07, BorderSizePixel = 0,
-	}, parent)
-	corner(f, 18)
-	stroke(f)
-	gradient(f, Color3.fromRGB(38, 50, 56), C.Ink)
-	return f
-end
-local function text(parent, name, content, size, pos, color, font, textSize)
-	return make("TextLabel", {
-		Name = name, Text = content, Size = size, Position = pos,
-		BackgroundTransparency = 1, TextColor3 = color or C.White,
-		Font = font or Enum.Font.GothamBold, TextSize = textSize or 16,
-		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
-		RichText = false, BorderSizePixel = 0,
-	}, parent)
-end
-local function centerLabel(parent, name, content, size, pos, color, font, textSize)
-	local label = text(parent, name, content, size, pos, color, font, textSize)
-	label.TextXAlignment = Enum.TextXAlignment.Center
-	return label
-end
-local function button(parent, name, content, size, pos, color)
-	local b = make("TextButton", {
-		Name = name, Text = content, Size = size, Position = pos,
-		BackgroundColor3 = color or C.Panel, BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.White,
-		AutoButtonColor = true,
-	}, parent)
-	corner(b, 12)
-	stroke(b)
-	return b
-end
-local function brainIcon(parent, position, scale)
-	local frame = make("Frame", { Name = "BrainIcon", Size = UDim2.fromOffset(48*scale, 44*scale), Position = position, BackgroundTransparency = 1 }, parent)
-	for side = 0, 1 do
-		for row = 0, 2 do
-			local lobe = make("Frame", {
-				Size = UDim2.fromOffset(24*scale, 22*scale),
-				Position = UDim2.fromOffset((side*18+2)*scale, (row*10+1)*scale),
-				BackgroundColor3 = if row == 1 then Color3.fromRGB(255, 142, 211) else C.Pink,
-				BorderSizePixel = 0,
-			}, frame)
-			corner(lobe, 20)
-		end
-	end
-	return frame
-end
+local C, Type, Space, Motion, Copy = Theme.Colors, Theme.Type, Theme.Space, Theme.Motion, Theme.Copy
+
 local function timeString(remaining)
 	local seconds = math.max(0, math.ceil(remaining))
-	return string.format("%02d:%02d", math.floor(seconds/60), seconds%60)
+	return string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
+local function phaseWord(phase, fastMode)
+	if phase == "Playing" then
+		return Copy.PlayingStatus
+	elseif phase == "Intermission" then
+		return Copy.IntermissionStatus
+	elseif phase == "Results" then
+		return Copy.ResultsStatus
+	end
+	return Copy.WaitingStatus
 end
 
 function Hud.new(config, request)
@@ -112,358 +37,522 @@ function Hud.new(config, request)
 	self.config, self.request = config, request
 	self.soundOn, self.reducedMotion = true, false
 	self.state, self.rows, self.connections = nil, {}, {}
-	self.noticeToken, self.lastPhase, self.lastEvent = 0, "", false
+	self.noticeToken, self.noticeSerial = 0, 0
+	self.lastPhase, self.lastEvent = "", false
+	self.modalKind = nil
 	self.userId = Players.LocalPlayer.UserId
-	self.screen = make("ScreenGui", {
-		Name = "BrainrotHUD", ResetOnSpawn = false, IgnoreGuiInset = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 10,
+
+	self.screen = Kit.instance("ScreenGui", {
+		Name = "BrainrotHUD",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = 10,
 		ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets,
 	}, Players.LocalPlayer:WaitForChild("PlayerGui"))
-	self.root = make("Frame", { Name = "SafeArea", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, self.screen)
+	self.root = Kit.instance("Frame", {
+		Name = "SafeArea", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+	}, self.screen)
+	-- Scrims are built after `root` exists; declared here so resize() can see them.
 
-	-- Brand lockup: wordmark, rule, subtitle. Left-aligned to the safe inset.
-	local brand = self.brand
-	brand = make("Frame", { Name = "Brand", Size = UDim2.fromOffset(230, 96), Position = UDim2.fromOffset(22, 16), BackgroundTransparency = 1 }, self.root)
-	self.brand = brand
-	text(brand, "Wordmark", "BRAINROT", UDim2.fromOffset(230, 34), UDim2.fromOffset(0, 0), C.Gold, Enum.Font.GothamBlack, 30)
-	local accentBar = make("Frame", { Name = "AccentBar", Size = UDim2.fromOffset(46, 3), Position = UDim2.fromOffset(2, 36), BackgroundColor3 = C.Pink, BorderSizePixel = 0 }, brand)
-	corner(accentBar, 2)
-	text(brand, "Arena", "A R E N A", UDim2.fromOffset(230, 24), UDim2.fromOffset(1, 42), C.White, Enum.Font.GothamBlack, 20)
-	text(brand, "Tagline", "AN UNREASONABLE SPORT", UDim2.fromOffset(230, 16), UDim2.fromOffset(2, 68), C.Muted, Enum.Font.GothamMedium, 10)
-	text(brand, "Session", "SESSION • LIVE", UDim2.fromOffset(230, 14), UDim2.fromOffset(2, 82), C.Purple, Enum.Font.GothamMedium, 9)
+	-- ---- legibility scrims (never interactive) ------------------------------
+	-- The world is bright; a soft navy wash at the top and bottom keeps translucent
+	-- panels readable without dimming the play space in the middle of the screen.
+	self.scrimTop = Kit.scrim(self.root, 170, true, { zIndex = 0 })
+	self.scrimBottom = Kit.scrim(self.root, 130, false, { zIndex = 0 })
 
-	self.timerPanel = panel(self.root, "RoundClock", UDim2.fromOffset(288, 98), UDim2.new(.5, 0, 0, 12), Vector2.new(.5, 0))
-	self.phaseLabel = centerLabel(self.timerPanel, "Phase", "SYNCING YOUR BRAIN…", UDim2.new(1, -16, 0, 22), UDim2.fromOffset(8, 9), C.Cyan, nil, 12)
-	self.timeLabel = centerLabel(self.timerPanel, "Countdown", "--:--", UDim2.new(1, 0, 0, 48), UDim2.fromOffset(0, 31), C.White, Enum.Font.GothamBlack, 40)
-	divider(self.timerPanel, 76, 44)
-	centerLabel(self.timerPanel, "MapName", "S Y N A P S E   C I R C U I T", UDim2.new(1, -10, 0, 14), UDim2.fromOffset(5, 80), C.Muted, Enum.Font.GothamMedium, 9)
+	-- ---- top HUD: brand, brain cells, round timer, coins --------------------
+	self.top = Panels.topHud(self.root)
 
-	self.eventPanel = panel(self.root, "Chaos", UDim2.fromOffset(350, 46), UDim2.new(.5, 0, 0, 120), Vector2.new(.5, 0))
-	self.eventPanel.BackgroundColor3 = Color3.fromRGB(30, 52, 56)
-	self.eventLabel = centerLabel(self.eventPanel, "Event", "GRAB THE GLOW. TOP THE BOARD.", UDim2.new(1, -16, 1, 0), UDim2.fromOffset(8, 0), C.Muted, nil, 12)
+	-- ---- leaderboard (right) ----------------------------------------------
+	self.board = Panels.leaderboard(self.root)
+	self.boardVisible = true
+	self.ranksTouched = false
 
-	self.scorePanel = panel(self.root, "YourCells", UDim2.fromOffset(252, 78), UDim2.new(.5, 0, 1, -22), Vector2.new(.5, 1))
-	self.scoreIcon = brainIcon(self.scorePanel, UDim2.fromOffset(18, 17), 1)
-	self.scoreScale = make("UIScale", { Scale = 1 }, self.scoreIcon)
-	self.scoreLabel = text(self.scorePanel, "Score", "0", UDim2.fromOffset(150, 42), UDim2.fromOffset(88, 4), C.White, Enum.Font.GothamBlack, 36)
-	text(self.scorePanel, "Caption", "YOUR BRAIN CELLS", UDim2.fromOffset(155, 16), UDim2.fromOffset(89, 42), C.Pink, nil, 11)
-	self.scoreCreature = text(self.scorePanel, "Creature", CreatureData.Creatures.brain.Label, UDim2.fromOffset(155, 14), UDim2.fromOffset(89, 57), C.Muted, Enum.Font.GothamMedium, 9)
-	self.scoreCreature.TextTruncate = Enum.TextTruncate.AtEnd
-	self.legend = make("Frame", { Name = "RarityKey", Size = UDim2.fromOffset(360, 24), Position = UDim2.new(.5, 0, 1, -112), AnchorPoint = Vector2.new(.5, 1), BackgroundTransparency = 1 }, self.root)
-	-- Rarity key: glyph + value + the critter family the value maps to.
-	for index, entry in { {"+1  BRAIN / FROG", C.Pink, 1}, {"+5  FISH / GOOSE", C.Gold, 5}, {"+10  TOAST / SOCK", C.Cyan, 10} } do
-		local slot = make("Frame", { Name = "Rarity" .. index, Size = UDim2.fromOffset(120, 24), Position = UDim2.fromOffset((index-1)*120, 0), BackgroundTransparency = 1 }, self.legend)
-		local label = text(slot, "Label", entry[1], UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), entry[2], Enum.Font.GothamMedium, 10)
-		label.TextXAlignment = Enum.TextXAlignment.Left
-		label.TextTruncate = Enum.TextTruncate.AtEnd
-		Iconography.glyph(slot, entry[3], entry[2]).Position = UDim2.fromOffset(2, 3)
+	-- ---- bottom action bar: shop / inventory / settings --------------------
+	self.actions = Panels.actionBar(self.root, {
+		Shop = function() self:showModal("Shop") end,
+		Inventory = function() self:showModal("Inventory") end,
+		Settings = function() self:showModal("Settings") end,
+	})
+
+	-- ---- centre messaging --------------------------------------------------
+	self.toast = Panels.toast(self.root)
+	self.event = Panels.eventBanner(self.root)
+	self.lobby = Panels.lobbyBanner(self.root)
+
+	-- ---- rarity key above the action bar -----------------------------------
+	self.legend = Kit.panel(self.root, "RarityKey", UDim2.fromOffset(368, 26), UDim2.new(.5, 0, 1, -Space.lg - 52 - 32), {
+		anchor = Vector2.new(.5, 0), radius = 10, transparency = .3, zIndex = 2,
+	})
+	for index, entry in { { "+1  BRAIN / FROG", C.Cyan, 1 }, { "+5  FISH / GOOSE", C.Amber, 5 }, { "+10  TOAST / SOCK", C.Violet, 10 } } do
+		local slot = Kit.instance("Frame", {
+			Name = "Rarity" .. index,
+			Size = UDim2.fromOffset(120, 26),
+			Position = UDim2.fromOffset(6 + (index - 1) * 120, 0),
+			BackgroundTransparency = 1,
+			ZIndex = 3,
+		}, self.legend)
+		local label = Kit.text(slot, "Label", entry[1], "Micro", {
+			size = UDim2.new(1, -24, 1, 0), position = UDim2.fromOffset(22, 0),
+			color = entry[2], truncate = true, zIndex = 4,
+		})
+		label.Font = Enum.Font.GothamMedium
+		Iconography.glyph(slot, entry[3], entry[2]).Position = UDim2.fromOffset(3, 5)
 	end
 
-	self.coinsPanel = panel(self.root, "Coins", UDim2.fromOffset(238, 78), UDim2.new(1, -20, 0, 16), Vector2.new(1, 0))
-	text(self.coinsPanel, "Caption", "SESSION COINS", UDim2.new(1, -30, 0, 20), UDim2.fromOffset(16, 8), C.Gold, nil, 10)
-	self.coinsLabel = text(self.coinsPanel, "Amount", "0", UDim2.new(1, -30, 0, 38), UDim2.fromOffset(16, 28), C.White, Enum.Font.GothamBlack, 30)
-	divider(self.coinsPanel, 26, 30)
-	local coin = make("Frame", { Name = "CoinDot", Size = UDim2.fromOffset(9, 9), Position = UDim2.new(1, -24, 0, 12), BackgroundColor3 = C.Gold, BorderSizePixel = 0 }, self.coinsPanel)
-	corner(coin, 9)
+	-- ---- results card ------------------------------------------------------
+	self.results = Kit.panel(self.root, "Results", UDim2.fromOffset(468, 268), UDim2.fromScale(.5, .44), {
+		anchor = Vector2.new(.5, .5), zIndex = 8, visible = false, padding = Space.xl,
+	})
+	Kit.text(self.results, "Eyebrow", Copy.ResultsStatus, "Label", {
+		size = UDim2.new(1, 0, 0, 16), color = C.Cyan, xAlign = Enum.TextXAlignment.Center,
+	})
+	self.resultTitle = Kit.text(self.results, "Title", Copy.WinBanner, "Display", {
+		size = UDim2.new(1, 0, 0, 44), position = UDim2.fromOffset(0, 22),
+		color = C.Amber, xAlign = Enum.TextXAlignment.Center, truncate = true,
+	})
+	self.resultName = Kit.text(self.results, "Winner", "", "Heading", {
+		size = UDim2.new(1, 0, 0, 52), position = UDim2.fromOffset(0, 70),
+		color = C.White, xAlign = Enum.TextXAlignment.Center, wrapped = true,
+	})
+	self.resultCast = Kit.text(self.results, "Cast", "", "Micro", {
+		size = UDim2.new(1, 0, 0, 14), position = UDim2.fromOffset(0, 124),
+		color = C.Dim, xAlign = Enum.TextXAlignment.Center, truncate = true,
+	})
+	Kit.divider(self.results, 146, Space.xl)
+	self.resultReward = Kit.text(self.results, "Reward", "", "Title", {
+		size = UDim2.new(1, 0, 0, 30), position = UDim2.fromOffset(0, 158),
+		color = C.Amber, xAlign = Enum.TextXAlignment.Center,
+	})
+	self.resultNext = Kit.text(self.results, "Next", "", "Micro", {
+		size = UDim2.new(1, 0, 0, 30), position = UDim2.fromOffset(0, 196),
+		color = C.Muted, xAlign = Enum.TextXAlignment.Center, wrapped = true,
+	})
 
-	self.ranksButton = button(self.root, "Ranks", "RANKS  /  TAB", UDim2.fromOffset(128, 36), UDim2.new(1, -148, 0, 104))
-	self.board = panel(self.root, "Leaderboard", UDim2.fromOffset(238, 310), UDim2.new(1, -20, 0, 150), Vector2.new(1, 0))
-	text(self.board, "Heading", "THIS ROUND", UDim2.new(1, -30, 0, 27), UDim2.fromOffset(15, 7), C.White, nil, 13)
-	self.boardHint = text(self.board, "Subheading", "MOST CELLS WINS", UDim2.new(1, -30, 0, 17), UDim2.fromOffset(15, 32), C.Muted, Enum.Font.GothamMedium, 9)
-	divider(self.board, 52, 28)
-	self.roster = make("ScrollingFrame", {
-		Name = "Players", Position = UDim2.fromOffset(10, 57), Size = UDim2.new(1, -20, 1, -68),
-		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-		ScrollBarImageColor3 = C.Purple, CanvasSize = UDim2.fromOffset(0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-	}, self.board)
-	make("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, self.roster)
-
-	self.helpButton = button(self.root, "Help", "HOW TO PLAY  /  H", UDim2.fromOffset(146, 44), UDim2.new(0, 22, 1, -68))
-	self.rewardsButton = button(self.root, "Rewards", "REWARDS", UDim2.fromOffset(112, 44), UDim2.new(0, 178, 1, -68))
-	self.rewardsButton.TextColor3 = C.Gold
-	self.soundButton = button(self.root, "Sound", "SFX ON", UDim2.fromOffset(84, 36), UDim2.new(0, 22, 1, -112))
-	self.noticePanel = panel(self.root, "Notice", UDim2.fromOffset(420, 48), UDim2.new(.5, 0, 0, 180), Vector2.new(.5, 0))
-	self.noticePanel.Visible = false
-	self.noticeLabel = centerLabel(self.noticePanel, "Message", "", UDim2.new(1, -24, 1, 0), UDim2.fromOffset(12, 0), C.White, nil, 13)
-	self.noticeLabel.TextWrapped = true
-
-	-- Results are non-modal: players can still move around the lobby.
-	self.resultsPanel = panel(self.root, "Results", UDim2.fromOffset(468, 264), UDim2.fromScale(.5, .49), Vector2.new(.5, .5))
-	self.resultsPanel.Visible = false
-	self.resultsPanel.ZIndex = 5
-	centerLabel(self.resultsPanel, "Eyebrow", "ROUND COMPLETE", UDim2.new(1, -36, 0, 24), UDim2.fromOffset(18, 18), C.Cyan, nil, 12)
-	self.resultTitle = centerLabel(self.resultsPanel, "Title", "BIG BRAIN ENERGY", UDim2.new(1, -32, 0, 46), UDim2.fromOffset(16, 51), C.Gold, Enum.Font.GothamBlack, 27)
-	self.resultName = centerLabel(self.resultsPanel, "Winner", "", UDim2.new(1, -40, 0, 54), UDim2.fromOffset(20, 99), C.White, nil, 22)
-	self.resultName.TextWrapped = true
-	self.resultName.TextScaled = true
-	make("UITextSizeConstraint", { MinTextSize = 12, MaxTextSize = 22 }, self.resultName)
-	self.resultTitle.TextScaled = true
-	make("UITextSizeConstraint", { MinTextSize = 12, MaxTextSize = 27 }, self.resultTitle)
-	self.resultReward = centerLabel(self.resultsPanel, "Reward", "", UDim2.new(1, -40, 0, 34), UDim2.fromOffset(20, 166), C.Pink, nil, 18)
-	self.resultCast = centerLabel(self.resultsPanel, "Cast", "", UDim2.new(1, -40, 0, 16), UDim2.fromOffset(20, 150), C.Muted, Enum.Font.GothamMedium, 10)
-	self.resultNext = centerLabel(self.resultsPanel, "Next", "Next round soon. Keep your neurons warm.", UDim2.new(1, -28, 0, 32), UDim2.fromOffset(14, 213), C.Muted, Enum.Font.GothamMedium, 11)
-
-	self.modal = make("Frame", { Name = "ModalLayer", Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.Ink, BackgroundTransparency = .24, Visible = false, ZIndex = 20, Active = true }, self.root)
-	self.modalPanel = panel(self.modal, "Card", UDim2.fromOffset(468, 374), UDim2.fromScale(.5, .5), Vector2.new(.5, .5))
-	self.modalPanel.ZIndex = 21
-	self.modalTitle = text(self.modalPanel, "Title", "A QUICK BRAIN BRIEF", UDim2.new(1, -100, 0, 40), UDim2.fromOffset(24, 18), C.Gold, Enum.Font.GothamBlack, 22)
-	self.modalBody = text(self.modalPanel, "Body", "", UDim2.new(1, -48, 1, -180), UDim2.fromOffset(24, 70), C.White, Enum.Font.GothamMedium, 16)
-	self.modalBody.TextWrapped = true
+	-- ---- modal: shop / inventory / settings / help --------------------------
+	self.modal = Kit.instance("Frame", {
+		Name = "ModalLayer", Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.Void,
+		BackgroundTransparency = .35, Visible = false, ZIndex = 20, Active = true,
+	}, self.root)
+	self.modalCard = Kit.panel(self.modal, "Card", UDim2.fromOffset(468, 348), UDim2.fromScale(.5, .5), {
+		anchor = Vector2.new(.5, .5), zIndex = 21, padding = Space.xl,
+	})
+	self.modalTitle = Kit.text(self.modalCard, "Title", Copy.ShopTitle, "Title", {
+		size = UDim2.new(1, -60, 0, 26), color = C.Amber, zIndex = 22,
+	})
+	self.modalBody = Kit.text(self.modalCard, "Body", "", "Body", {
+		size = UDim2.new(1, 0, 1, -120), position = UDim2.fromOffset(0, 34),
+		color = C.White, wrapped = true, zIndex = 22,
+	})
 	self.modalBody.TextYAlignment = Enum.TextYAlignment.Top
-	self.modalBody.TextScaled = true
-	make("UITextSizeConstraint", { MinTextSize = 11, MaxTextSize = 16 }, self.modalBody)
-	self.modalAction = button(self.modalPanel, "Action", "LET'S GO", UDim2.new(1, -48, 0, 46), UDim2.new(0, 24, 1, -102), Color3.fromRGB(52, 96, 92))
-	self.motionButton = button(self.modalPanel, "Motion", "REDUCED MOTION: OFF", UDim2.new(.5, -30, 0, 44), UDim2.new(0, 24, 1, -52))
-	self.motionButton.TextSize = 10
-	self.modalSoundButton = button(self.modalPanel, "ModalSound", "SFX ON", UDim2.new(.5, -30, 0, 44), UDim2.new(.5, 6, 1, -52))
-	self.modalSoundButton.TextSize = 10
-	self.closeButton = button(self.modalPanel, "Close", "X", UDim2.fromOffset(44, 44), UDim2.new(1, -64, 0, 16))
-	self.closeButton.TextSize = 10
-	-- Descendants share their panel's stacking context; the modal is above the whole HUD.
-	for _, descendant in self.modal:GetDescendants() do
-		if descendant:IsA("GuiObject") then
-			descendant.ZIndex = 21
-		end
-	end
+	self.modalFocus = nil
+	self.modalPrimary = Kit.button(self.modalCard, "Action", "UNLOCK", UDim2.new(1, -56, 0, 44),
+		UDim2.new(0, 0, 1, -44), function() self:activateModal() end,
+		{ accent = C.Amber, zIndex = 22 })
+	self.modalSound = Kit.button(self.modalCard, "ModalSound", "SFX ON", UDim2.fromOffset(110, 34),
+		UDim2.new(0, 0, 1, -88), function() self:toggleSound() end, { accent = C.Cyan, zIndex = 22 })
+	self.modalMotion = Kit.button(self.modalCard, "ModalMotion", "MOTION: FULL", UDim2.fromOffset(132, 34),
+		UDim2.new(0, 118, 1, -88), function() self:toggleMotion() end, { accent = C.Violet, zIndex = 22 })
+	self.modalClose = Kit.button(self.modalCard, "Close", "X", UDim2.fromOffset(36, 36),
+		UDim2.new(1, -36, 0, 0), function() self:closeModal() end, { accent = C.NavyEdge, zIndex = 22 })
+	self.modalClose.Label.TextSize = Type.Body
 
-	self.ranksButton.Activated:Connect(function()
-		self.board.Visible = not self.board.Visible
-		self.ranksTouched = true
-	end)
-	self.helpButton.Activated:Connect(function() self:showModal("Help") end)
-	self.rewardsButton.Activated:Connect(function() self:showModal("Rewards") end)
-	self.closeButton.Activated:Connect(function() self.modal.Visible = false end)
-	local function toggleSound()
-		self.soundOn = not self.soundOn
-		self.soundButton.Text = if self.soundOn then "SFX ON" else "SFX OFF"
-		self.modalSoundButton.Text = self.soundButton.Text
-	end
-	self.soundButton.Activated:Connect(toggleSound)
-	self.modalSoundButton.Activated:Connect(toggleSound)
-	self.motionButton.Activated:Connect(function()
-		self.reducedMotion = not self.reducedMotion
-		self.motionButton.Text = "REDUCED MOTION: " .. (if self.reducedMotion then "ON" else "OFF")
-	end)
-	self.modalAction.Activated:Connect(function()
-		if self.modalKind == "Rewards" then
-			self.request("Halo")
-		else
-			self.modal.Visible = false
-		end
-	end)
+	-- ---- persistent secondary buttons -------------------------------------
+	self.helpButton = Kit.button(self.root, "Help", "?", UDim2.fromOffset(36, 36),
+		UDim2.fromOffset(Space.xl, 148), function() self:showModal("Help") end,
+		{ accent = C.Cyan, zIndex = 3 })
+	self.ranksButton = Kit.button(self.root, "Ranks", "RANKS", UDim2.fromOffset(84, 32),
+		UDim2.new(1, -Space.lg - 84, 0, 128), function() self:toggleBoard() end,
+		{ accent = C.Violet, zIndex = 3 })
+
+	-- ---- input -------------------------------------------------------------
+	self.modal.Parent = self.root
+	self.ranksButton.Activated:Connect(function() self.ranksTouched = true end)
 	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or UserInputService:GetFocusedTextBox() then return end
 		if input.KeyCode == Enum.KeyCode.Tab then
-			self.board.Visible = not self.board.Visible
+			self:toggleBoard()
 			self.ranksTouched = true
 		elseif input.KeyCode == Enum.KeyCode.H then
-			if self.modal.Visible then self.modal.Visible = false else self:showModal("Help") end
+			if self.modal.Visible then self:closeModal() else self:showModal("Help") end
 		elseif input.KeyCode == Enum.KeyCode.Escape and self.modal.Visible then
-			self.modal.Visible = false
+			self:closeModal()
+		elseif input.KeyCode == Enum.KeyCode.B then
+			self:showModal("Shop")
 		end
 	end))
-	table.insert(self.connections, self.root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() self:resize() end))
+	table.insert(self.connections, self.root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		self:resize()
+	end))
 	self:resize()
 	return self
 end
 
+-- --------------------------------------------------------------------------- #
+-- Layout
+-- --------------------------------------------------------------------------- #
 function Hud:resize()
-	local width, height = self.root.AbsoluteSize.X, self.root.AbsoluteSize.Y
+	local size = self.root.AbsoluteSize
+	local width, height = size.X, size.Y
 	if width < 1 or height < 1 then return end
-	local compact = width < 760
-	local short = height < 500
-	local portraitTouch = compact and not short
-	self.scorePanel.Size = UDim2.fromOffset(if portraitTouch then 208 else 252, if portraitTouch then 68 else 78)
-	self.scorePanel.Position = UDim2.new(.5, 0, 1, if portraitTouch then -116 else -22)
-	self.scoreLabel.Size = UDim2.new(1, -88, 0, if portraitTouch then 36 else 42)
-	self.scoreLabel.TextSize = if portraitTouch then 30 else 36
-	self.scorePanel.Caption.Position = UDim2.fromOffset(89, if portraitTouch then 40 else 46)
-	self.scorePanel.Caption.Size = UDim2.new(1, -94, 0, 20)
-	self.scorePanel.Caption.TextSize = if portraitTouch then 9 else 11
-	self.compact = compact
-	self.brand.Visible = not compact and not short
-	self.timerPanel.Size = UDim2.fromOffset(if compact then math.clamp(width-168, 160, 208) else 288, if short then 82 else 98)
-	self.timeLabel.TextSize = if short then 32 else 40
-	self.timeLabel.Size = UDim2.new(1, 0, 0, if short then 35 else 48)
-	self.timerPanel.MapName.Visible = not short
-	self.phaseLabel.TextSize = if compact then 10 else 12
-	self.eventPanel.Size = UDim2.fromOffset(math.min(width-32, if compact then 300 else 350), 38)
-	self.eventPanel.Position = UDim2.new(.5, 0, 0, if short then 101 else 120)
-	self.eventLabel.TextSize = if compact then 10 else 12
-	self.ranksButton.Size = UDim2.fromOffset(if compact or short then 66 else 128, 44)
-	self.ranksButton.Position = if compact or short then UDim2.new(1, -80, 0, 18) else UDim2.new(1, -148, 0, 104)
-	self.ranksButton.Text = if compact or short then "RANKS" else "RANKS / TAB"
-	self.board.Size = UDim2.fromOffset(if compact then 220 else 238, math.min(310, height-110))
-	self.board.Position = UDim2.new(1, -14, 0, if compact or short then 76 else 150)
-	if not self.ranksTouched then self.board.Visible = not compact and not short end
-	self.coinsPanel.Size = UDim2.fromOffset(if compact or short then 170 else 238, if compact or short then 36 else 78)
-	self.coinsPanel.AnchorPoint = if compact or short then Vector2.new(.5, 1) else Vector2.new(1, 0)
-	self.coinsPanel.Position = if compact or short then UDim2.new(.5, 0, 1, if portraitTouch then -190 else -106) else UDim2.new(1, -20, 0, 16)
-	self.coinsPanel.Caption.Visible = not compact and not short
-	self.coinsLabel.Position = if compact or short then UDim2.fromOffset(12, 0) else UDim2.fromOffset(16, 28)
-	self.coinsLabel.Size = if compact or short then UDim2.new(1, -24, 1, 0) else UDim2.new(1, -30, 0, 38)
-	self.coinsLabel.TextSize = if compact or short then 13 else 30
-	self.coinsLabel.TextXAlignment = if compact or short then Enum.TextXAlignment.Center else Enum.TextXAlignment.Left
+	local compact = width < 780
+	local short = height < 520
+	local portrait = width < height
+	self.compact, self.short, self.portrait = compact, short, portrait
+
+	local top = self.top
+	self.scrimTop.Size = UDim2.new(1, 0, 0, math.min(190, math.max(120, height * .26)))
+	self.scrimBottom.Size = UDim2.new(1, 0, 0, math.min(150, math.max(100, height * .2)))
+	self.scrimBottom.Position = UDim2.new(0, 0, 1, -self.scrimBottom.Size.Y.Offset)
+	-- brand
+	top.brand.Visible = not compact and not short
+	top.brand.Position = UDim2.fromOffset(Space.xl, Space.lg)
+
+	-- brain-cell counter: under the brand on desktop, top-left on compact
+	top.cells.Size = UDim2.fromOffset(if compact then 128 else 196, if short then 44 else 52)
+	top.cells.Position = if compact then UDim2.fromOffset(Space.md, Space.md)
+		else UDim2.fromOffset(Space.xl, 78)
+
+	-- round clock: always centred at the top, shrinks on phones
+	-- The clock keeps its centre line; on phones it narrows so the RANKS chip never
+	-- collides with it. 132px is the floor where "00:00" still reads cleanly.
+	local clockWidth = math.clamp(width - 340, 150, 212)
+	if compact then clockWidth = math.clamp(width - 368, 96, 190) end
+	top.clock.Size = UDim2.fromOffset(clockWidth, if short then 62 else 76)
+	top.clock.Position = UDim2.new(.5, 0, 0, if short then Space.sm else Space.lg)
+	top.time.TextSize = if short then 26 elseif compact then 30 else Type.Display
+	top.roundLabel.Visible = not short
+	top.divider.Visible = not short
+
+	-- coin counter: top-right, never overlapping the clock
+	top.coins.Size = UDim2.fromOffset(if compact then 112 else 152, if short then 44 else 52)
+	top.coins.Position = UDim2.new(1, -Space.md, 0, if compact then Space.sm else Space.lg)
+	top.coinValue.TextSize = if compact then 18 else Type.Title
+	top.coinValue.Size = UDim2.new(1, -40, 0, 24)
+
+	-- leaderboard
+	local board = self.board
+	board.board.Visible = self:boardShown()
+	board.board.Size = UDim2.fromOffset(if compact then 196 else 232,
+		math.clamp(height - (if compact then 190 else 230), 150, 320))
+	board.board.Position = UDim2.new(1, -Space.md, 0, if compact then 118 else 162)
+	self.ranksButton.Visible = compact or short
+	-- On short landscape screens the RANKS chip moves up, clear of the toast band.
+	self.ranksButton.Position = UDim2.new(1, -Space.md - 84, 0, if short then 40 elseif compact then 74 else 128)
+	self.ranksButton.Size = UDim2.fromOffset(if compact then 68 else 84, 32)
+
+	-- Action bar. On phones it sits above the thumbstick and jump zones so a tap on
+	-- the shop never registers as a jump; on desktop it hugs the bottom edge.
+	local barLift = if compact then 118 else Space.lg
+	self.actions.bar.Position = UDim2.new(.5, 0, 1, -barLift - 52)
+	self.actions.bar.Visible = true
+	for _, name in { "Shop", "Inventory", "Settings" } do
+		local button = self.actions.buttons[name]
+		button.Size = UDim2.fromOffset(if compact then 76 else 84, 52)
+		button.Position = UDim2.fromOffset(
+			(if name == "Shop" then 0 elseif name == "Inventory" then (if compact then 84 else 92) else (if compact then 168 else 184)),
+			0)
+	end
+	self.actions.bar.Size = UDim2.fromOffset(if compact then 252 else 268, 52)
 	self.legend.Visible = not compact and not short
-	self.helpButton.Text = if compact or short then "?" else "HOW TO PLAY / H"
-	self.helpButton.Size = UDim2.fromOffset(if compact or short then 44 else 146, 44)
-	self.helpButton.Position = if compact or short then UDim2.fromOffset(14, 18) else UDim2.new(0, 22, 1, -68)
-	self.rewardsButton.Position = if compact or short then UDim2.fromOffset(14, 76) else UDim2.new(0, 178, 1, -68)
-	self.rewardsButton.Size = UDim2.fromOffset(if compact then 60 elseif short then 92 else 112, 44)
-	self.rewardsButton.TextSize = if compact then 9 else 12
-	self.soundButton.Position = if compact or short then UDim2.fromOffset(14, 128) else UDim2.new(0, 22, 1, -112)
-	self.soundButton.Size = UDim2.fromOffset(if compact or short then 92 else 84, 36)
-	self.soundButton.Visible = not compact and not short
-	self.resultsPanel.Size = UDim2.fromOffset(math.min(width-32, 468), math.min(264, height-32))
-	self.resultTitle.TextSize = if compact then 22 else 27
-	self.modalPanel.Size = UDim2.fromOffset(math.min(width-28, 468), math.min(height-24, 374))
-	self.modalTitle.TextSize = if compact then 19 else 22
-	self.modalBody.TextSize = if short then 13 elseif compact then 14 else 16
-	self.noticePanel.Size = UDim2.fromOffset(math.min(width-32, 420), 48)
-	self.noticePanel.Position = UDim2.new(.5, 0, 0, if short then 145 else 174)
+	self.legend.Position = UDim2.new(.5, 0, 1, -barLift - 52 - 32)
+
+	-- help button sits above the action bar on phones, beside it on desktop
+	self.helpButton.Position = if compact then UDim2.new(0, Space.md, 0, 74) else UDim2.fromOffset(Space.xl, 136)
+
+	-- toasts and banners
+	self.toast.frame.Size = UDim2.fromOffset(math.min(width - 32, 432), 56)
+	self.toast.frame.Position = UDim2.new(.5, 0, 0, if short then 84 else 112)
+	self.event.frame.Size = UDim2.fromOffset(math.min(width - 40, 320), 34)
+	self.event.frame.Position = UDim2.new(.5, 0, 0, if short then 146 else 174)
+	self.lobby.frame.Size = UDim2.fromOffset(math.min(width - 32, 420), 92)
+	self.lobby.frame.Position = UDim2.new(.5, 0, 0, if short then 186 else 236)
+
+	-- cards
+	self.results.Size = UDim2.fromOffset(math.min(width - 32, 468), math.min(height - 32, 268))
+	self.resultTitle.TextSize = if compact then 24 else Type.Display
+	self.modalCard.Size = UDim2.fromOffset(math.min(width - 28, 468), math.min(height - 24, 348))
+	self.modalPrimary.Size = UDim2.new(1, -56, 0, 44)
+	self.modalBody.TextSize = if short then 12 elseif compact then 13 else Type.Body
+	self.modalTitle.TextSize = if compact then 18 else Type.Title
+
 	if self.state then self:updateLocalValues() end
 end
 
-function Hud:showModal(kind)
-	self.modalKind = kind
-	self.modal.Visible = true
-	if kind == "Rewards" then
-		self:updateRewardModal()
-	else
-		self.modalTitle.Text = "A QUICK BRAIN BRIEF"
-		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1 • fish or goose +5 • toast or sock +10\n\n02   KEEP YOUR COOL\nLow gravity hits mid-round. Fall? You pop back with your score.\n\n03   BE THE BIGGEST BRAIN\nMost cells wins. Ties share the crown. Rounds start automatically."
-		self.modalAction.Text = "LET'S GO"
-	end
+-- True when the leaderboard is actually on screen for this viewport.
+function Hud:boardShown()
+	return self.boardVisible and not (self.compact and not self.ranksTouched)
 end
 
-function Hud:updateRewardModal()
-	local row = self.localRow
-	self.modalTitle.Text = "YOUR NEXT FLEX"
-	local owned = row and row.haloOwned
-	local balance = if row then row.coins else 0
-	self.modalBody.Text = "PULSE HALO\nA cyan orbit for a truly overactive brain.\n\n" .. (if owned then "You own this glow for the current session." else "Unlock with " .. self.config.HaloCost .. " coins earned by playing.") .. "\nBalance: " .. balance .. " session coins.\n\nCoins and unlocks reset when you leave. No Robux. No purchases."
-	self.modalAction.Text = if owned then (if row.haloEquipped then "UNEQUIP HALO" else "EQUIP HALO") else "UNLOCK PULSE HALO  •  " .. self.config.HaloCost
+function Hud:toggleBoard()
+	self.boardVisible = not self.boardVisible
+	self.board.board.Visible = self.boardVisible
 end
 
-function Hud:updateLocalValues()
-	local row = self.localRow
-	local coins = if row then row.coins else 0
-	self.scoreLabel.Text = tostring(if row then row.score else 0)
-	self.coinsLabel.Text = if self.compact or self.root.AbsoluteSize.Y < 500 then (tostring(coins) .. "  SESSION COINS") else tostring(coins)
-	if self.modal.Visible and self.modalKind == "Rewards" then self:updateRewardModal() end
-end
-
+-- --------------------------------------------------------------------------- #
+-- Server state
+-- --------------------------------------------------------------------------- #
 function Hud:update(state)
 	self.state = state
 	self.localRow = nil
+	-- The server sends rows in rank order; sort defensively so a stale snapshot can
+	-- never show a lower score above a higher one.
+	local ordered = table.clone(state.rows)
+	table.sort(ordered, function(a, b)
+		if a.score ~= b.score then return a.score > b.score end
+		return a.name < b.name
+	end)
 	local found = {}
-	for index, row in state.rows do
+	for index, row in ordered do
 		found[row.id] = true
 		if row.id == self.userId then self.localRow = row end
 		local view = self.rows[row.id]
 		if not view then
-			local frame = make("Frame", { Name = "Player_" .. row.id, Size = UDim2.new(1, -4, 0, 34), BackgroundColor3 = C.Panel, BorderSizePixel = 0 }, self.roster)
-			corner(frame, 9)
-			view = {
-				frame = frame,
-				rank = text(frame, "Rank", "", UDim2.fromOffset(30, 34), UDim2.fromOffset(8, 0), C.Muted, nil, 11),
-				name = text(frame, "Player", "", UDim2.new(1, -82, 1, 0), UDim2.fromOffset(36, 0), C.White, Enum.Font.GothamMedium, 11),
-				score = text(frame, "Cells", "", UDim2.fromOffset(38, 34), UDim2.new(1, -44, 0, 0), C.White, nil, 14),
-			}
-			view.score.TextXAlignment = Enum.TextXAlignment.Right
-			view.name.TextTruncate = Enum.TextTruncate.AtEnd
+			view = Panels.row(self.board.roster, row.id, index)
 			self.rows[row.id] = view
 		end
+		local mine = row.id == self.userId
 		view.frame.LayoutOrder = index
-		view.frame.BackgroundColor3 = if row.id == self.userId then Color3.fromRGB(46, 74, 74) else C.Panel
+		view.frame.BackgroundColor3 = if mine then C.NavyRaised else C.Navy
+		view.frame.BackgroundTransparency = if mine then .05 else .4
+		view.accent.BackgroundColor3 = if index == 1 then C.Amber else (if mine then C.Cyan else C.NavyEdge)
+		view.accent.BackgroundTransparency = if index == 1 or mine then 0 else .5
 		view.rank.Text = string.format("%02d", index)
-		view.rank.TextColor3 = if index == 1 then C.Gold else C.Muted
-		view.name.Text = row.name .. (if row.id == self.userId then " (you)" else "")
+		view.rank.TextColor3 = if index == 1 then C.Amber else C.Dim
+		view.name.Text = row.name .. (if mine then "  • you" else "")
 		view.score.Text = tostring(row.score)
+		view.score.TextColor3 = if index == 1 then C.Amber else C.Cyan
 	end
 	for id, view in self.rows do
-		if not found[id] then view.frame:Destroy(); self.rows[id] = nil end
+		if not found[id] then
+			view.frame:Destroy()
+			self.rows[id] = nil
+		end
 	end
 	self:updateLocalValues()
-	self.resultsPanel.Visible = state.phase == "Results"
-	if state.phase == "Results" and state.results then
-		local results = state.results
-		local winners = results.winners
-		if #winners == 0 then
-			self.resultTitle.Text = "THE BRAINS ARE WARMING UP"
-			self.resultName.Text = "No cells collected this time.\nNext round is yours."
-		elseif #winners == 1 then
-			self.resultTitle.Text = "BIG BRAIN ENERGY"
-			self.resultName.Text = winners[1].name .. " wins!\n" .. results.topScore .. " Brain Cells"
-		else
-			self.resultTitle.Text = "A MEETING OF MINDS!"
-			local names = {}
-			for index, row in winners do
-				if index <= 3 then table.insert(names, row.name) end
-			end
-			self.resultName.Text = table.concat(names, ", ") .. (if #winners > 3 then " + more" else "") .. "\nTied at " .. results.topScore .. " cells"
-		end
-		local reward = results.rewards[tostring(self.userId)] or 0
-		self.resultReward.Text = if reward > 0 then ("+" .. reward .. " SESSION COINS") else "YOUR NEXT ROUND STARTS SOON"
-		self.resultCast.Text = tostring(results.topScore or 0) .. " CELLS  •  " .. self:castLine(results.roundId or (self.state and self.state.roundId))
-	end
-	if state.phase ~= self.lastPhase then
-		if state.phase == "Playing" then self:notice("GRAB THE GLOW! Brain +1 • Fish +5 • Toast +10") end
-		self.lastPhase = state.phase
-	end
-	if state.eventActive and not self.lastEvent then self:notice("LOW GRAVITY! Moon feet. Same mission.") end
-	self.lastEvent = state.eventActive
+	self:updateResults(state)
+	self:updateBanners(state)
 	self:tick()
+end
+
+function Hud:updateLocalValues()
+	local row = self.localRow
+	local cells = if row then row.score else 0
+	local coins = if row then row.coins else 0
+	self.top.cellValue.Text = tostring(cells)
+	self.top.coinValue.Text = tostring(coins)
+	if self.state then
+		-- On phones the clock is narrow: the round number alone still fits.
+		local round = string.format("ROUND %02d", self.state.roundId or 0)
+		self.top.roundLabel.Text = if self.compact then round
+			else round .. "  •  " .. (if self.state.fastMode then "QUICK TEST" else self.config.ArenaName)
+	end
+	if self.modal.Visible then
+		self:refreshModal()
+	end
+end
+
+function Hud:updateResults(state)
+	local showing = state.phase == "Results" and state.results ~= nil
+	if showing ~= self.results.Visible then
+		self.results.Visible = showing
+		if showing then
+			Kit.enter(self.results, { reducedMotion = self.reducedMotion, rise = 16 })
+		end
+	end
+	if not showing then
+		return
+	end
+	local results = state.results
+	local winners = results.winners
+	if #winners == 0 then
+		self.resultTitle.Text = Copy.NoScoreBanner
+		self.resultName.Text = "No cells collected this time.\nThe next round is yours."
+	elseif #winners == 1 then
+		self.resultTitle.Text = Copy.WinBanner
+		self.resultName.Text = winners[1].name .. " wins!\n" .. results.topScore .. " brain cells"
+	else
+		self.resultTitle.Text = Copy.TieBanner
+		local names = {}
+		for index, row in winners do
+			if index <= 3 then table.insert(names, row.name) end
+		end
+		self.resultName.Text = table.concat(names, ", ") .. (if #winners > 3 then " + more" else "")
+			.. "\nTied at " .. results.topScore .. " cells"
+	end
+	self.resultCast.Text = self:castLine(results.roundId)
+	local reward = results.rewards[tostring(self.userId)] or 0
+	self.resultReward.Text = if reward > 0 then "+" .. reward .. " COINS" else "NEXT ROUND SOON"
+end
+
+function Hud:updateBanners(state)
+	self.lobby.frame.Visible = state.phase ~= "Playing"
+	if self.lobby.frame.Visible then
+		local remaining = math.max(0, (state.phaseEndsAt or 0) - Workspace:GetServerTimeNow())
+		self.lobby.status.Text = phaseWord(state.phase, state.fastMode)
+		self.lobby.status.TextColor3 = if state.phase == "Results" then C.Amber else C.Cyan
+		if state.phase == "Intermission" then
+			self.lobby.countdown.Text = "ARENA OPENS IN " .. timeString(remaining)
+		elseif state.phase == "Results" then
+			self.lobby.countdown.Text = "NEXT ROUND IN " .. timeString(remaining)
+		else
+			self.lobby.countdown.Text = "WAITING FOR THE FIRST PLAYER"
+		end
+	end
+	if state.eventActive then
+		self.event.frame.Visible = true
+		self.event.label.Text = Copy.EventBanner .. "  •  " .. timeString(state.eventEndsAt - Workspace:GetServerTimeNow())
+		self.event.dot.BackgroundColor3 = C.Cyan
+	else
+		self.event.frame.Visible = false
+	end
 end
 
 function Hud:tick()
 	local state = self.state
 	if not state then return end
 	local now = Workspace:GetServerTimeNow()
-	local remaining = math.max(0, state.phaseEndsAt-now)
-	self.timeLabel.Text = if state.phase == "Waiting" then "--:--" else timeString(remaining)
-	local phase = if state.phase == "Playing" then string.format("ROUND %02d • COLLECT", state.roundId)
-		elseif state.phase == "Intermission" then "GET READY • AUTO JOIN"
-		elseif state.phase == "Results" then "ROUND COMPLETE" else "WAITING FOR BRAINS"
-	self.phaseLabel.Text = phase .. (if state.fastMode then " • TEST" else "")
-	self.timeLabel.TextColor3 = if state.phase == "Playing" and remaining <= 15 then C.Pink else C.White
-	if state.eventActive then
-		self.eventLabel.Text = "LOW GRAVITY  /  " .. timeString(state.eventEndsAt-now)
-		self.eventLabel.TextColor3 = C.Cyan
-		self.eventPanel.BackgroundColor3 = Color3.fromRGB(32, 62, 66)
-	else
-		self.eventLabel.Text = if state.phase == "Playing" then "GRAB THE GLOW. TOP THE BOARD." else "NEXT ROUND IS AUTOMATIC. YOU'RE IN."
-		self.eventLabel.TextColor3 = C.Muted
-		self.eventPanel.BackgroundColor3 = C.Ink
+	local remaining = math.max(0, (state.phaseEndsAt or 0) - now)
+	self.top.time.Text = if state.phase == "Waiting" then "--:--" else timeString(remaining)
+	self.top.time.TextColor3 = if state.phase == "Playing" and remaining <= 15 then C.Danger else C.White
+	self.top.phase.Text = phaseWord(state.phase, state.fastMode)
+	self.top.phase.TextColor3 = if state.phase == "Playing" then C.Cyan
+		elseif state.phase == "Results" then C.Amber else C.Violet
+	self:updateBanners(state)
+	if self.lobby.frame.Visible then
+		if state.phase == "Intermission" then
+			self.lobby.countdown.Text = "ARENA OPENS IN " .. timeString(remaining)
+		elseif state.phase == "Results" then
+			self.lobby.countdown.Text = "NEXT ROUND IN " .. timeString(remaining)
+		end
 	end
-	self.resultNext.Text = "INTERMISSION IN " .. timeString(remaining) .. "  •  KEEP YOUR NEURONS WARM."
+	if state.eventActive then
+		self.event.label.Text = Copy.EventBanner .. "  •  " .. timeString(state.eventEndsAt - now)
+	end
+	if self.results.Visible then
+		self.resultNext.Text = "INTERMISSION IN " .. timeString(remaining)
+	end
 end
 
--- Deterministic "today's cast" line: the same round always shows the same critter,
--- purely as flavour (no scoring meaning).
-function Hud:castLine(roundId)
-	local round = math.max(1, math.floor(tonumber(roundId) or 1))
-	local value = if round % 3 == 0 then 10 elseif round % 3 == 1 then 1 else 5
-	local family = CreatureData.Family[value]
-	local spec = CreatureData.Creatures[family[(round % 2) + 1]]
-	return spec.Blurb
-end
-
-function Hud:notice(message)
+-- --------------------------------------------------------------------------- #
+-- Toast
+-- --------------------------------------------------------------------------- #
+function Hud:notice(message, accent)
 	self.noticeToken += 1
 	local token = self.noticeToken
-	self.noticeLabel.Text = message
-	self.noticePanel.Visible = true
-	task.delay(3.5, function()
-		if self.noticeToken == token then self.noticePanel.Visible = false end
+	self.toast.label.Text = message
+	self.toast.accent.BackgroundColor3 = accent or C.Cyan
+	self.toast.frame.Visible = true
+	Kit.enter(self.toast.frame, { reducedMotion = self.reducedMotion, rise = 10, duration = Motion.Toast })
+	task.delay(Motion.Notice, function()
+		if self.noticeToken == token then
+			self.toast.frame.Visible = false
+		end
 	end)
 end
 
 function Hud:pulse()
 	if self.reducedMotion then return end
-	self.scoreScale.Scale = 1.16
-	TweenService:Create(self.scoreScale, TweenInfo.new(.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	self.top.cellScale.Scale = 1.14
+	TweenService:Create(self.top.cellScale, TweenInfo.new(Motion.Fast, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1,
+	}):Play()
+end
+
+-- --------------------------------------------------------------------------- #
+-- Shop / inventory / settings / help
+-- --------------------------------------------------------------------------- #
+function Hud:showModal(kind)
+	self.modalKind = kind
+	self.modal.Visible = true
+	self:refreshModal()
+end
+
+function Hud:closeModal()
+	self.modal.Visible = false
+	self.modalKind = nil
+end
+
+function Hud:refreshModal()
+	local kind = self.modalKind
+	local row = self.localRow
+	local owned = row and row.haloOwned
+	local equipped = row and row.haloEquipped
+	local coins = if row then row.coins else 0
+	if kind == "Shop" then
+		self.modalTitle.Text = Copy.ShopTitle
+		self.modalTitle.TextColor3 = C.Amber
+		self.modalBody.Text = Copy.ShopBody .. "\n\nPULSE HALO — " .. self.config.HaloCost .. " session coins."
+			.. "\n\nBalance: " .. coins .. " coins."
+			.. (if owned then "\n\nYou already own this glow for the session." else "")
+		self.modalPrimary.Label.Text = if owned then (if equipped then "UNEQUIP" else "EQUIP") else "UNLOCK  •  " .. self.config.HaloCost
+		self.modalPrimary.Visible = true
+	elseif kind == "Inventory" then
+		self.modalTitle.Text = Copy.InventoryTitle
+		self.modalTitle.TextColor3 = C.Cyan
+		local lines = {}
+		if row then
+			table.insert(lines, string.format("ROUND SCORE      %d", row.score))
+			table.insert(lines, string.format("ROUNDS WON      %d", row.wins))
+			table.insert(lines, string.format("CELLS CLAIMED   %d", row.pickups))
+			table.insert(lines, string.format("SESSION COINS   %d", row.coins))
+			table.insert(lines, "")
+			if owned then
+				table.insert(lines, "PULSE HALO      " .. (if equipped then "EQUIPPED" else "OWNED"))
+			else
+				table.insert(lines, "PULSE HALO      NOT OWNED")
+			end
+		else
+			table.insert(lines, Copy.InventoryEmpty)
+		end
+		self.modalBody.Text = table.concat(lines, "\n")
+		self.modalPrimary.Visible = owned
+		self.modalPrimary.Label.Text = if equipped then "UNEQUIP" else "EQUIP"
+	elseif kind == "Settings" then
+		self.modalTitle.Text = Copy.SettingsTitle
+		self.modalTitle.TextColor3 = C.Violet
+		self.modalBody.Text = "Sound effects: " .. (if self.soundOn then "ON" else "OFF")
+			.. "\nMotion: " .. (if self.reducedMotion then "REDUCED" else "FULL")
+			.. "\n\nREDUCED MOTION turns off camera-shaking effects, halo breathing and\npanel transitions. It never changes gameplay."
+		self.modalPrimary.Visible = false
+	else
+		self.modalTitle.Text = "HOW TO PLAY"
+		self.modalTitle.TextColor3 = C.Cyan
+		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1  •  fish or goose +5  •  toast or sock +10"
+			.. "\n\n02   KEEP YOUR COOL\nLow gravity hits mid-round. Fall? You respawn in the arena with your score."
+			.. "\n\n03   BE THE BIGGEST BRAIN\nMost cells wins. Ties share the crown. Rounds start automatically."
+		self.modalPrimary.Visible = false
+	end
+	self.modalSound.Label.Text = if self.soundOn then "SFX ON" else "SFX OFF"
+	self.modalMotion.Label.Text = if self.reducedMotion then "REDUCED MOTION: ON" else "MOTION: FULL"
+end
+
+function Hud:activateModal()
+	local kind = self.modalKind
+	if kind == "Shop" or kind == "Inventory" then
+		-- The only cosmetic verb the server accepts. Ownership is decided server-side.
+		self.request("Halo")
+	end
+end
+
+function Hud:toggleSound()
+	self.soundOn = not self.soundOn
+	self:refreshModal()
+end
+
+function Hud:toggleMotion()
+	self.reducedMotion = not self.reducedMotion
+	self:refreshModal()
+end
+
+-- Deterministic flavour line, chosen from the round id only. No gameplay meaning.
+function Hud:castLine(roundId)
+	local round = math.max(1, math.floor(tonumber(roundId) or 1))
+	local value = if round % 3 == 0 then 10 elseif round % 3 == 1 then 1 else 5
+	local family = CreatureData.Family[value]
+	local spec = CreatureData.Creatures[family[(round % 2) + 1]]
+	return spec.Label .. "  •  " .. spec.Blurb
 end
 
 function Hud:destroy()
