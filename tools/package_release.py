@@ -47,6 +47,7 @@ def main():
         "docs/CHARACTERS_PHASE4.md", "docs/PHASE5_STEAL_AND_EVENTS.md",
         "docs/TEST_REPORT_PHASE5.md", "docs/KNOWN_LIMITATIONS.md",
         "docs/CHAOS_EVENTS.md", "docs/AUDIO.md", "docs/PHASE_CHARACTERS_ABILITIES.md",
+        "docs/STUDIO_VERIFICATION_10de1d9.md", "docs/STUDIO_UI_VISIBILITY_CHECK.md",
         "docs/previews/cast.jpg", "docs/previews/collection.jpg",
         "docs/previews/ui-collection.jpg", "docs/previews/ui-collection-full.jpg",
         "docs/previews/ui-phone-collection.jpg",

@@ -240,7 +240,8 @@ function Mock.new(sources, schema, options)
 		end
 		return nil
 	end
-	function methods:WaitForChild(name) local child=self:FindFirstChild(name); assert(child,"Mock missing child "..self.Name.."/"..name); return child end
+	-- Like Roblox: with a timeout a missing child yields nil; without one the mock refuses to hang.
+	function methods:WaitForChild(name,timeout) local child=self:FindFirstChild(name); if timeout==nil then assert(child,"Mock missing child "..self.Name.."/"..name) end; return child end
 	function methods:FindFirstChildOfClass(class) for _,child in self._children do if child:IsA(class) then return child end end; return nil end
 	function methods:SetAttribute(key,value) self._attributes[key]=value; self.AttributeChanged:Fire(key) end
 	function methods:GetAttribute(key) return self._attributes[key] end

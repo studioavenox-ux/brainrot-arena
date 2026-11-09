@@ -1,26 +1,26 @@
 {
-  "verified_at_utc": "2026-11-09T10:40:08+00:00",
+  "verified_at_utc": "2026-11-09T12:58:42+00:00",
   "status": "automated_checks_passed_studio_unverified",
   "test_counts": {
     "core_luau": 145,
-    "mock_adapter_luau": 103,
+    "mock_adapter_luau": 105,
     "place_python": 36,
     "art_direction_python": 35
   },
-  "total_passed": 319,
+  "total_passed": 321,
   "failed": 0,
   "luau_files_compiled": 32,
-  "source_sha256": "ac0f0647d4dbb3dd52e4cbe68db9b019f5459a8fa959022175c91d8ab65e5ef8",
+  "source_sha256": "26d7f475fabb11325f78c0d0f94bd87e9d1adc1a058b774bc658d32243e2dd0f",
   "static_world_parts": 906,
   "pickup_slots": 48,
   "places": {
     "BrainrotArena-QuickTest.rbxlx": {
-      "bytes": 1833278,
-      "sha256": "e7b0001eb5157e7684d71a8acbf25bd0b93457316439f942b6530fe03012b5bc"
+      "bytes": 1836202,
+      "sha256": "92cb42582c5785a0d960e149b08436f018be4ddec49862df11a0fcb911ada089"
     },
     "BrainrotArena.rbxlx": {
-      "bytes": 1833279,
-      "sha256": "fe818bcc969760b8a34a34cf9660980348562d363170232994838648bded4814"
+      "bytes": 1836203,
+      "sha256": "03d4c53a0916bd109ee1e80eafb23ee0f54d50a82c1dd1d67e6b5b1532f1b42f"
     }
   },
   "stages": [
