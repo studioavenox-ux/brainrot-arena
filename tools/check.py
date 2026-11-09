@@ -55,7 +55,7 @@ def main():
             raise SystemExit("Generated files were stale: " + ", ".join(stale))
     files = sorted([*ROOT.glob("src/**/*.luau"), *ROOT.glob("tests/**/*.luau")])
     run("compile", f"All {len(files)} Luau files compile", [binaries["luau-compile"], "--null", *map(str, files)])
-    core = sorted(ROOT.glob("src/server/core/*.luau")) + [ROOT / "src/shared/Config.luau"]
+    core = sorted(ROOT.glob("src/server/core/*.luau")) + [ROOT / "src/shared/Config.luau", ROOT / "src/shared/AudioRules.luau"]
     run("analyze", "Strict type analysis: authority modules + configuration", [binaries["luau-analyze"], *map(str, core)])
     core_output = run("core", "Core rules and 100 simulated 12-player rounds", [binaries["luau"], "tests/core.spec.luau"])
     adapter_output = run("adapters", "Production adapters against mocked Roblox services", [py, "tools/test_adapters.py", "--luau", binaries["luau"]])
@@ -84,7 +84,7 @@ def main():
         "luau_files_compiled": len(files), "source_sha256": source_hash.hexdigest(),
         "static_world_parts": len(make_world()["Parts"]), "pickup_slots": 48,
         "places": places, "stages": stages,
-        "not_executed": ["Roblox Studio import", "Roblox client/server multiplayer simulation", "Engine physics and rendering", "Real touch-device input", "Bundled sound playback", "Published server test"],
+        "not_executed": ["Roblox Studio import", "Roblox client/server multiplayer simulation", "Engine physics and rendering", "Real touch-device input", "Bundled sound playback", "Dynamic music and cue playback", "Chaos Event in Studio", "Published server test"],
     }
     (ARTIFACTS / "verification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     lines = [
@@ -103,9 +103,13 @@ def main():
         "- **Stealing:** one argument-free `Steal` verb resolved entirely on the server — nearest rival",
         "  within 13 studs, 8-second cooldown, 3-second spawn protection, 4-second victim immunity,",
         "  12-second no-repeat window; moves one *carried* cell and never touches banked score.",
-        "- **Five survival events** with 6-second warnings and self-resetting state: low gravity (60 s,",
-        "  25 s), then a deterministic wildcard (108 s, 18 s) rotating slippery stone, three",
-        "  server-moved orbit rafts, collectible rush and four vanishing paths.",
+        "- **One Chaos Event per round**, exactly 35 s, drawn server-side from four kinds (Low Gravity,",
+        "  Bouncy World, Slippery Chaos, Brain Cell Rush) that never overlap another event. It opens at",
+        "  105 s in the normal round (6 s warning) and at 8 s in QuickTest (50 s round, 3 s warning). Each",
+        "  kind is cleaned up at 35 s. See [CHAOS_EVENTS.md](CHAOS_EVENTS.md).",
+        "- **Dynamic audio** (configured, silent by default): lobby, arena and Chaos music that crossfade,",
+        "  round and Chaos stingers, one Sound setting, and an ability-cue API. No sound IDs are bundled.",
+        "  See [AUDIO.md](AUDIO.md).",
         "- Winner/tie/no-score announcements; **persistent** coins, specimen log, lifetime stats and the",
         "  server-validated Pulse Halo in a DataStore profile with a documented memory fallback. See",
         "  [PHASE5_STEAL_AND_EVENTS.md](PHASE5_STEAL_AND_EVENTS.md).",
@@ -132,16 +136,16 @@ def main():
         "  Per-character idle and collect animation, pickup burst, and a collection screen of six",
         "  live viewports. Server owns the species roll and the reward. See",
         "  [CHARACTERS_PHASE4.md](CHARACTERS_PHASE4.md) and `docs/previews/cast.jpg`.",
-        "- Phase 5 event surfaces rendered from the same geometry table as the export:",
-        "  `docs/previews/events.jpg` (three orbit rafts with warm underglow, four vanishing",
-        "  spans with glow markers, both non-colliding at rest).", "",
+        "- Event-only raft and path geometry from earlier builds stays in the export, inert at rest",
+        "  (non-colliding), and is no longer scheduled. Rendered previews: `docs/previews/events.jpg`",
+        "  (three orbit rafts and four vanishing spans, drawn at rest, non-colliding).", "",
         "## Checks actually executed", "", "| Check | Result |", "|---|---:|",
         f"| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | {core_count} passed |",
         f"| Real server/client scripts against mocked Roblox services (+ steal and persistence) | {adapter_count} passed |",
         f"| XML/API/geometry export tests | {place_count} passed |",
         f"| Art-direction gate (palette, hierarchy, legibility, lighting) | {art_count} passed |",
         f"| Official Luau compilation | {len(files)} files passed |",
-        "| Strict analysis | 3 authority modules + Config passed |",
+        "| Strict analysis | authority modules, ChaosRules, AudioRules and Config passed |",
         "| Repeat build | Byte-for-byte deterministic |", "| Git whitespace check | Passed |", "",
         "The headless adapter tests validate code contracts, not Roblox physics, actual networking, UI rendering, or audio.",
         "`docs/previews/*.jpg` are software renders of the same geometry/colour tables (tools/preview.py),",
@@ -156,18 +160,18 @@ def main():
         "Phase 5 adds a hands-on pass that cannot be automated: stand two clients within 13 studs and",
         "tap **STEAL** (one carried cell should change hands and both clients should be told), press it",
         "again to see the 8-second refusal, tag a freshly respawned player to see `PROTECTED`, watch a",
-        "stage boundary bank the carried cells, and watch all five events warn, run and reset. The full",
+        "stage boundary bank the carried cells, and watch the Chaos Event warn, run for 35 s and clean up. The full",
         "20-row matrix is in [TEST_REPORT_PHASE5.md](TEST_REPORT_PHASE5.md).",
         "",
         "Use Device Emulator to verify touch controls/text and check Output for errors. See [TESTING.md](TESTING.md).",
         "No code pasting, plugin installation, API keys, asset uploads, or monetization setup is required.", "",
         "## Deliberate limits", "",
-        "- One map; wildcards rotate deterministically rather than being drawn at random.",
+        "- One map. The Chaos kind is drawn at random once per round from a pool of four.",
         "- Stealing auto-targets the nearest eligible rival; there is no target picker (one tap on a phone).",
         "- No cross-server session locking on profiles: two servers writing one player at the same moment",
         "  resolve last-write-wins. See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).",
         "- Movement checks are a basic sanity layer, not a complete exploit-prevention system.",
-        "- Bundled pickup tone availability and exact visual polish still need the Studio/device pass.", "",
+        "- Bundled pickup tone availability, music and cue playback (no sound IDs are configured yet) and exact visual polish still need the Studio/device pass.", "",
         "## Export integrity", "", f"Source SHA-256: `{source_hash.hexdigest()}`", "",
     ]
     for name, info in places.items():

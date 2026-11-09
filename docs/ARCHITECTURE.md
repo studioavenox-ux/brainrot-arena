@@ -14,6 +14,7 @@ The standard place is the deliverable for ordinary play. QuickTest differs only 
 ReplicatedStorage
   BrainrotShared/Config                 shared constants (no authority)
   BrainrotShared/ArtDirection           generated palette + lighting rig mirror
+  BrainrotShared/AudioRules             pure track choice, fade step, ID and cue rules
   BrainrotRemotes/State                 server → clients: plain state snapshots
   BrainrotRemotes/Pickup                server → clients: validated pickup receipt
   BrainrotRemotes/Request               client → server: "Snapshot" or "Halo" only
@@ -22,8 +23,10 @@ ServerScriptService/BrainrotServer
   core/RoundMachine                    pure phase, score, result and reward authority
   core/PickupLedger                    pure atomic ownership / respawn generations
   core/MovementGuard                   pure basic horizontal movement sanity layer
-  EventDirector                        animates baked event geometry (gravity, friction,
-                                       rafts, spans); never decides *when* an event runs
+  core/ChaosRules                      pure per-kind Chaos modifiers (gravity, friction, jump, rarity, respawn)
+  EventDirector                        applies gravity and surface friction from the live
+                                       Chaos modifiers, adopts new surfaces while friction
+                                       is on, restores everything; never decides *when* or *which*
   Persistence                          DataStore profiles: coins, specimens, stats, halo
   WorldService / WorldData              world construction and server spawn locations
   ArtService                            applies the shared lighting rig (idempotent)
@@ -35,6 +38,7 @@ StarterPlayer/StarterPlayerScripts/BrainrotClient
   CreatureData                         GENERATED cast part tables (tools/creatures.py)
   Collection                           specimen log: six live viewports, progress, status
   Effects                              local cell models, animation, sparks, sound, tint
+  Audio                                lobby / arena / Chaos music crossfades and one-shot cues
 Workspace
   BrainrotWorld                        906 anchored parts + 7 sign boards, 7 signs, lobby spawn
   BrainrotCharacters                   the six character Models + plinths (the asset library)
@@ -75,14 +79,22 @@ answer. Banked score is never touched.
 - **Stages** (`Config.Stages`): Collect 0 s, Compete 45 s, Chaos 105 s, Final 150 s of a
   180 s round. Each boundary banks every player's carried cells. `RoundMachine.bank` is the
   only way a carried cell becomes permanent, and `score` is always banked + carried.
-- **Events** (`Config.Events`): `LowGravity` at 60 s for 25 s, then a `Wildcard` at 108 s for
-  18 s, rotated deterministically by round id over Slippery / MovingPlatforms /
-  CollectibleRush / VanishingPaths. `buildSchedule(roundId)` is pure, so every client and
-  every replay of a round agree, and every window carries a `WarningAt` six seconds ahead.
-- **EventDirector** reacts to the machine's `event` effects and owns gravity, walking
-  friction, raft CFrames and span solidity *inside* a window only. `stop()` is called on
-  every close **and** on every phase change, so a dropped effect cannot leave the arena
-  broken.
+- **Chaos Event** (`Config.Chaos`, `Config.Timing.ChaosStart/ChaosDuration`, `Config.FastTiming` for QuickTest): exactly one 35 s
+  window per round at 105 s, drawn uniformly over Low Gravity / Bouncy World / Slippery Chaos /
+  Brain Cell Rush when the round starts. `RoundMachine.drawChaos` uses an injected chooser, and
+  `buildSchedule` returns a single entry that carries a `WarningAt` six seconds ahead. Per-kind
+  effects live in the pure `core/ChaosRules`. See [CHAOS_EVENTS.md](CHAOS_EVENTS.md).
+- **EventDirector** applies gravity and walking friction from `ChaosRules.modifiers`, and
+  `syncChaos()` reconciles it on every server step. Friction is written only when its value
+  changes. While friction is on, a `DescendantAdded` watcher gives new surfaces (spawned or
+  respawned characters, rebuilt pickups) the same friction at once. Restore writes back each
+  part's recorded original and disconnects the watcher. The director moves no geometry. The
+  event-only raft and path parts from earlier builds stay inert at rest. `reset()` runs on every
+  phase change.
+- **Audio** (`src/shared/AudioRules` + `src/client/Audio`): music follows the replicated state
+  (Lobby / Arena / Chaos), crossfades over `Config.Audio.CrossfadeSeconds`, and plays stingers on
+  round and Chaos edges. Every sound ID is configured in `Config.Audio` and is empty by default, so
+  nothing is invented. Audio is never authoritative. See [AUDIO.md](AUDIO.md).
 - **Persistence** is server-only: `sanitise()` repairs anything read from storage,
   `applyRound()` is the single place a round pays coins or increments stats, reads and
   writes retry three times inside `pcall`, and a load merges rather than replaces so a slow
@@ -116,7 +128,7 @@ meshes, copyrighted meme characters, external scripts or web requests.
   `tools/events.py`; both use the same primitive vocabulary as the terrain. Every
   event part is **non-colliding at rest**, so a parked raft can never trap a player
   and a hidden vanishing span can never be walked on.
-- **48** simple server pickup roots. During `CollectibleRush` the server drops the
+- **48** simple server pickup roots. During `BrainCellRush` the server drops the
   respawn to 1.5 s and to 2 s during the Final Rush; the pickup roots themselves and
   the claiming rules are unchanged. Touch/query/collision disabled on pickup and
   decorative roots.
@@ -149,13 +161,13 @@ meshes, copyrighted meme characters, external scripts or web requests.
 
 ## Configuration
 
-Edit `src/shared/Config.luau` for timing, gravity, walk speed, rarity weights, coin rewards or the halo cost. Pickup denominations are intentionally also whitelisted in the authority modules: changing the denominations requires updating those rules and tests, not merely a client label.
+Edit `src/shared/Config.luau` for timing (`Timing`, `FastTiming` for QuickTest), the Chaos pool and balance (`Chaos`), sound IDs (`Audio`, empty by default), gravity, walk speed, rarity weights, coin rewards or the halo cost. Pickup denominations are intentionally also whitelisted in the authority modules: changing the denominations requires updating those rules and tests, not merely a client label.
 
 Edit `tools/world.py` to move floor pieces, signs, cells or spawn pads consistently, and `tools/theme.py` for palette, materials, lighting and lights. `WorldData.luau` and `ArtDirection.luau` are generated and should not be hand-edited; `tools/preview.py` re-renders the review plates from the same tables. The recommended published capacity is **8**, matching the safe spawn positions. The logical rules are additionally stress-simulated with 12 players; that is not a capacity/performance certification.
 
 ## Validation boundaries
 
-`tools/check.py` compiles all Luau, strictly analyzes the pure authority/config modules, executes the core suite, and executes production adapters against `tests/roblox_mock.luau`. That mock provides explicit service boundaries and checks property/enum names against `tests/fixtures/roblox-api.json`, pinned to a Roblox API snapshot. It does **not** implement physics, actual networking, rendering, touch input or sound playback.
+`tools/check.py` compiles all Luau, strictly analyzes the pure authority/config modules (including `ChaosRules` and `AudioRules`), executes the core suite, and executes production adapters against `tests/roblox_mock.luau`. That mock provides explicit service boundaries and checks property/enum names against `tests/fixtures/roblox-api.json`, pinned to a Roblox API snapshot. It now also emits `DescendantAdded` when a subtree is parented, as Roblox does. It does **not** implement physics, actual networking, rendering, touch input or sound playback.
 
 `tools/verify_place.py` checks embedded source, instance references, API property loadability, geometry support/spacing, bridge continuity, materials/shadows/lights, budget and the fast/standard variants. `tools/artcheck.py` checks the design rules (saturation ceilings, hierarchy order, purple/cyan restriction, lighting values, cell-vs-floor contrast, signage contrast) and freezes the collidable geometry, pickups and spawns against `tests/fixtures/world-baseline.json`. Builds are deterministic; exports must match the source. The GitHub workflow can repeat the same checks, but it has not been executed remotely in this session.
 

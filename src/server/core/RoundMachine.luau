@@ -14,16 +14,15 @@ RoundMachine.__index = RoundMachine
 
 export type Timing = {
 	Intermission: number, Round: number, Results: number,
-	EventStart: number, EventDuration: number, Warning: number,
+	ChaosStart: number, ChaosDuration: number, Warning: number,
 }
 export type Stage = { Name: string, At: number, Label: string }
-export type EventSpec = { Kind: string, At: number, Duration: number }
 export type StealRules = {
 	Range: number, Cooldown: number, Protection: number, Immunity: number, RepeatWindow: number,
 }
 export type Settings = {
 	Timing: Timing,
-	Stages: { Stage }?, Events: { EventSpec }?, Wildcards: { string }?,
+	Stages: { Stage }?, Chaos: { Kinds: { string } },
 	Steal: StealRules,
 	ParticipationCoins: number, CoinsPerPoint: number, WinnerCoins: number, HaloCost: number,
 	SlipperyFriction: number?, RushRespawn: number?, FinalRespawn: number?,
@@ -61,6 +60,7 @@ type Fields = {
 	eventKind: string, eventFinished: boolean, eventWarning: string, warningEndsAt: number,
 	stage: string, stageIndex: number, stageEndsAt: number, schedule: { Scheduled },
 	lastNow: number, lastResults: Results?,
+	choose: (number) -> number, chaosKind: string,
 }
 export type Machine = typeof(setmetatable({} :: Fields, RoundMachine))
 
@@ -72,10 +72,9 @@ end
 -- shows the same words for the same server event.
 local LABEL: { [string]: string } = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 RoundMachine.Label = LABEL
@@ -86,22 +85,20 @@ local DEFAULT_STAGES: { Stage } = {
 	{ Name = "Chaos", At = 105, Label = "CHAOS" },
 	{ Name = "Final", At = 150, Label = "FINAL RUSH" },
 }
-local DEFAULT_EVENTS: { EventSpec } = {
-	{ Kind = "LowGravity", At = 60, Duration = 25 },
-	{ Kind = "Wildcard", At = 108, Duration = 18 },
-}
-local DEFAULT_WILDCARDS = { "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" }
+local DEFAULT_KINDS = { "LowGravity", "BouncyWorld", "SlipperyChaos", "BrainCellRush" }
 
-function RoundMachine.new(config: Settings): Machine
+-- `choose(n)` returns an integer in 1..n. The server passes its own RNG; tests pass a
+-- scripted one. Defaults to math.random so the pure module runs standalone.
+function RoundMachine.new(config: Settings, choose: ((number) -> number)?): Machine
 	assert(config.Timing.Intermission > 0 and config.Timing.Round > 0 and config.Timing.Results > 0, "Positive phase durations required")
-	assert(config.Timing.EventStart >= 0 and config.Timing.EventDuration > 0, "Invalid event timing")
-	assert(config.Timing.EventStart + config.Timing.EventDuration < config.Timing.Round, "Chaos event must fit inside the round")
+	assert(config.Timing.ChaosStart >= 0 and config.Timing.ChaosDuration > 0, "Invalid Chaos Event timing")
+	assert(config.Timing.ChaosStart + config.Timing.ChaosDuration < config.Timing.Round, "Chaos event must fit inside the round")
 	assert(#(config.Stages or DEFAULT_STAGES) > 0, "At least one stage required")
 	assert((config.Stages or DEFAULT_STAGES)[1].At == 0, "The first stage must start at zero")
 	-- A config can legitimately carry a longer timeline than the round it is paired
-	-- with (a quick-test round is 30s against a 180s stage plan). Boundaries past
-	-- the deadline are dropped rather than trimmed, so a stage never starts at an
-	-- instant the round cannot reach.
+	-- with (a quick-test round is shorter than the stage plan). Boundaries past the
+	-- deadline are dropped rather than trimmed, so a stage never starts at an instant
+	-- the round cannot reach.
 	local stages: { Stage } = {}
 	for _, stage in config.Stages or DEFAULT_STAGES do
 		assert(stage.At >= 0, "Stage outside the round")
@@ -112,22 +109,17 @@ function RoundMachine.new(config: Settings): Machine
 			table.insert(stages, stage)
 		end
 	end
-	local events: { EventSpec } = {}
-	for _, spec in config.Events or DEFAULT_EVENTS do
-		assert(spec.Duration > 0, "Invalid event window")
-		if spec.At >= 0 and spec.At + spec.Duration < config.Timing.Round then
-			table.insert(events, spec)
-		end
-	end
-	if #events == 0 then
-		-- Legacy contract: one window derived from the timing block. This keeps a
-		-- short round with a long event plan playable instead of eventless.
-		events = { { Kind = "LowGravity", At = config.Timing.EventStart,
-			Duration = config.Timing.EventDuration } }
+	local kinds = if config.Chaos then config.Chaos.Kinds else DEFAULT_KINDS
+	assert(#kinds > 0, "The Chaos pool needs at least one kind")
+	local seen: { [string]: boolean } = {}
+	for _, kind in kinds do
+		assert(LABEL[kind] ~= nil, "Unknown Chaos Event kind: " .. tostring(kind))
+		assert(not seen[kind], "Duplicate Chaos Event kind: " .. kind)
+		seen[kind] = true
 	end
 	config = table.clone(config) :: Settings
 	config.Stages = stages
-	config.Events = events
+	config.Chaos = { Kinds = table.clone(kinds) }
 	assert(config.Steal.Range > 0 and config.Steal.Cooldown > 0, "Invalid steal rules")
 	return setmetatable({
 		config = config, players = {}, phase = "Waiting", roundId = 0,
@@ -135,6 +127,8 @@ function RoundMachine.new(config: Settings): Machine
 		eventKind = "", eventFinished = false, eventWarning = "", warningEndsAt = 0,
 		stage = stages[1].Name, stageIndex = 1, stageEndsAt = 0, schedule = {},
 		lastNow = 0, lastResults = nil,
+		choose = choose or function(n: number): number return math.random(1, n) end,
+		chaosKind = "",
 	}, RoundMachine)
 end
 
@@ -446,31 +440,29 @@ function RoundMachine.stageAt(self: Machine, elapsed: number): (number, Stage)
 	return index, stages[index]
 end
 
--- Resolve the event timeline for a round. Wildcards rotate by round id, so every
--- client (and a replay of the same round) sees the same schedule.
-function RoundMachine.buildSchedule(self: Machine, roundId: number?): { Scheduled }
-	local events = self.config.Events or DEFAULT_EVENTS
-	-- Callers may ask about a specific round (tests, tools, a replay); the live
-	-- machine always passes nothing and gets the current one.
-	local rid = roundId or self.roundId
-	local wildcards = self.config.Wildcards or DEFAULT_WILDCARDS
-	local out: { Scheduled } = {}
-	local warning = self.config.Timing.Warning or 0
-	for _, spec in events do
-		local kind = spec.Kind
-		if kind == "Wildcard" then
-			kind = wildcards[(math.max(1, rid) - 1) % #wildcards + 1]
-		end
-		table.insert(out, {
-			Kind = kind, StartsAt = spec.At, EndsAt = spec.At + spec.Duration,
-			WarningAt = math.max(0, spec.At - warning),
-		})
+-- Draw the single Chaos Event for a round. Uniform over the configured pool, decided
+-- on the server at round start, and sent to clients inside the snapshot.
+function RoundMachine.drawChaos(self: Machine): string
+	local kinds = self.config.Chaos.Kinds
+	local raw = self.choose(#kinds)
+	local index = if finite(raw) then math.clamp(math.floor(raw), 1, #kinds) else 1
+	return kinds[index]
+end
+
+-- The round's timeline: exactly one window, warned in advance. A kind can be given
+-- explicitly (tests, replays); the live machine uses the kind drawn for this round.
+function RoundMachine.buildSchedule(self: Machine, kind: string?): { Scheduled }
+	local chosen = kind or self.chaosKind
+	if chosen == "" then
+		return {}
 	end
-	local sorted = out :: { Scheduled }
-	table.sort(sorted, function(a, b): boolean
-		return (a.StartsAt :: number) < (b.StartsAt :: number)
-	end)
-	return out
+	local start = self.config.Timing.ChaosStart
+	return {{
+		Kind = chosen,
+		StartsAt = start,
+		EndsAt = start + self.config.Timing.ChaosDuration,
+		WarningAt = math.max(0, start - (self.config.Timing.Warning or 0)),
+	}}
 end
 
 function RoundMachine.eventLabel(kind: string): string
@@ -490,7 +482,8 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventWarning = ""
 		self.warningEndsAt = 0
 		self.phaseEndsAt = now + self.config.Timing.Round
-		self.schedule = self:buildSchedule()
+		self.chaosKind = self:drawChaos()
+		self.schedule = self:buildSchedule(self.chaosKind)
 		local _, stage = self:stageAt(0)
 		self.stage = stage.Name
 		self.stageIndex = 1
@@ -519,6 +512,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventKind = ""
 		self.eventWarning = ""
 		self.schedule = {}
+		self.chaosKind = ""
 	elseif phase == "Results" then
 		self:finishRound()
 		self.phaseEndsAt = now + self.config.Timing.Results
@@ -537,6 +531,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventKind = ""
 		self.eventWarning = ""
 		self.schedule = {}
+		self.chaosKind = ""
 		for _, player in self.players do
 			player.participating = false
 			table.clear(player.carried)

@@ -39803,6 +39803,75 @@ return {
       </Item>
       <Item class="ModuleScript" referent="RBX001066">
         <Properties>
+          <string name="Name">AudioRules</string>
+          <ProtectedString name="Source">--!strict
+-- Pure audio decisions, shared by the client controller and the core tests.
+-- No Roblox services are touched here, so every rule is testable headless.
+local AudioRules = {}
+
+export type PhaseState = {
+	phase: string,
+	eventActive: boolean?,
+}
+
+-- Which music track the current replicated state calls for.
+--   Playing + Chaos Event  -&gt; "Chaos"  (the dramatic track)
+--   Playing                -&gt; "Arena"
+--   anything else          -&gt; "Lobby"  (Waiting, Intermission, Results)
+function AudioRules.trackFor(state: PhaseState): string
+	if state.phase == "Playing" then
+		if state.eventActive == true then
+			return "Chaos"
+		end
+		return "Arena"
+	end
+	return "Lobby"
+end
+
+-- Moves `current` toward `target` by at most fullVolume * dt / fadeSeconds, so a
+-- full fade takes exactly `fadeSeconds`. The result always stays within [0, fullVolume].
+function AudioRules.stepVolume(current: number, target: number, dt: number, fullVolume: number, fadeSeconds: number): number
+	assert(fadeSeconds &gt; 0, "fade time must be positive")
+	assert(dt &gt;= 0, "dt cannot be negative")
+	local goal = math.clamp(target, 0, fullVolume)
+	local maxStep = fullVolume * dt / fadeSeconds
+	local nextValue = current
+	if goal &gt; current then
+		nextValue = math.min(goal, current + maxStep)
+	elseif goal &lt; current then
+		nextValue = math.max(goal, current - maxStep)
+	end
+	return math.clamp(nextValue, 0, fullVolume)
+end
+
+-- True for "" (deliberately silent) or a well-formed rbxassetid URL with digits only.
+function AudioRules.validId(id: string): boolean
+	if id == "" then
+		return true
+	end
+	-- The scheme is joined at runtime so this source never embeds the literal URL form.
+	local prefix = "rbxassetid:" .. "//"
+	return string.sub(id, 1, #prefix) == prefix and string.match(string.sub(id, #prefix + 1), "^%d+$") ~= nil
+end
+
+-- Resolves a cue name to its configured asset ID, or nil when that cue is silent.
+-- Unknown cue names are an error so a typo can never fail silently.
+function AudioRules.cueId(cues: { [string]: string }, name: string): string?
+	local id = cues[name]
+	assert(id ~= nil, "unknown audio cue: " .. tostring(name))
+	assert(AudioRules.validId(id), "malformed audio ID for cue " .. name)
+	if id == "" then
+		return nil
+	end
+	return id
+end
+
+return AudioRules
+</ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX001067">
+        <Properties>
           <string name="Name">Config</string>
           <ProtectedString name="Source">--!strict
 -- All rewards and timings are read by the SERVER. There is no client scoring API.
@@ -39817,21 +39886,23 @@ local Config = {
 		Intermission = 12,
 		Round = 180,
 		Results = 9,
-		-- Kept for the first (low gravity) window, so older reads stay correct.
-		EventStart = 60,
-		EventDuration = 25,
+		-- The single Chaos Event of a round: one window, exactly ChaosDuration long,
+		-- starting inside the Chaos stage (105 s - 150 s). See Chaos below.
+		ChaosStart = 105,
+		ChaosDuration = 35,
 		Warning = 6,
 	},
 	FastTiming = {
 		Intermission = 4,
-		Round = 30,
+		-- Studio QuickTest. The round is longer than the 35 s event so the event is
+		-- exercised exactly as in production, and it still fits with time to spare.
+		Round = 50,
 		Results = 5,
-		EventStart = 8,
-		EventDuration = 10,
+		ChaosStart = 8,
+		ChaosDuration = 35,
 		Warning = 3,
 	},
 	NormalGravity = 196.2,
-	LowGravity = 62,
 	WalkSpeed = 22,
 	JumpPower = 50,
 	ServerStep = 0.1,
@@ -39867,19 +39938,45 @@ local Config = {
 	},
 
 	-- ------------------------------------------------------------------ #
-	-- Survival events. One window at a time; `Wildcard` resolves to one of
-	-- the four wildcards below, rotated deterministically by round number so
-	-- consecutive rounds are different but every client agrees.
+	-- Chaos Event. Exactly ONE per round, drawn uniformly by the server from
+	-- `Kinds` when the round starts. The window never overlaps another event.
+	-- Per-kind effects are defined in src/server/core/ChaosRules.luau.
 	-- ------------------------------------------------------------------ #
-	Events = {
-		{ Kind = "LowGravity", At = 60, Duration = 25 },
-		{ Kind = "Wildcard", At = 108, Duration = 18 },
+	Chaos = {
+		Kinds = { "LowGravity", "BouncyWorld", "SlipperyChaos", "BrainCellRush" },
+		LowGravity = 62,         -- studs/s^2 (normal is 196.2)
+		BouncyJumpScale = 1.8,   -- jump power multiplier while Bouncy World runs
+		RushRarityScale = 3,     -- weight multiplier for Rare and Prismatic cells
 	},
-	FastEvents = {
-		{ Kind = "LowGravity", At = 8, Duration = 10 },
-		{ Kind = "Wildcard", At = 22, Duration = 6 },
+
+	-- ------------------------------------------------------------------ #
+	-- Audio. Every sound ID is configured HERE. An empty string means "no sound":
+	-- nothing is invented, and no uploaded or third-party asset is required to run.
+	-- To enable a slot, paste an rbxassetid URL (the scheme, a colon, two slashes, then
+	-- the number) for an audio asset you own or are licensed to use.
+	-- docs/AUDIO.md lists every slot and its behaviour.
+	-- ------------------------------------------------------------------ #
+	Audio = {
+		CrossfadeSeconds = 1.5,  -- time to fade one music track out and the next in
+		MusicVolume = .35,       -- loudest level for a music track
+		CueVolume = .6,          -- level for one-shot cues
+		Tracks = {
+			Lobby = "",          -- Waiting / Intermission / Results
+			Arena = "",          -- Playing, no Chaos Event
+			Chaos = "",          -- Playing, a Chaos Event is active
+		},
+		-- One-shot cues. Ability cues are added here, one key per ability, when the
+		-- abilities exist (for example "Ability.Dash"). Playing an unlisted cue is an
+		-- error, so a typo cannot fail silently.
+		Cues = {
+			RoundStart = "",
+			RoundEnd = "",
+			ChaosStart = "",
+			ChaosEnd = "",
+			Steal = "",
+			Ability = "",
+		},
 	},
-	Wildcards = { "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" },
 
 	-- ------------------------------------------------------------------ #
 	-- Stealing. A short-range tag that moves ONE carried cell from the victim
@@ -39893,9 +39990,9 @@ local Config = {
 		RepeatWindow = 12,   -- no re-tagging the same victim inside this window
 	},
 
-	-- Sticky floor while the Slippery wildcard runs.
+	-- Sticky floor while Slippery Chaos runs.
 	SlipperyFriction = 0.06,
-	-- Respawn seconds while CollectibleRush runs, and during the Final Rush.
+	-- Respawn seconds during Brain Cell Rush, and during the Final Rush.
 	RushRespawn = 1.5,
 	FinalRespawn = 2,
 
@@ -39910,7 +40007,7 @@ return table.freeze(Config)
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001067">
+      <Item class="ModuleScript" referent="RBX001068">
         <Properties>
           <string name="Name">Creatures</string>
           <ProtectedString name="Source">--!nocheck
@@ -39969,15 +40066,15 @@ return table.freeze(Creatures)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="RBX001068">
+  <Item class="ServerScriptService" referent="RBX001069">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="RBX001069">
+    <Item class="Folder" referent="RBX001070">
       <Properties>
         <string name="Name">BrainrotServer</string>
       </Properties>
-      <Item class="ModuleScript" referent="RBX001070">
+      <Item class="ModuleScript" referent="RBX001071">
         <Properties>
           <string name="Name">ArtService</string>
           <ProtectedString name="Source">--!nonstrict
@@ -40049,312 +40146,144 @@ return ArtService
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001071">
+      <Item class="ModuleScript" referent="RBX001072">
         <Properties>
           <string name="Name">EventDirector</string>
-          <ProtectedString name="Source">--!strict
--- Event director: the only place that turns the round machine's event state into
--- things a player can feel. Everything here is driven by names baked into the map
--- by tools/events.py, so a server can find the geometry without any registry.
+          <ProtectedString name="Source">-- Applies the physical side of the Chaos Event to the live world: gravity and
+-- surface friction. Nothing here decides *when* or *which* event runs. The server
+-- hands this module the complete modifier set from ChaosRules, every tick, and the
+-- director makes the world match it.
 --
--- Rules this file holds:
---   * Nothing here decides *when* an event happens. The round machine owns the
---     clock; the director only reacts to the effects it is handed.
---   * Gravity, walking friction, raft motion and path solidity are all reset the
---     moment an event closes, and again on every phase change, so a dropped effect
---     can never leave the arena in a broken state.
+-- Cleanup rules:
+--   * Gravity is written only when it differs, and always returns to the normal value
+--     from the neutral modifier set.
+--   * Friction is applied by overriding each part's CustomPhysicalProperties. The
+--     first override records every part's ORIGINAL value, and restoring writes those
+--     exact values back (or nil where a part had none). Nothing is left behind.
+--   * While friction is active, a DescendantAdded watcher adopts every new surface
+--     (newly spawned or respawned characters, rebuilt pickups) so it gets the same
+--     friction at once and is restored with everything else.
+--   * Friction is written only when its value changes, never once per tick.
+--   * Parts that were destroyed while a surface was altered are skipped on restore.
+local ChaosRules = require(script.Parent.core.ChaosRules)
+
 local EventDirector = {}
 EventDirector.__index = EventDirector
 
-local RAFT_PREFIX = "EventRaft_"
-local PATH_PREFIX = "EventPath_"
-
-export type Geometry = {
-	rafts: { [string]: BasePart },       -- suffix -&gt; deck part
-	paths: { [string]: { BasePart } },   -- index -&gt; spans
-	glows: { [string]: { BasePart } },
-	tracks: { [string]: { BasePart } },
-}
-
--- The baked pose of everything the director moves. Captured once at start-up from
--- the geometry itself (the place is the source of truth), so parking a raft and
--- dropping a span are exact restores rather than recomputed guesses.
-type Rest = {
-	raftPose: { [string]: CFrame },
-	pathPose: { [BasePart]: CFrame },
-	-- Each span's glow strip, so the light rides with the surface it belongs to.
-	pathGlow: { [BasePart]: { BasePart } },
-}
-
-export type State = {
-	kind: string,
-	endsAt: number,
-	elapsed: number,
-}
-
-type Fields = {
-	world: Model?,
-	rest: Rest,
-	geometry: Geometry,
+export type Director = typeof(setmetatable({} :: {
 	normalGravity: number,
-	lowGravity: number,
-	normalFriction: number,
-	slipperyFriction: number,
-	active: string,
-	endsAt: number,
-	startedAt: number,
-	pathLift: number,
-	period: number,
-	parked: boolean,
-	raftsMoved: number,
-	lastPathSolid: boolean,
-}
-export type Director = typeof(setmetatable({} :: Fields, EventDirector))
+	frictionOn: boolean,
+	frictionValue: number?,
+	saved: { [BasePart]: PhysicalProperties | boolean },
+	watcher: RBXScriptConnection?,
+}, EventDirector))
 
-EventDirector.__index = EventDirector
-
--- Mirrors tools/events.py. Kept as literals so the server never parses Python.
-local PLATFORMS = {
-	{ Suffix = "A", Phase = math.pi / 4, Radius = 25.5, Top = 21.9 },
-	{ Suffix = "B", Phase = math.pi * 11 / 12, Radius = 25.5, Top = 21.9 },
-	{ Suffix = "C", Phase = math.pi * 19 / 12, Radius = 25.5, Top = 21.9 },
-}
-local PLATFORM_HEIGHT = 0.55
-local PERIOD = 30
-local PATH_COUNT = 4
-local PATH_SEGMENTS = 3
-local PATH_LIFT = 0.9
-
-function EventDirector.new(world: Model, normalGravity: number, lowGravity: number,
-	normalFriction: number, slipperyFriction: number): Director
-	local rafts: { [string]: BasePart } = {}
-	local rest: Rest = { raftPose = {}, pathPose = {}, pathGlow = {} }
-	local pendingGlows: { [string]: BasePart } = {}
-	local paths: { [string]: { BasePart } } = {}
-	local glows: { [string]: { BasePart } } = {}
-	local tracks: { [string]: { BasePart } } = {}
-	-- Find baked geometry by name. A server started from an older place simply
-	-- reports nothing found, and every event still works (gravity + friction do not
-	-- need geometry).
-	for _, item in world:GetDescendants() do
-		if not item:IsA("BasePart") then
-			continue
-		end
-		local name = item.Name
-		if string.sub(name, 1, #RAFT_PREFIX) == RAFT_PREFIX then
-			local suffix = string.sub(name, #RAFT_PREFIX + 1, #RAFT_PREFIX + 1)
-			if string.find(name, "_Deck", 1, true) then
-				rafts[suffix] = item
-				rest.raftPose[suffix] = item.CFrame
-			elseif string.find(name, "_Glow", 1, true) or string.find(name, "_Lip", 1, true) then
-				glows[suffix] = glows[suffix] or {}
-				table.insert(glows[suffix], item)
-			elseif string.find(name, "_Track", 1, true) then
-				tracks[suffix] = tracks[suffix] or {}
-				table.insert(tracks[suffix], item)
-			end
-		elseif string.sub(name, 1, #PATH_PREFIX) == PATH_PREFIX then
-			local index = string.match(name, "^EventPath_(%d+)_Span_%d+$")
-			if index then
-				paths[index] = paths[index] or {}
-				table.insert(paths[index], item)
-				rest.pathPose[item] = item.CFrame
-			elseif string.match(name, "^EventPath_%d+_Glow_%d+$") then
-				-- Glow strips are paired with their span after the sweep.
-				pendingGlows[string.gsub(name, "_Glow_", "_Span_")] = item
-			end
-		end
-	end
-	-- Pair every glow strip with the span of the same index, and record both rest
-	-- poses. A span without a strip (or the reverse) is simply skipped.
-	for _, group in paths do
-		for _, span in group do
-			local glow = pendingGlows[span.Name]
-			if glow then
-				rest.pathGlow[span] = rest.pathGlow[span] or {}
-				table.insert(rest.pathGlow[span], glow)
-				rest.pathPose[glow] = glow.CFrame
-			end
-		end
-	end
+function EventDirector.new(normalGravity: number): Director
+	assert(normalGravity == normalGravity and normalGravity &gt; 0, "Normal gravity must be positive")
 	return setmetatable({
-		world = world, rest = rest,
-		geometry = { rafts = rafts, paths = paths, glows = glows, tracks = tracks },
-		normalGravity = normalGravity, lowGravity = lowGravity,
-		normalFriction = normalFriction, slipperyFriction = slipperyFriction,
-		active = "", endsAt = 0, startedAt = 0, pathLift = PATH_LIFT, period = PERIOD,
-		parked = true, raftsMoved = 0, lastPathSolid = false,
-	}, EventDirector)
+		normalGravity = normalGravity,
+		frictionOn = false,
+		frictionValue = nil,
+		saved = {},
+		watcher = nil,
+	}, EventDirector) :: any
 end
 
-function EventDirector.counts(self: Director): (number, number)
-	local rafts, paths = 0, 0
-	for _ in self.geometry.rafts do
-		rafts += 1
+-- Pickups named BrainCell are not walkable surfaces and are excluded, as before.
+local function isSurface(instance: Instance): boolean
+	return instance:IsA("BasePart") and instance.Name ~= "BrainCell"
+end
+
+-- Records a part's authored properties once, then overrides them while friction is on.
+local function adopt(self: Director, part: BasePart, props: PhysicalProperties)
+	if self.saved[part] == nil then
+		self.saved[part] = part.CustomPhysicalProperties or false
 	end
-	for _, group in self.geometry.paths do
-		paths += #group
+	if part.Parent ~= nil then
+		part.CustomPhysicalProperties = props
 	end
-	return rafts, paths
 end
 
--- Where a raft should be at `elapsed` seconds into the round.
-function EventDirector.raftPose(self: Director, entry: { Suffix: string, Phase: number, Radius: number, Top: number },
-	elapsed: number): (number, number)
-	local angle = entry.Phase + elapsed * math.tau / self.period
-	return math.cos(angle) * entry.Radius, math.sin(angle) * entry.Radius
-end
-
-local function setPaths(self: Director, solid: boolean)
-	for _, group in self.geometry.paths do
-		for _, span in group do
-			span.CanCollide = solid
-			span.Transparency = if solid then 0 else 1
-			-- Lift so the walkable surface lands flush with the arena floor while
-			-- solid. Baked at its rest pose, so dropping it back is exact.
-			local restPose = self.rest.pathPose[span]
-			if restPose then
-				span.CFrame = if solid
-					then restPose + Vector3.new(0, self.pathLift, 0)
-					else restPose
-			end
-			-- The glow strip rides with the span, so the light never floats where the
-			-- surface is not.
-			for _, glow in self.rest.pathGlow[span] or {} do
-				local glowRest = self.rest.pathPose[glow]
-				if glowRest then
-					glow.CFrame = if solid then glowRest + Vector3.new(0, self.pathLift, 0) else glowRest
-				end
+local function setFriction(self: Director, value: number)
+	if self.frictionOn and self.frictionValue == value then
+		return -- already in force; nothing to write
+	end
+	local props = PhysicalProperties.new(.7, value, .5, 1, 1)
+	self.frictionValue = value
+	if not self.frictionOn then
+		self.frictionOn = true
+		for _, part in (workspace :: any):GetDescendants() do
+			if isSurface(part) and self.saved[part] == nil then
+				self.saved[part] = part.CustomPhysicalProperties or false
 			end
 		end
-	end
-	self.lastPathSolid = solid
-end
-
-local function parkRafts(self: Director)
-	-- Back to exactly the pose baked into the place, so a stopped server and a
-	-- freshly opened place look identical.
-	for _, entry in PLATFORMS do
-		local deck = self.geometry.rafts[entry.Suffix]
-		if deck then
-			local pose = self.rest.raftPose[entry.Suffix]
-			if pose then
-				deck.CFrame = pose
+		self.watcher = (workspace :: any).DescendantAdded:Connect(function(instance: Instance)
+			if self.frictionOn and isSurface(instance) then
+				adopt(self, instance :: BasePart, PhysicalProperties.new(.7, self.frictionValue or value, .5, 1, 1))
 			end
-		end
-		for _, glow in self.geometry.glows[entry.Suffix] or {} do
-			glow.Transparency = 0
-		end
-		for _, track in self.geometry.tracks[entry.Suffix] or {} do
-			track.Transparency = 0
+		end)
+	end
+	for part in self.saved do
+		if part.Parent ~= nil then
+			part.CustomPhysicalProperties = props
 		end
 	end
 end
 
-function EventDirector.start(self: Director, kind: string, now: number, duration: number)
-	self.active = kind
-	self.endsAt = now + duration
-	self.startedAt = now
-	-- Clear whatever ran before. Events never overlap, but a dropped stop must not
-	-- leave low gravity or ice running underneath the next one.
-	self:setGravity(self.normalGravity)
-	for _, group in self.geometry.paths do
-		for _, span in group do
-			span.CanCollide = false
-			span.Transparency = 1
+local function restoreFriction(self: Director)
+	if not self.frictionOn then
+		return
+	end
+	if self.watcher then
+		self.watcher:Disconnect()
+		self.watcher = nil
+	end
+	for part, original in self.saved do
+		if part.Parent ~= nil then
+			part.CustomPhysicalProperties = if original == false then nil else original :: PhysicalProperties
 		end
 	end
-	if kind == "LowGravity" then
-		self:setGravity(self.lowGravity)
-	elseif kind == "Slippery" then
-		self:setFriction(self.slipperyFriction)
-	elseif kind == "VanishingPaths" then
-		setPaths(self, true)
-	elseif kind == "MovingPlatforms" then
-		self.parked = false
-	end
+	table.clear(self.saved)
+	self.frictionOn = false
+	self.frictionValue = nil
 end
 
-function EventDirector.stop(self: Director)
-	self.active = ""
-	self.endsAt = 0
-	self:setGravity(self.normalGravity)
-	self:setFriction(self.normalFriction)
-	setPaths(self, false)
-	parkRafts(self)
-	self.parked = true
-end
-
--- Gravity is a property of the DataModel, which `workspace` *is*: writing it here
--- is the same write the engine does, and it is the single property the adapter's
--- own invariant check asserts on.
-function EventDirector.setGravity(self: Director, value: number)
+-- Make the world match `mods`. Idempotent: calling it twice with the same modifiers
+-- changes nothing the second time.
+function EventDirector.apply(self: Director, mods: ChaosRules.Modifiers)
 	local host: any = workspace
-	host.Gravity = value
-end
-
-function EventDirector.setFriction(self: Director, value: number)
-	-- Terrain friction is the only global surface control in the engine. Setting it
-	-- is instantaneous and free, which is why "slippery" is a global event.
-	for _, part in (workspace :: any):GetDescendants() do
-		if part:IsA("BasePart") and part.Name ~= "BrainCell" then
-			part.CustomPhysicalProperties = PhysicalProperties.new(.7, value, .5, 1, 1)
-		end
+	if host.Gravity ~= mods.Gravity then
+		host.Gravity = mods.Gravity
+	end
+	if mods.Friction ~= nil then
+		setFriction(self, mods.Friction)
+	else
+		restoreFriction(self)
 	end
 end
 
-function EventDirector.step(self: Director, now: number, elapsed: number)
-	if self.active == "" then
-		return
-	end
-	if now &gt;= self.endsAt then
-		if self.active == "VanishingPaths" then
-			-- The last two seconds blink, so nobody is standing on a span when it
-			-- goes: a fair warning for a fair mechanic.
-			local left = self.endsAt - now
-			if left &gt; -2 then
-				setPaths(self, true)
-				for _, group in self.geometry.paths do
-					for _, span in group do
-						span.Transparency = if math.floor(now * 6) % 2 == 0 then 0 else .45
-					end
-				end
-			end
-		end
-		self:stop()
-		return
-	end
-	if self.active == "MovingPlatforms" then
-		for _, entry in PLATFORMS do
-			local deck = self.geometry.rafts[entry.Suffix]
-			if deck then
-				local x, z = self:raftPose(entry, elapsed)
-				deck.CFrame = CFrame.new(x, entry.Top - PLATFORM_HEIGHT / 2, z)
-				self.raftsMoved += 1
-			end
-		end
-	end
-	-- The last three seconds of the vanishing path are visible as a blink.
-	if self.active == "VanishingPaths" and self.endsAt - now &lt; 3 then
-		local on = math.floor(now * 4) % 2 == 0
-		for _, group in self.geometry.paths do
-			for _, span in group do
-				span.Transparency = if on then 0 else .55
-			end
-		end
-	end
-end
-
--- Called on every phase change, whatever the event state says.
+-- Called on every phase change and when the server shuts an event down. Returns the
+-- world to the state it had before any event touched it.
 function EventDirector.reset(self: Director)
-	self:stop()
+	local host: any = workspace
+	host.Gravity = self.normalGravity
+	restoreFriction(self)
+end
+
+-- Number of parts currently overridden. Exposed for tests and the invariant checks.
+function EventDirector.adoptedCount(self: Director): number
+	local count = 0
+	for _ in self.saved do
+		count += 1
+	end
+	return count
 end
 
 return EventDirector
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="Script" referent="RBX001072">
+      <Item class="Script" referent="RBX001073">
         <Properties>
           <string name="Name">Main</string>
           <ProtectedString name="Source">--!strict
@@ -40372,6 +40301,7 @@ local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
 local ArenaRoute = require(script.Parent.core.ArenaRoute)
 local EventDirector = require(script.Parent.EventDirector)
+local ChaosRules = require(script.Parent.core.ChaosRules)
 local Persistence = require(script.Parent.Persistence)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
@@ -40380,8 +40310,12 @@ local ArtService = require(script.Parent.ArtService)
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
 settings.Timing = if fast then Config.FastTiming else Config.Timing
-local machine = RoundMachine.new(settings)
 local random = Random.new()
+-- Chaos draws are server-side and uniform over the configured pool. Clamped so a
+-- rounding edge can never index past the end of the list.
+local machine = RoundMachine.new(settings, function(n: number): number
+	return math.min(n, math.floor(random:NextNumber() * n) + 1)
+end)
 -- Species is rolled here, on the server, from the ledger's own slot id and rarity, so
 -- the receipt a client animates names the character that player really collected.
 local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.PickupRadius, Config.PickupRespawn, function()
@@ -40399,8 +40333,11 @@ ArtService.apply()
 local world = WorldService.new()
 -- Animates the baked event geometry by name. Owns gravity/friction *inside* an
 -- event window only; the round machine owns when a window opens.
-local director = EventDirector.new(workspace:FindFirstChild("BrainrotWorld") :: Model, Config.NormalGravity,
-	Config.LowGravity, .7, Config.SlipperyFriction)
+local director = EventDirector.new(Config.NormalGravity)
+-- The live Chaos modifiers. Only syncChaos() writes this, so every consumer (jump,
+-- respawn, rarity, gravity, friction) agrees on the same snapshot of the event.
+local appliedChaos = ""
+local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
 local profiles = Persistence.new({})
@@ -40545,7 +40482,7 @@ local function movePlayer(player: Player, arena: boolean, now: number, escalate:
 	root.AssemblyAngularVelocity = Vector3.zero
 	humanoid.WalkSpeed = Config.WalkSpeed
 	humanoid.UseJumpPower = true
-	humanoid.JumpPower = Config.JumpPower
+	humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
 	movement:teleport(player.UserId, position(target.Position), now)
 	route:attempt(player.UserId, if arena then "arena" else "lobby", now)
 
@@ -40697,20 +40634,15 @@ local function resolveSteal(thief: Player, now: number): (string, number, Player
 	return outcome, value, bestVictim
 end
 
-local function setGravity(active: boolean)
-	Workspace.Gravity = if active then Config.LowGravity else Config.NormalGravity
-	world:setLowGravity(active)
-end
-
 local function checkInvariants()
 	if not RunService:IsStudio() then
 		return
 	end
 	assert(ledger.running == (machine.phase == "Playing"), "Pickup lifecycle diverged")
-	-- Gravity is normal unless the *low gravity* window is the live one. Other
-	-- wildcards leave it alone, so the assertion names the only cause.
+	-- Gravity is normal unless the *low gravity* Chaos Event is the live one. Other
+	-- kinds leave it alone, so the assertion names the only cause.
 	local low = machine.eventActive and machine.eventKind == "LowGravity"
-	assert(math.abs(Workspace.Gravity - (if low then Config.LowGravity else Config.NormalGravity)) &lt; 0.01, "Gravity failed to reset")
+	assert(math.abs(Workspace.Gravity - (if low then Config.Chaos.LowGravity else Config.NormalGravity)) &lt; 0.01, "Gravity failed to reset")
 	-- Nothing can be negative, and carried values always sum to the round score.
 	for _, player in machine.players do
 		assert(player.carriedValue &gt;= 0, "Negative carried value")
@@ -40729,19 +40661,29 @@ local function checkInvariants()
 	end
 end
 
+-- Make the world match the live Chaos Event. Runs every step, so a missed effect can
+-- never leave gravity, friction, jump power or rarity stuck after the window closes.
+local function syncChaos()
+	local kind = if machine.eventActive then machine.eventKind else ""
+	if kind == appliedChaos then
+		return
+	end
+	appliedChaos = kind
+	chaos = ChaosRules.modifiers(kind, Config)
+	director:apply(chaos)
+	world:setLowGravity(kind == "LowGravity")
+	ledger:setRareScale(chaos.RareScale)
+end
+
 local function handleEffects(effects, now: number)
 	for _, effect in effects do
 		dirty = true
 		if effect.kind == "event" then
+			-- The world itself is changed by syncChaos(), which reconciles on every step.
 			if effect.active then
-				local duration = math.max(0, (machine.eventEndsAt or now) - now)
-				director:start(effect.event or "", now, duration)
-				world:setLowGravity(effect.event == "LowGravity")
-				print(string.format("[Brainrot] event ON • %s", tostring(effect.event)))
+				print(string.format("[Brainrot] chaos ON • %s", tostring(effect.event)))
 			else
-				director:stop()
-				world:setLowGravity(false)
-				print("[Brainrot] event OFF")
+				print("[Brainrot] chaos OFF")
 			end
 		elseif effect.kind == "warning" then
 			print(string.format("[Brainrot] event warning • %s in %.0fs", tostring(effect.event),
@@ -40783,7 +40725,6 @@ local function handleEffects(effects, now: number)
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
 				director:reset()
-				world:setLowGravity(false)
 				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
 						routePlayer(player, now, true)
@@ -40792,9 +40733,6 @@ local function handleEffects(effects, now: number)
 			end
 			print(string.format("[Brainrot] %s • round %d", machine.phase, machine.roundId))
 		end
-	end
-	if #effects &gt; 0 then
-		checkInvariants()
 	end
 end
 
@@ -40953,24 +40891,32 @@ RunService.Heartbeat:Connect(function(dt: number)
 	end
 	accumulator = 0
 	local now = Workspace:GetServerTimeNow()
-	handleEffects(machine:step(now), now)
+	local effects = machine:step(now)
+	handleEffects(effects, now)
+	syncChaos()
+	if #effects &gt; 0 then
+		-- Checked after the world has been reconciled, so the invariant sees the result.
+		checkInvariants()
+	end
 
 	if machine.phase == "Playing" then
 		for _, id in ledger:step(now) do
 			updatePickup(id)
 		end
-		ledger.respawn = if machine.eventKind == "CollectibleRush" then Config.RushRespawn
+		ledger.respawn = if chaos.Respawn then chaos.Respawn
 			elseif machine.stage == "Final" then Config.FinalRespawn
 			else Config.PickupRespawn
 	else
 		ledger.respawn = Config.PickupRespawn
 	end
-	-- The director animates rafts and blinking paths between event edges.
-	director:step(now, machine.phaseStartedAt &gt; 0 and (now - machine.phaseStartedAt) or 0)
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
 		local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
+		-- Bouncy World: the jump scale follows the live event. Written only on change.
+		if humanoid and humanoid.JumpPower ~= Config.JumpPower * chaos.JumpScale then
+			humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
+		end
 		if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health &lt;= 0 then
 			continue
 		end
@@ -41043,7 +40989,7 @@ print(string.format("[Brainrot] v%s ready • %s • %d pickup slots • %ds rou
           <bool name="Disabled">false</bool>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001073">
+      <Item class="ModuleScript" referent="RBX001074">
         <Properties>
           <string name="Name">Persistence</string>
           <ProtectedString name="Source">--!nonstrict
@@ -41346,7 +41292,7 @@ return Persistence
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001074">
+      <Item class="ModuleScript" referent="RBX001075">
         <Properties>
           <string name="Name">WorldData</string>
           <ProtectedString name="Source">--!nocheck
@@ -42344,7 +42290,7 @@ return {
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001075">
+      <Item class="ModuleScript" referent="RBX001076">
         <Properties>
           <string name="Name">WorldService</string>
           <ProtectedString name="Source">--!strict
@@ -42495,11 +42441,11 @@ return WorldService
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="Folder" referent="RBX001076">
+      <Item class="Folder" referent="RBX001077">
         <Properties>
           <string name="Name">core</string>
         </Properties>
-        <Item class="ModuleScript" referent="RBX001077">
+        <Item class="ModuleScript" referent="RBX001078">
           <Properties>
             <string name="Name">ArenaRoute</string>
             <ProtectedString name="Source">--!strict
@@ -42747,7 +42693,84 @@ return ArenaRoute
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001078">
+        <Item class="ModuleScript" referent="RBX001079">
+          <Properties>
+            <string name="Name">ChaosRules</string>
+            <ProtectedString name="Source">--!strict
+-- Pure, engine-independent rules for the Chaos Event. Given the live kind (or ""),
+-- returns the complete set of modifiers the server should apply right now.
+--
+-- Every value is read from Config.Chaos or Config; nothing is duplicated here.
+-- The server reconciles to `modifiers(machine.eventKind)` on every step, so the
+-- neutral set is always what remains after an event ends. Cleanup therefore does
+-- not depend on remembering to undo one specific effect.
+local ChaosRules = {}
+
+export type Modifiers = {
+	Kind: string,
+	Gravity: number,       -- Workspace.Gravity
+	Friction: number?,     -- nil = surfaces keep their own physical properties
+	JumpScale: number,     -- multiplier on Config.JumpPower
+	RareScale: number,     -- weight multiplier for Rare and Prismatic cells
+	Respawn: number?,      -- nil = normal respawn rules apply
+}
+
+export type Config = {
+	NormalGravity: number,
+	SlipperyFriction: number,
+	RushRespawn: number,
+	Chaos: {
+		Kinds: { string },
+		LowGravity: number,
+		BouncyJumpScale: number,
+		RushRarityScale: number,
+	},
+}
+
+local function neutral(config: Config): Modifiers
+	return {
+		Kind = "",
+		Gravity = config.NormalGravity,
+		Friction = nil,
+		JumpScale = 1,
+		RareScale = 1,
+		Respawn = nil,
+	}
+end
+
+-- The set of kinds the server may draw from. Used by the round machine's validation.
+function ChaosRules.isKnown(kind: string): boolean
+	return kind == "LowGravity" or kind == "BouncyWorld" or kind == "SlipperyChaos" or kind == "BrainCellRush"
+end
+
+function ChaosRules.modifiers(kind: string, config: Config): Modifiers
+	local result = neutral(config)
+	if kind == "" then
+		return result
+	end
+	result.Kind = kind
+	if kind == "LowGravity" then
+		result.Gravity = config.Chaos.LowGravity
+	elseif kind == "BouncyWorld" then
+		result.JumpScale = config.Chaos.BouncyJumpScale
+	elseif kind == "SlipperyChaos" then
+		result.Friction = config.SlipperyFriction
+	elseif kind == "BrainCellRush" then
+		result.RareScale = config.Chaos.RushRarityScale
+		result.Respawn = config.RushRespawn
+	else
+		error("Unknown Chaos Event kind: " .. tostring(kind), 2)
+	end
+	return result
+end
+
+ChaosRules.neutral = neutral
+
+return table.freeze(ChaosRules)
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001080">
           <Properties>
             <string name="Name">MovementGuard</string>
             <ProtectedString name="Source">--!strict
@@ -42805,7 +42828,7 @@ return MovementGuard
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001079">
+        <Item class="ModuleScript" referent="RBX001081">
           <Properties>
             <string name="Name">PickupLedger</string>
             <ProtectedString name="Source">--!strict
@@ -42829,6 +42852,7 @@ export type Receipt = {
 type Fields = {
 	slots: { Slot }, kinds: { Kind }, radius: number, respawn: number,
 	roundId: number, running: boolean, choose: () -&gt; number, species: (number, number) -&gt; string,
+	rareScale: number,
 }
 export type Ledger = typeof(setmetatable({} :: Fields, PickupLedger))
 
@@ -42867,18 +42891,30 @@ function PickupLedger.new(
 	end
 	return setmetatable({
 		slots = slots, kinds = kinds, radius = radius, respawn = respawn,
-		roundId = 0, running = false, choose = choose, species = speciesOf,
+		roundId = 0, running = false, choose = choose, species = speciesOf, rareScale = 1,
 	}, PickupLedger)
+end
+
+-- Weight of one kind for the next roll. Only denominations above +1 are scaled, so
+-- Brain Cell Rush raises the odds of Rare and Prismatic cells and nothing else.
+local function weightOf(self: Ledger, kind: Kind): number
+	return if kind.Value &gt; 1 then kind.Weight * self.rareScale else kind.Weight
+end
+
+-- The server sets this from the live Chaos Event each tick (1 = normal odds).
+function PickupLedger.setRareScale(self: Ledger, scale: number)
+	assert(scale == scale and scale &gt;= 0 and scale &lt; math.huge, "Rarity scale must be finite and non-negative")
+	self.rareScale = scale
 end
 
 function PickupLedger.rollKind(self: Ledger): number
 	local total = 0
 	for _, kind in self.kinds do
-		total += kind.Weight
+		total += weightOf(self, kind)
 	end
 	local roll = math.clamp(self.choose(), 0, 0.999999) * total
 	for index, kind in self.kinds do
-		roll -= kind.Weight
+		roll -= weightOf(self, kind)
 		if roll &lt; 0 then
 			return index
 		end
@@ -42960,7 +42996,7 @@ return PickupLedger
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001080">
+        <Item class="ModuleScript" referent="RBX001082">
           <Properties>
             <string name="Name">RoundMachine</string>
             <ProtectedString name="Source">--!strict
@@ -42979,16 +43015,15 @@ RoundMachine.__index = RoundMachine
 
 export type Timing = {
 	Intermission: number, Round: number, Results: number,
-	EventStart: number, EventDuration: number, Warning: number,
+	ChaosStart: number, ChaosDuration: number, Warning: number,
 }
 export type Stage = { Name: string, At: number, Label: string }
-export type EventSpec = { Kind: string, At: number, Duration: number }
 export type StealRules = {
 	Range: number, Cooldown: number, Protection: number, Immunity: number, RepeatWindow: number,
 }
 export type Settings = {
 	Timing: Timing,
-	Stages: { Stage }?, Events: { EventSpec }?, Wildcards: { string }?,
+	Stages: { Stage }?, Chaos: { Kinds: { string } },
 	Steal: StealRules,
 	ParticipationCoins: number, CoinsPerPoint: number, WinnerCoins: number, HaloCost: number,
 	SlipperyFriction: number?, RushRespawn: number?, FinalRespawn: number?,
@@ -43026,6 +43061,7 @@ type Fields = {
 	eventKind: string, eventFinished: boolean, eventWarning: string, warningEndsAt: number,
 	stage: string, stageIndex: number, stageEndsAt: number, schedule: { Scheduled },
 	lastNow: number, lastResults: Results?,
+	choose: (number) -&gt; number, chaosKind: string,
 }
 export type Machine = typeof(setmetatable({} :: Fields, RoundMachine))
 
@@ -43037,10 +43073,9 @@ end
 -- shows the same words for the same server event.
 local LABEL: { [string]: string } = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 RoundMachine.Label = LABEL
@@ -43051,22 +43086,20 @@ local DEFAULT_STAGES: { Stage } = {
 	{ Name = "Chaos", At = 105, Label = "CHAOS" },
 	{ Name = "Final", At = 150, Label = "FINAL RUSH" },
 }
-local DEFAULT_EVENTS: { EventSpec } = {
-	{ Kind = "LowGravity", At = 60, Duration = 25 },
-	{ Kind = "Wildcard", At = 108, Duration = 18 },
-}
-local DEFAULT_WILDCARDS = { "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" }
+local DEFAULT_KINDS = { "LowGravity", "BouncyWorld", "SlipperyChaos", "BrainCellRush" }
 
-function RoundMachine.new(config: Settings): Machine
+-- `choose(n)` returns an integer in 1..n. The server passes its own RNG; tests pass a
+-- scripted one. Defaults to math.random so the pure module runs standalone.
+function RoundMachine.new(config: Settings, choose: ((number) -&gt; number)?): Machine
 	assert(config.Timing.Intermission &gt; 0 and config.Timing.Round &gt; 0 and config.Timing.Results &gt; 0, "Positive phase durations required")
-	assert(config.Timing.EventStart &gt;= 0 and config.Timing.EventDuration &gt; 0, "Invalid event timing")
-	assert(config.Timing.EventStart + config.Timing.EventDuration &lt; config.Timing.Round, "Chaos event must fit inside the round")
+	assert(config.Timing.ChaosStart &gt;= 0 and config.Timing.ChaosDuration &gt; 0, "Invalid Chaos Event timing")
+	assert(config.Timing.ChaosStart + config.Timing.ChaosDuration &lt; config.Timing.Round, "Chaos event must fit inside the round")
 	assert(#(config.Stages or DEFAULT_STAGES) &gt; 0, "At least one stage required")
 	assert((config.Stages or DEFAULT_STAGES)[1].At == 0, "The first stage must start at zero")
 	-- A config can legitimately carry a longer timeline than the round it is paired
-	-- with (a quick-test round is 30s against a 180s stage plan). Boundaries past
-	-- the deadline are dropped rather than trimmed, so a stage never starts at an
-	-- instant the round cannot reach.
+	-- with (a quick-test round is shorter than the stage plan). Boundaries past the
+	-- deadline are dropped rather than trimmed, so a stage never starts at an instant
+	-- the round cannot reach.
 	local stages: { Stage } = {}
 	for _, stage in config.Stages or DEFAULT_STAGES do
 		assert(stage.At &gt;= 0, "Stage outside the round")
@@ -43077,22 +43110,17 @@ function RoundMachine.new(config: Settings): Machine
 			table.insert(stages, stage)
 		end
 	end
-	local events: { EventSpec } = {}
-	for _, spec in config.Events or DEFAULT_EVENTS do
-		assert(spec.Duration &gt; 0, "Invalid event window")
-		if spec.At &gt;= 0 and spec.At + spec.Duration &lt; config.Timing.Round then
-			table.insert(events, spec)
-		end
-	end
-	if #events == 0 then
-		-- Legacy contract: one window derived from the timing block. This keeps a
-		-- short round with a long event plan playable instead of eventless.
-		events = { { Kind = "LowGravity", At = config.Timing.EventStart,
-			Duration = config.Timing.EventDuration } }
+	local kinds = if config.Chaos then config.Chaos.Kinds else DEFAULT_KINDS
+	assert(#kinds &gt; 0, "The Chaos pool needs at least one kind")
+	local seen: { [string]: boolean } = {}
+	for _, kind in kinds do
+		assert(LABEL[kind] ~= nil, "Unknown Chaos Event kind: " .. tostring(kind))
+		assert(not seen[kind], "Duplicate Chaos Event kind: " .. kind)
+		seen[kind] = true
 	end
 	config = table.clone(config) :: Settings
 	config.Stages = stages
-	config.Events = events
+	config.Chaos = { Kinds = table.clone(kinds) }
 	assert(config.Steal.Range &gt; 0 and config.Steal.Cooldown &gt; 0, "Invalid steal rules")
 	return setmetatable({
 		config = config, players = {}, phase = "Waiting", roundId = 0,
@@ -43100,6 +43128,8 @@ function RoundMachine.new(config: Settings): Machine
 		eventKind = "", eventFinished = false, eventWarning = "", warningEndsAt = 0,
 		stage = stages[1].Name, stageIndex = 1, stageEndsAt = 0, schedule = {},
 		lastNow = 0, lastResults = nil,
+		choose = choose or function(n: number): number return math.random(1, n) end,
+		chaosKind = "",
 	}, RoundMachine)
 end
 
@@ -43411,31 +43441,29 @@ function RoundMachine.stageAt(self: Machine, elapsed: number): (number, Stage)
 	return index, stages[index]
 end
 
--- Resolve the event timeline for a round. Wildcards rotate by round id, so every
--- client (and a replay of the same round) sees the same schedule.
-function RoundMachine.buildSchedule(self: Machine, roundId: number?): { Scheduled }
-	local events = self.config.Events or DEFAULT_EVENTS
-	-- Callers may ask about a specific round (tests, tools, a replay); the live
-	-- machine always passes nothing and gets the current one.
-	local rid = roundId or self.roundId
-	local wildcards = self.config.Wildcards or DEFAULT_WILDCARDS
-	local out: { Scheduled } = {}
-	local warning = self.config.Timing.Warning or 0
-	for _, spec in events do
-		local kind = spec.Kind
-		if kind == "Wildcard" then
-			kind = wildcards[(math.max(1, rid) - 1) % #wildcards + 1]
-		end
-		table.insert(out, {
-			Kind = kind, StartsAt = spec.At, EndsAt = spec.At + spec.Duration,
-			WarningAt = math.max(0, spec.At - warning),
-		})
+-- Draw the single Chaos Event for a round. Uniform over the configured pool, decided
+-- on the server at round start, and sent to clients inside the snapshot.
+function RoundMachine.drawChaos(self: Machine): string
+	local kinds = self.config.Chaos.Kinds
+	local raw = self.choose(#kinds)
+	local index = if finite(raw) then math.clamp(math.floor(raw), 1, #kinds) else 1
+	return kinds[index]
+end
+
+-- The round's timeline: exactly one window, warned in advance. A kind can be given
+-- explicitly (tests, replays); the live machine uses the kind drawn for this round.
+function RoundMachine.buildSchedule(self: Machine, kind: string?): { Scheduled }
+	local chosen = kind or self.chaosKind
+	if chosen == "" then
+		return {}
 	end
-	local sorted = out :: { Scheduled }
-	table.sort(sorted, function(a, b): boolean
-		return (a.StartsAt :: number) &lt; (b.StartsAt :: number)
-	end)
-	return out
+	local start = self.config.Timing.ChaosStart
+	return {{
+		Kind = chosen,
+		StartsAt = start,
+		EndsAt = start + self.config.Timing.ChaosDuration,
+		WarningAt = math.max(0, start - (self.config.Timing.Warning or 0)),
+	}}
 end
 
 function RoundMachine.eventLabel(kind: string): string
@@ -43455,7 +43483,8 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventWarning = ""
 		self.warningEndsAt = 0
 		self.phaseEndsAt = now + self.config.Timing.Round
-		self.schedule = self:buildSchedule()
+		self.chaosKind = self:drawChaos()
+		self.schedule = self:buildSchedule(self.chaosKind)
 		local _, stage = self:stageAt(0)
 		self.stage = stage.Name
 		self.stageIndex = 1
@@ -43484,6 +43513,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventKind = ""
 		self.eventWarning = ""
 		self.schedule = {}
+		self.chaosKind = ""
 	elseif phase == "Results" then
 		self:finishRound()
 		self.phaseEndsAt = now + self.config.Timing.Results
@@ -43502,6 +43532,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventKind = ""
 		self.eventWarning = ""
 		self.schedule = {}
+		self.chaosKind = ""
 		for _, player in self.players do
 			player.participating = false
 			table.clear(player.carried)
@@ -43635,7 +43666,7 @@ return RoundMachine
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="RBX001081">
+  <Item class="StarterPlayer" referent="RBX001083">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CharacterWalkSpeed">22</float>
@@ -43644,15 +43675,153 @@ return RoundMachine
       <float name="CameraMinZoomDistance">8</float>
       <bool name="CharacterUseJumpPower">true</bool>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="RBX001082">
+    <Item class="StarterPlayerScripts" referent="RBX001084">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="RBX001083">
+      <Item class="Folder" referent="RBX001085">
         <Properties>
           <string name="Name">BrainrotClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="RBX001084">
+        <Item class="ModuleScript" referent="RBX001086">
+          <Properties>
+            <string name="Name">Audio</string>
+            <ProtectedString name="Source">--!strict
+-- Client-side music and cue playback. It follows the replicated state, and every
+-- decision (which track, when a cue fires) comes from AudioRules. Nothing here is
+-- authoritative: audio never changes gameplay.
+--
+-- Behaviour:
+--   * One looped Sound per CONFIGURED music track. An empty ID creates no Sound.
+--   * Track changes crossfade over Config.Audio.CrossfadeSeconds. Volume moves a
+--     fixed step per frame, so a fade always takes the same wall time.
+--   * Stingers fire on the server-driven edges: round start/end, Chaos start/end.
+--   * The Settings "Sound" toggle (hud.soundOn) mutes music and cues together.
+--   * destroy() removes every Sound this module created.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local AudioRules = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("AudioRules"))
+
+local Audio = {}
+Audio.__index = Audio
+
+export type Track = { sound: Sound?, wanted: boolean }
+
+export type Controller = typeof(setmetatable({} :: {
+	config: any,
+	folder: Folder,
+	tracks: { [string]: Track },
+	wanted: string,
+	enabled: boolean,
+	lastPhase: string?,
+	lastEvent: string,
+	cueCount: number,
+}, Audio))
+
+function Audio.new(config: any): Controller
+	local folder = Instance.new("Folder")
+	folder.Name = "BrainrotAudio"
+	folder.Parent = SoundService
+	local tracks: { [string]: Track } = {}
+	for name, id in config.Audio.Tracks do
+		assert(AudioRules.validId(id), "Invalid music ID for track " .. name)
+		local track: Track = { sound = nil, wanted = false }
+		if id ~= "" then
+			local sound = Instance.new("Sound")
+			sound.Name = "Music_" .. name
+			sound.Looped = true
+			sound.Volume = 0
+			sound.SoundId = id
+			sound.Parent = folder
+			track.sound = sound
+		end
+		tracks[name] = track
+	end
+	return setmetatable({
+		config = config, folder = folder, tracks = tracks, wanted = "Lobby",
+		enabled = true, lastPhase = nil, lastEvent = "", cueCount = 0,
+	}, Audio) :: any
+end
+
+-- Plays a one-shot cue. Returns true only when a sound actually started.
+function Audio.cue(self: Controller, name: string): boolean
+	local id = AudioRules.cueId(self.config.Audio.Cues, name)
+	if id == nil or not self.enabled then
+		return false
+	end
+	local sound = Instance.new("Sound")
+	self.cueCount += 1
+	sound.Name = "Cue_" .. name .. "_" .. self.cueCount
+	sound.SoundId = id
+	sound.Volume = self.config.Audio.CueVolume
+	sound.Parent = self.folder
+	sound:Play()
+	Debris:AddItem(sound, 8)
+	return true
+end
+
+-- Reacts to a replicated state snapshot. Only edges trigger stingers, so joining
+-- mid-event does not replay anything from the past.
+function Audio.setState(self: Controller, state: any)
+	self.wanted = AudioRules.trackFor(state)
+	local phase = state.phase
+	local event = if state.eventActive then tostring(state.eventKind or "") else ""
+	-- The first snapshot only records where things stand. A player who joins mid-round
+	-- or mid-event hears the right music but not a stinger for something already past.
+	if self.lastPhase == nil then
+		self.lastPhase = phase
+		self.lastEvent = event
+		return
+	end
+	if phase ~= self.lastPhase then
+		if phase == "Playing" then
+			Audio.cue(self, "RoundStart")
+		elseif self.lastPhase == "Playing" then
+			Audio.cue(self, "RoundEnd")
+		end
+		self.lastPhase = phase
+	end
+	if event ~= self.lastEvent then
+		if event ~= "" then
+			Audio.cue(self, "ChaosStart")
+		else
+			Audio.cue(self, "ChaosEnd")
+		end
+		self.lastEvent = event
+	end
+end
+
+-- Advances every crossfade by `dt` seconds. `enabled` is the Sound setting.
+function Audio.tick(self: Controller, dt: number, enabled: boolean)
+	self.enabled = enabled
+	local fade = self.config.Audio.CrossfadeSeconds
+	local full = self.config.Audio.MusicVolume
+	for name, track in self.tracks do
+		local sound = track.sound
+		if sound then
+			local target = if enabled and self.wanted == name then full else 0
+			if target &gt; 0 and not track.wanted then
+				track.wanted = true
+				sound:Play()
+			elseif target == 0 then
+				track.wanted = false
+			end
+			sound.Volume = AudioRules.stepVolume(sound.Volume, target, dt, full, fade)
+		end
+	end
+end
+
+function Audio.destroy(self: Controller)
+	self.folder:Destroy()
+	table.clear(self.tracks)
+end
+
+return Audio
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001087">
           <Properties>
             <string name="Name">Collection</string>
             <ProtectedString name="Source">--!nonstrict
@@ -43980,7 +44149,7 @@ return Collection
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001085">
+        <Item class="ModuleScript" referent="RBX001088">
           <Properties>
             <string name="Name">CreatureData</string>
             <ProtectedString name="Source">--!nocheck
@@ -44194,7 +44363,7 @@ return {
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001086">
+        <Item class="ModuleScript" referent="RBX001089">
           <Properties>
             <string name="Name">Creatures</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44539,7 +44708,7 @@ return Creatures
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001087">
+        <Item class="ModuleScript" referent="RBX001090">
           <Properties>
             <string name="Name">Effects</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44896,7 +45065,7 @@ return Effects
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001088">
+        <Item class="ModuleScript" referent="RBX001091">
           <Properties>
             <string name="Name">Hud</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44934,14 +45103,13 @@ local function phaseWord(phase, fastMode)
 	return Copy.WaitingStatus
 end
 
--- Server event kinds -&gt; the words the player reads. Shared with the server's own
--- labels through Config-independent literals so a snapshot only needs the kind.
+-- Chaos Event kinds -&gt; the words the player reads. Mirrors RoundMachine's LABEL, which
+-- the server also sends in the snapshot schedule.
 local EVENT_LABEL = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 local function eventLabel(kind)
@@ -45667,7 +45835,7 @@ function Hud:refreshModal()
 	elseif kind == "Settings" then
 		self.modalTitle.Text = Copy.SettingsTitle
 		self.modalTitle.TextColor3 = C.Violet
-		self.modalBody.Text = "Sound effects: " .. (if self.soundOn then "ON" else "OFF")
+		self.modalBody.Text = "Sound and music: " .. (if self.soundOn then "ON" else "OFF")
 			.. "\nMotion: " .. (if self.reducedMotion then "REDUCED" else "FULL")
 			.. "\n\nREDUCED MOTION turns off camera-shaking effects, halo breathing and\npanel transitions. It never changes gameplay."
 		self.modalPrimary.Visible = false
@@ -45676,7 +45844,7 @@ function Hud:refreshModal()
 		self.modalTitle.TextColor3 = C.Cyan
 		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1  •  fish or goose +5  •  toast or sock +10"
 			.. "\n\n02   BANK, THEN STEAL\nEach stage banks what you carry. Between banks, tap STEAL (or E) beside a rival to take one cell they are carrying."
-			.. "\n\n03   SURVIVE THE EVENTS\nLow gravity, slippery stone, moving rafts and vanishing paths — each one warns you first."
+			.. "\n\n03   SURVIVE THE CHAOS\nOne Chaos Event per round, 35 seconds: low gravity, bouncy jumps, slippery stone or Brain Cell Rush. Each one warns you first."
 			.. "\n\n04   BE THE BIGGEST BRAIN\nMost cells after the Final Rush wins. Ties share the crown."
 		self.modalPrimary.Visible = false
 	end
@@ -45721,7 +45889,7 @@ return Hud
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001089">
+        <Item class="ModuleScript" referent="RBX001092">
           <Properties>
             <string name="Name">Iconography</string>
             <ProtectedString name="Source">--!nonstrict
@@ -45850,7 +46018,7 @@ return Iconography
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001090">
+        <Item class="ModuleScript" referent="RBX001093">
           <Properties>
             <string name="Name">Kit</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46150,7 +46318,7 @@ return Kit
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="RBX001091">
+        <Item class="LocalScript" referent="RBX001094">
           <Properties>
             <string name="Name">Main</string>
             <ProtectedString name="Source">--!strict
@@ -46160,6 +46328,7 @@ local StarterGui = game:GetService("StarterGui")
 local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
 local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
+local Audio = require(script.Parent.Audio)
 local Iconography = require(script.Parent.Iconography)
 local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes")
 local stateRemote = remotes:WaitForChild("State") :: RemoteEvent
@@ -46172,11 +46341,13 @@ local hud = Hud.new(Config, function(action: string)
 	requestRemote:FireServer(action)
 end)
 local effects = Effects.new(hud, Config)
+local audio = Audio.new(Config)
 local connections: { RBXScriptConnection } = {}
 
 table.insert(connections, stateRemote.OnClientEvent:Connect(function(state, notice)
 	hud:update(state)
 	effects:update(state)
+	audio:setState(state)
 	if typeof(notice) == "string" then hud:notice(notice) end
 end))
 table.insert(connections, pickupRemote.OnClientEvent:Connect(function(receipt)
@@ -46184,6 +46355,8 @@ table.insert(connections, pickupRemote.OnClientEvent:Connect(function(receipt)
 end))
 local accumulator = 0
 table.insert(connections, RunService.RenderStepped:Connect(function(dt)
+	-- Fades run every frame so a crossfade keeps the same wall-clock length.
+	audio:tick(dt, hud.soundOn)
 	accumulator += dt
 	if accumulator &gt;= .1 then
 		accumulator = 0
@@ -46207,13 +46380,14 @@ end)
 script.Destroying:Connect(function()
 	for _, connection in connections do connection:Disconnect() end
 	effects:destroy()
+	audio:destroy()
 	hud:destroy()
 end)
 </ProtectedString>
             <bool name="Disabled">false</bool>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001092">
+        <Item class="ModuleScript" referent="RBX001095">
           <Properties>
             <string name="Name">Panels</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46643,7 +46817,7 @@ return Panels
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001093">
+        <Item class="ModuleScript" referent="RBX001096">
           <Properties>
             <string name="Name">Theme</string>
             <ProtectedString name="Source">--!nocheck
@@ -46800,7 +46974,7 @@ return {
 		IntermissionStatus = "GET READY",
 		PlayingStatus = "COLLECT",
 		ResultsStatus = "ROUND COMPLETE",
-		EventBanner = "LOW GRAVITY",
+		EventBanner = "CHAOS EVENT",
 		TieBanner = "A MEETING OF MINDS",
 		WinBanner = "BIG BRAIN ENERGY",
 		NoScoreBanner = "THE BRAINS ARE WARMING UP",
@@ -46835,7 +47009,7 @@ return {
       </Item>
     </Item>
   </Item>
-  <Item class="Lighting" referent="RBX001094">
+  <Item class="Lighting" referent="RBX001097">
     <Properties>
       <string name="Name">Lighting</string>
       <float name="Brightness">2.2</float>
@@ -46874,7 +47048,7 @@ return {
       <float name="FogStart">260</float>
       <float name="FogEnd">1150</float>
     </Properties>
-    <Item class="Sky" referent="RBX001095">
+    <Item class="Sky" referent="RBX001098">
       <Properties>
         <string name="Name">TropicalDaySky</string>
         <Content name="SkyboxBk">
@@ -46901,7 +47075,7 @@ return {
         <float name="StarCount">0</float>
       </Properties>
     </Item>
-    <Item class="Atmosphere" referent="RBX001096">
+    <Item class="Atmosphere" referent="RBX001099">
       <Properties>
         <string name="Name">CoastalHaze</string>
         <float name="Density">0.32</float>
@@ -46920,7 +47094,7 @@ return {
         <float name="Glare">0.08</float>
       </Properties>
     </Item>
-    <Item class="BloomEffect" referent="RBX001097">
+    <Item class="BloomEffect" referent="RBX001100">
       <Properties>
         <string name="Name">GameplayBloom</string>
         <float name="Intensity">0.22</float>
@@ -46928,7 +47102,7 @@ return {
         <float name="Threshold">1.45</float>
       </Properties>
     </Item>
-    <Item class="ColorCorrectionEffect" referent="RBX001098">
+    <Item class="ColorCorrectionEffect" referent="RBX001101">
       <Properties>
         <string name="Name">NeutralGrade</string>
         <float name="Saturation">0.06</float>
@@ -46942,14 +47116,14 @@ return {
       </Properties>
     </Item>
   </Item>
-  <Item class="Players" referent="RBX001099">
+  <Item class="Players" referent="RBX001102">
     <Properties>
       <string name="Name">Players</string>
       <float name="RespawnTime">2</float>
       <bool name="CharacterAutoLoads">true</bool>
     </Properties>
   </Item>
-  <Item class="SoundService" referent="RBX001100">
+  <Item class="SoundService" referent="RBX001103">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>

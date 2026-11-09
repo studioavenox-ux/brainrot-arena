@@ -33,14 +33,13 @@ local function phaseWord(phase, fastMode)
 	return Copy.WaitingStatus
 end
 
--- Server event kinds -> the words the player reads. Shared with the server's own
--- labels through Config-independent literals so a snapshot only needs the kind.
+-- Chaos Event kinds -> the words the player reads. Mirrors RoundMachine's LABEL, which
+-- the server also sends in the snapshot schedule.
 local EVENT_LABEL = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 local function eventLabel(kind)
@@ -766,7 +765,7 @@ function Hud:refreshModal()
 	elseif kind == "Settings" then
 		self.modalTitle.Text = Copy.SettingsTitle
 		self.modalTitle.TextColor3 = C.Violet
-		self.modalBody.Text = "Sound effects: " .. (if self.soundOn then "ON" else "OFF")
+		self.modalBody.Text = "Sound and music: " .. (if self.soundOn then "ON" else "OFF")
 			.. "\nMotion: " .. (if self.reducedMotion then "REDUCED" else "FULL")
 			.. "\n\nREDUCED MOTION turns off camera-shaking effects, halo breathing and\npanel transitions. It never changes gameplay."
 		self.modalPrimary.Visible = false
@@ -775,7 +774,7 @@ function Hud:refreshModal()
 		self.modalTitle.TextColor3 = C.Cyan
 		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1  •  fish or goose +5  •  toast or sock +10"
 			.. "\n\n02   BANK, THEN STEAL\nEach stage banks what you carry. Between banks, tap STEAL (or E) beside a rival to take one cell they are carrying."
-			.. "\n\n03   SURVIVE THE EVENTS\nLow gravity, slippery stone, moving rafts and vanishing paths — each one warns you first."
+			.. "\n\n03   SURVIVE THE CHAOS\nOne Chaos Event per round, 35 seconds: low gravity, bouncy jumps, slippery stone or Brain Cell Rush. Each one warns you first."
 			.. "\n\n04   BE THE BIGGEST BRAIN\nMost cells after the Final Rush wins. Ties share the crown."
 		self.modalPrimary.Visible = false
 	end

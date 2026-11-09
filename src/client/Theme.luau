@@ -152,7 +152,7 @@ return {
 		IntermissionStatus = "GET READY",
 		PlayingStatus = "COLLECT",
 		ResultsStatus = "ROUND COMPLETE",
-		EventBanner = "LOW GRAVITY",
+		EventBanner = "CHAOS EVENT",
 		TieBanner = "A MEETING OF MINDS",
 		WinBanner = "BIG BRAIN ENERGY",
 		NoScoreBanner = "THE BRAINS ARE WARMING UP",

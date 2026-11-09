@@ -182,7 +182,17 @@ function Mock.new(sources, schema, options)
 			end
 			obj._props.Parent=value
 			if old then old.ChildRemoved:Fire(obj) end
-			if value then table.insert(value._children,obj); value.ChildAdded:Fire(obj) end
+			if value then
+				table.insert(value._children,obj); value.ChildAdded:Fire(obj)
+				-- Like Roblox: every ancestor hears about the whole arriving subtree.
+				local subtree={obj}
+				for _,desc in obj:GetDescendants() do table.insert(subtree,desc) end
+				local ancestor=value
+				while ancestor do
+					if ancestor._signals.DescendantAdded then for _,desc in subtree do ancestor._signals.DescendantAdded:Fire(desc) end end
+					ancestor=ancestor._props.Parent
+				end
+			end
 			obj.AncestryChanged:Fire(obj,value)
 		elseif key=="Position" and obj:IsA("BasePart") then
 			obj._props.CFrame=CF.new(value)*(obj._props.CFrame or CF.new()).Rotation
@@ -192,7 +202,7 @@ function Mock.new(sources, schema, options)
 	local function new(class)
 		assert(schema.Classes[class],"Unknown Roblox class: "..class)
 		local obj=setmetatable({_class=class,_props={Name=class},_children={},_signals={},_attributes={},_propertySignals={}},instanceMt)
-		for _,key in {"ChildAdded","ChildRemoved","AncestryChanged","Destroying","AttributeChanged","MouseEnter","MouseLeave","InputBegan","InputEnded","FocusLost"} do obj._signals[key]=signal() end
+		for _,key in {"ChildAdded","ChildRemoved","DescendantAdded","AncestryChanged","Destroying","AttributeChanged","MouseEnter","MouseLeave","InputBegan","InputEnded","FocusLost"} do obj._signals[key]=signal() end
 		-- Signals that only exist on specific classes, mirroring the real API.
 		if class=="TextButton" then obj._signals.Activated=signal() end
 		for _,key in {"OnServerEvent","OnClientEvent"} do

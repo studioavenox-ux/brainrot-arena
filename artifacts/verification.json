@@ -1,26 +1,26 @@
 {
-  "verified_at_utc": "2026-11-09T07:45:45+00:00",
+  "verified_at_utc": "2026-11-09T10:13:03+00:00",
   "status": "automated_checks_passed_studio_unverified",
   "test_counts": {
-    "core_luau": 107,
-    "mock_adapter_luau": 76,
+    "core_luau": 123,
+    "mock_adapter_luau": 87,
     "place_python": 36,
     "art_direction_python": 35
   },
-  "total_passed": 254,
+  "total_passed": 281,
   "failed": 0,
-  "luau_files_compiled": 26,
-  "source_sha256": "3dbd31d70d0bab8e0863837a0db904d250dd54badbadcaafd16ce94b558ed744",
+  "luau_files_compiled": 29,
+  "source_sha256": "078e09988857329bf543401e6574e830932e444e39ed298edf4abecc689db0bc",
   "static_world_parts": 906,
   "pickup_slots": 48,
   "places": {
     "BrainrotArena-QuickTest.rbxlx": {
-      "bytes": 1791117,
-      "sha256": "589d2927e6d83797efc39f0db09aa4c62096337c5068ba3c49b18908381dc29d"
+      "bytes": 1797965,
+      "sha256": "dedbd70161740f4a9f69f1ed135fce345cc5c16b0d1605c638e0aa0dc8044b85"
     },
     "BrainrotArena.rbxlx": {
-      "bytes": 1791118,
-      "sha256": "81f07df282224afdc21209eac2c67ee29bd009afe840d4cb54bd71e4563c9bdb"
+      "bytes": 1797966,
+      "sha256": "5f92034903b8ccae17e9ae33138bca1a6a90e4bd8f5ddc9a718b3a3ae909abde"
     }
   },
   "stages": [
@@ -29,7 +29,7 @@
       "passed": true
     },
     {
-      "name": "All 26 Luau files compile",
+      "name": "All 29 Luau files compile",
       "passed": true
     },
     {
@@ -67,6 +67,8 @@
     "Engine physics and rendering",
     "Real touch-device input",
     "Bundled sound playback",
+    "Dynamic music and cue playback",
+    "Chaos Event in Studio",
     "Published server test"
   ]
 }

@@ -4,6 +4,7 @@ local RoundMachine = require("../src/server/core/RoundMachine")
 local PickupLedger = require("../src/server/core/PickupLedger")
 local MovementGuard = require("../src/server/core/MovementGuard")
 local ArenaRoute = require("../src/server/core/ArenaRoute")
+local ChaosRules = require("../src/server/core/ChaosRules")
 local Creatures = require("../src/shared/Creatures")
 local Config = require("../src/shared/Config")
 local passed, failed = 0, 0
@@ -17,10 +18,12 @@ end
 local function throws(fn)
 	eq(pcall(fn), false)
 end
-local function machine()
+-- Deterministic chooser: always draws the first kind (LowGravity) unless told otherwise.
+local function first() return 1 end
+local function machine(choose)
 	local config = table.clone(Config)
 	config.Timing = Config.FastTiming
-	return RoundMachine.new(config)
+	return RoundMachine.new(config, choose or first)
 end
 local function playing(count)
 	local m = machine()
@@ -41,7 +44,7 @@ test("production round is exactly three minutes", function() eq(Config.Timing.Ro
 test("waiting does not advance without players", function() local m=machine(); eq(#m:step(100),0); eq(m.phase,"Waiting") end)
 test("first player starts a short intermission", function() local m=machine(); m:addPlayer(-1,"Solo"); m:step(100); eq(m.phase,"Intermission"); eq(m.phaseEndsAt,104) end)
 test("intermission deadline does not drift on ticks", function() local m=machine(); m:addPlayer(1,"A"); m:step(100); m:step(103.99); eq(m.phase,"Intermission"); eq(m.phaseEndsAt,104) end)
-test("round starts precisely at deadline", function() local m=playing(); eq(m.phase,"Playing"); eq(m.roundId,1); eq(m.phaseEndsAt,134) end)
+test("round starts precisely at deadline", function() local m=playing(); eq(m.phase,"Playing"); eq(m.roundId,1); eq(m.phaseEndsAt,154) end)
 test("all current players participate", function() local m=playing(12); for i=1,12 do eq(m:isParticipating(-i),true) end end)
 test("negative Studio UserIds are supported", function() eq(machine():addPlayer(-2,"Local client"),true) end)
 test("duplicate registration cannot reset progress", function() local m=playing(); m:award(-1,5,1); eq(m:addPlayer(-1,"Again"),false); eq(m.players[-1].score,5) end)
@@ -52,29 +55,26 @@ test("only three server denominations accepted", function() local m=playing(); f
 test("missing player cannot be awarded", function() eq(playing():award(999,10,1),false) end)
 test("valid score and pickup counts accumulate", function() local m=playing(); for _,v in {1,5,10} do eq(m:award(-1,v,1),true) end; eq(m.players[-1].score,16); eq(m.players[-1].pickups,3) end)
 test("late joiner enters current round at zero", function() local m=playing(); m:addPlayer(-3,"Late"); eq(m:isParticipating(-3),true); eq(m.players[-3].score,0) end)
-test("low gravity starts at configured elapsed time", function() local m=playing(); m:step(111.99); eq(m.eventActive,false); local effects=m:step(112); eq(m.eventActive,true); eq(m.eventEndsAt,122); eq(effects[1].kind,"event") end)
-test("low gravity ends and cannot restart", function() local m=playing(); m:step(112); m:step(122); eq(m.eventActive,false); eq(#m:step(123),0) end)
-test("stalled server skips expired event safely", function() local m=playing(); m:step(125); eq(m.eventActive,false); eq(m.eventFinished,true) end)
-test("round deadline processed before pickups", function() local m=playing(); m:step(134); eq(m.phase,"Results"); eq(m:award(-1,10,1),false) end)
+test("round deadline processed before pickups", function() local m=playing(); m:step(154); eq(m.phase,"Results"); eq(m:award(-1,10,1),false) end)
 test("long stall finishes only once without retroactive events", function() local m=playing(); m:step(1000); eq(m.phase,"Results"); eq(m.eventActive,false); eq(m.phaseEndsAt,1005) end)
-test("highest score wins", function() local m=playing(); m:award(-1,10,1); m:award(-2,5,1); m:step(134); eq(#m.lastResults.winners,1); eq(m.lastResults.winners[1].id,-1) end)
-test("ties share the crown", function() local m=playing(); m:award(-1,5,1); m:award(-2,5,1); m:step(134); eq(#m.lastResults.winners,2); eq(m.players[-1].wins,1); eq(m.players[-2].wins,1) end)
-test("zero-score round declares no winner", function() local m=playing(); m:step(134); eq(#m.lastResults.winners,0); eq(m.players[-1].wins,0) end)
-test("winner receives correct session coins", function() local m=playing(); m:award(-1,10,1); m:step(134); eq(m.players[-1].coins,60); eq(m.lastResults.rewards["-1"],60) end)
-test("other participants receive base plus score coins", function() local m=playing(); m:award(-1,10,1); m:award(-2,5,1); m:step(134); eq(m.players[-2].coins,20) end)
-test("results use remote-safe string-key reward dictionary", function() local m=playing(); m:step(134); for key in m.lastResults.rewards do eq(type(key),"string") end end)
-test("results cannot pay rewards twice", function() local m=playing(); m:award(-1,5,1); m:step(134); local amount=m.players[-1].coins; m:step(134); m:step(136); eq(m.players[-1].coins,amount) end)
-test("results lead back to intermission", function() local m=playing(); m:step(134); m:step(139); eq(m.phase,"Intermission"); eq(m.phaseEndsAt,143) end)
-test("new round clears score but preserves coins and wins", function() local m=playing(); m:award(-1,10,1); m:step(134); m:step(139); m:step(143); eq(m.roundId,2); eq(m.players[-1].score,0); eq(m.players[-1].pickups,0); eq(m.players[-1].coins,60); eq(m.players[-1].wins,1) end)
-test("join during results is not paid for prior round", function() local m=playing(); m:step(134); m:addPlayer(-3,"Late"); eq(m.players[-3].coins,0); eq(m:isParticipating(-3),false) end)
-test("disconnected player cannot win", function() local m=playing(); m:award(-1,10,1); m:award(-2,1,1); m:removePlayer(-1); m:step(134); eq(m.lastResults.winners[1].id,-2) end)
+test("highest score wins", function() local m=playing(); m:award(-1,10,1); m:award(-2,5,1); m:step(154); eq(#m.lastResults.winners,1); eq(m.lastResults.winners[1].id,-1) end)
+test("ties share the crown", function() local m=playing(); m:award(-1,5,1); m:award(-2,5,1); m:step(154); eq(#m.lastResults.winners,2); eq(m.players[-1].wins,1); eq(m.players[-2].wins,1) end)
+test("zero-score round declares no winner", function() local m=playing(); m:step(154); eq(#m.lastResults.winners,0); eq(m.players[-1].wins,0) end)
+test("winner receives correct session coins", function() local m=playing(); m:award(-1,10,1); m:step(154); eq(m.players[-1].coins,60); eq(m.lastResults.rewards["-1"],60) end)
+test("other participants receive base plus score coins", function() local m=playing(); m:award(-1,10,1); m:award(-2,5,1); m:step(154); eq(m.players[-2].coins,20) end)
+test("results use remote-safe string-key reward dictionary", function() local m=playing(); m:step(154); for key in m.lastResults.rewards do eq(type(key),"string") end end)
+test("results cannot pay rewards twice", function() local m=playing(); m:award(-1,5,1); m:step(154); local amount=m.players[-1].coins; m:step(154); m:step(156); eq(m.players[-1].coins,amount) end)
+test("results lead back to intermission", function() local m=playing(); m:step(154); m:step(159); eq(m.phase,"Intermission"); eq(m.phaseEndsAt,163) end)
+test("new round clears score but preserves coins and wins", function() local m=playing(); m:award(-1,10,1); m:step(154); m:step(159); m:step(163); eq(m.roundId,2); eq(m.players[-1].score,0); eq(m.players[-1].pickups,0); eq(m.players[-1].coins,60); eq(m.players[-1].wins,1) end)
+test("join during results is not paid for prior round", function() local m=playing(); m:step(154); m:addPlayer(-3,"Late"); eq(m.players[-3].coins,0); eq(m:isParticipating(-3),false) end)
+test("disconnected player cannot win", function() local m=playing(); m:award(-1,10,1); m:award(-2,1,1); m:removePlayer(-1); m:step(154); eq(m.lastResults.winners[1].id,-2) end)
 test("empty server cancels round and low gravity", function() local m=playing(); m:step(112); m:removePlayer(-1); m:removePlayer(-2); m:step(113); eq(m.phase,"Waiting"); eq(m.eventActive,false); eq(m.phaseEndsAt,0) end)
 test("rejoining empty server gets fresh intermission", function() local m=playing(1); m:removePlayer(-1); m:step(110); m:addPlayer(-2,"New"); m:step(111); eq(m.phase,"Intermission"); eq(m.phaseEndsAt,115) end)
 test("stable leaderboard orders ties by ID", function() local m=playing(3); m:award(-1,5,1); m:award(-3,10,1); m:award(-2,5,1); local rows=m:rows(); eq(rows[1].id,-3); eq(rows[2].id,-2); eq(rows[3].id,-1) end)
 test("public score snapshots do not alias authority player records", function() local m=playing(); local s=m:snapshot(); s.rows[1].score=999; eq(m.players[s.rows[1].id].score,0) end)
 test("backwards and nonfinite clocks fail closed", function() local m=playing(); throws(function() m:step(103) end); throws(function() m:step(0/0) end); throws(function() m:step(math.huge) end) end)
 test("invalid phase timings fail early", function() local c=table.clone(Config); c.Timing=table.clone(Config.Timing); c.Timing.Round=0; throws(function() RoundMachine.new(c) end) end)
-test("event must fit inside round", function() local c=table.clone(Config); c.Timing=table.clone(Config.FastTiming); c.Timing.EventDuration=40; throws(function() RoundMachine.new(c) end) end)
+test("event must fit inside round", function() local c=table.clone(Config); c.Timing=table.clone(Config.FastTiming); c.Timing.ChaosDuration=60; throws(function() RoundMachine.new(c) end) end)
 test("halo cannot be bought without server coins", function() local m=playing(); local ok=m:haloAction(-1); eq(ok,false); eq(m.players[-1].coins,0) end)
 test("halo is charged once then toggles free", function() local m=playing(); m.players[-1].coins=150; eq(m:haloAction(-1),true); eq(m.players[-1].coins,50); eq(m.players[-1].haloEquipped,true); eq(m:haloAction(-1),true); eq(m.players[-1].haloEquipped,false); m:haloAction(-1); eq(m.players[-1].coins,50) end)
 test("halo request spam cannot produce negative balance", function() local m=playing(); m.players[-1].coins=100; for _=1,500 do m:haloAction(-1) end; eq(m.players[-1].coins,0); eq(m.players[-1].haloOwned,true) end)
@@ -141,7 +141,7 @@ test("100 simulated 12-player rounds conserve scores and rewards", function()
 		end
 		local previousCoins={}
 		for id,p in m.players do eq(p.score,expected[id]); previousCoins[id]=p.coins end
-		now=start+30; m:step(now); l:clear(); eq(m.phase,"Results"); eq(m.eventActive,false)
+		now=start+50; m:step(now); l:clear(); eq(m.phase,"Results"); eq(m.eventActive,false)
 		for id,p in m.players do
 			local won=p.score==m.lastResults.topScore
 			eq(p.coins-previousCoins[id],10+p.score*2+(if won then 30 else 0))
@@ -547,66 +547,272 @@ test("stage: carried cells are exposed, so the risk window is real", function()
 	eq(rowOf(m, -1).lost, 10)
 end)
 
-test("events: the production schedule warns before every window", function()
-	local m = RoundMachine.new(Config)
-	local schedule = m:buildSchedule(1)
-	assert(#schedule > 0, "an event schedule is required")
-	local previous = -math.huge
-	for _, spec in schedule do
-		assert(spec.StartsAt > previous, "events must be ordered")
-		assert(spec.WarningAt < spec.StartsAt, "every event must warn first")
-		assert(spec.EndsAt > spec.StartsAt, "events must have a duration")
-		assert(spec.EndsAt < Config.Timing.Round, "events must fit the round")
-		previous = spec.StartsAt
+-- ---------------------------------------------------------------------------- #
+-- Chaos Event: exactly one 35 s event per round, drawn by the server from a pool.
+-- ---------------------------------------------------------------------------- #
+local function scripted(index) return function() return index end end
+-- Start a Playing round on the given timing; returns the machine at its start.
+local function startRound(choose, timing)
+	local config = table.clone(Config)
+	config.Timing = timing or Config.Timing
+	local m = RoundMachine.new(config, choose or first)
+	m:addPlayer(-1, "Solo")
+	m:step(100)
+	m:step(100 + config.Timing.Intermission)
+	eq(m.phase, "Playing")
+	return m
+end
+-- Run a whole round in small steps and collect every event open/close transition.
+local function transitions(m)
+	local base, opened, closed, openedAt, closedAt = m.phaseStartedAt, {}, {}, nil, nil
+	local total = m.config.Timing.Round + 1
+	for i = 0, total * 10 do
+		for _, effect in m:step(base + i * 0.1) do
+			if effect.kind == "event" then
+				if effect.active then table.insert(opened, effect.event); openedAt = i * 0.1
+				else table.insert(closed, effect.event); closedAt = i * 0.1 end
+			end
+		end
 	end
+	return opened, closed, openedAt, closedAt
+end
+
+test("chaos: the pool is exactly the four specified kinds", function()
+	local kinds = Config.Chaos.Kinds
+	eq(#kinds, 4)
+	eq(kinds[1], "LowGravity"); eq(kinds[2], "BouncyWorld"); eq(kinds[3], "SlipperyChaos"); eq(kinds[4], "BrainCellRush")
+	for _, kind in kinds do assert(ChaosRules.isKnown(kind), "unknown kind " .. kind) end
 end)
 
-test("events: five survival kinds exist and all are labelled", function()
+test("chaos: production window is exactly 35 seconds inside the Chaos stage", function()
+	eq(Config.Timing.ChaosDuration, 35)
+	local m = startRound(scripted(1), Config.Timing)
+	eq(#m.schedule, 1)
+	local spec = m.schedule[1]
+	eq(spec.StartsAt, 105); eq(spec.EndsAt - spec.StartsAt, 35); eq(spec.WarningAt, 99)
+	assert(spec.StartsAt >= Config.Stages[3].At and spec.EndsAt <= Config.Stages[4].At, "window must sit inside the Chaos stage")
+end)
+
+test("chaos: QuickTest timing still runs the full 35 second window inside its round", function()
+	eq(Config.FastTiming.ChaosDuration, 35)
+	local m = startRound(scripted(1), Config.FastTiming)
+	local spec = m.schedule[1]
+	eq(spec.EndsAt - spec.StartsAt, 35)
+	assert(spec.EndsAt < Config.FastTiming.Round, "the window must end before the round does")
+end)
+
+test("chaos: exactly one kind is drawn per round, one for each pool entry", function()
 	local seen = {}
-	-- Wildcards rotate by round id, so several rounds cover the whole rotation.
-	for roundId = 1, 4 do
-		for _, spec in RoundMachine.new(Config):buildSchedule(roundId) do
-			seen[spec.Kind] = true
-		end
+	for index = 1, 4 do
+		local m = startRound(scripted(index), Config.Timing)
+		eq(m.chaosKind, Config.Chaos.Kinds[index])
+		seen[m.chaosKind] = (seen[m.chaosKind] or 0) + 1
+		eq(#m.schedule, 1)
+		eq(m.schedule[1].Kind, m.chaosKind)
 	end
-	for _, kind in { "LowGravity", "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" } do
-		assert(seen[kind] ~= nil, "missing event kind: " .. kind)
-		assert(RoundMachine.eventLabel(kind) ~= "", "unlabelled event: " .. kind)
-	end
-	eq(RoundMachine.eventLabel("LowGravity"), "LOW GRAVITY")
+	for _, kind in Config.Chaos.Kinds do eq(seen[kind], 1) end
 end)
 
-test("events: a warning fires before the event, then the event itself", function()
-	local m = playing(2)
-	local spec = m:buildSchedule(m.roundId)[1]
-	m:step(m.phaseStartedAt + spec.WarningAt + 0.01)
-	eq(m.eventWarning ~= nil, true)
-	eq(m.eventActive, false)
-	m:step(m.phaseStartedAt + spec.StartsAt + 0.01)
-	eq(m.eventActive, true)
-	eq(m.eventKind, spec.Kind)
-	m:step(m.phaseStartedAt + spec.EndsAt + 0.01)
-	eq(m.eventActive, false)
+test("chaos: the chooser is clamped, so a bad draw cannot select nothing", function()
+	eq(startRound(function() return 99 end).chaosKind, "BrainCellRush")
+	eq(startRound(function() return 0 end).chaosKind, "LowGravity")
+	eq(startRound(function() return 0 / 0 end).chaosKind, "LowGravity")
 end)
 
-test("events: gravity only drops for low gravity, and always resets", function()
-	local m = RoundMachine.new(Config)
-	local schedule = m:buildSchedule(1)
-	local low = nil
-	for _, spec in schedule do
-		if spec.Kind == "LowGravity" then low = spec end
-	end
-	assert(low ~= nil, "the production schedule needs a low-gravity window")
-	local fast = RoundMachine.new(Config)
-	fast:addPlayer(-1, "Solo")
-	fast:step(0)
-	fast:step(Config.FastTiming.Intermission + 1)
-	-- The machine reports the kind; the adapter is what moves workspace gravity.
-	for _, effect in fast:step(fast.phaseStartedAt + 200) do
-		if effect.kind == "event" then
-			assert(effect.active == false, "a finished round must never leave an event open")
+test("chaos: one window opens and closes once per round, with no overlap", function()
+	local m = startRound(scripted(2), Config.Timing)
+	local opened, closed, openedAt, closedAt = transitions(m)
+	eq(#opened, 1); eq(#closed, 1)
+	eq(opened[1], "BouncyWorld"); eq(closed[1], "BouncyWorld")
+	-- Opens at 105 s and closes at 140 s, measured from the round start.
+	assert(math.abs(openedAt - 105) < 0.11, "opened at " .. tostring(openedAt))
+	assert(math.abs(closedAt - 140) < 0.11, "closed at " .. tostring(closedAt))
+	assert(math.abs((closedAt - openedAt) - 35) < 0.11, "duration must be 35 seconds")
+end)
+
+test("chaos: a warning fires before the window, then the window itself", function()
+	local m = startRound(scripted(3), Config.Timing)
+	local base = m.phaseStartedAt
+	m:step(base + 98.9)
+	local warnings = m.eventWarning
+	eq(warnings, "")
+	m:step(base + 99.01)
+	eq(m.eventWarning, "SlipperyChaos")
+	eq(m.eventActive, false)
+	m:step(base + 105.01)
+	eq(m.eventActive, true); eq(m.eventKind, "SlipperyChaos")
+	eq(m.eventWarning, "")
+end)
+
+test("chaos: the event cannot be reopened after it closes", function()
+	local m = startRound(scripted(1), Config.Timing)
+	local base = m.phaseStartedAt
+	m:step(base + 141)
+	eq(m.eventActive, false)
+	for i = 0, 50 do
+		for _, effect in m:step(base + 141 + i * 0.5) do
+			assert(not (effect.kind == "event" and effect.active), "a finished event must not reopen")
 		end
 	end
+	eq(m.eventFinished, true)
+end)
+
+test("chaos: a new round draws again and never inherits the previous kind", function()
+	local config = table.clone(Config)
+	config.Timing = Config.FastTiming
+	local draws = { 4, 1 }
+	local index = 0
+	local m = RoundMachine.new(config, function() index += 1; return draws[index] end)
+	m:addPlayer(-1, "Solo")
+	m:step(100); m:step(104)
+	eq(m.chaosKind, "BrainCellRush")
+	m:step(154); eq(m.phase, "Results")
+	m:step(159); eq(m.phase, "Intermission")
+	m:step(163); eq(m.phase, "Playing")
+	eq(m.chaosKind, "LowGravity")
+	eq(m.roundId, 2)
+end)
+
+test("chaos: a configured window that outruns its round is rejected", function()
+	local c = table.clone(Config); c.Timing = table.clone(Config.FastTiming); c.Timing.ChaosDuration = 60
+	throws(function() RoundMachine.new(c) end)
+end)
+
+test("chaos: an unknown or duplicated kind in the pool is rejected", function()
+	local c = table.clone(Config); c.Chaos = { Kinds = { "Slippery" } }
+	throws(function() RoundMachine.new(c) end)
+	c.Chaos = { Kinds = { "LowGravity", "LowGravity" } }
+	throws(function() RoundMachine.new(c) end)
+	c.Chaos = { Kinds = {} }
+	throws(function() RoundMachine.new(c) end)
+end)
+
+test("chaos rules: a round with no event applies the neutral set", function()
+	local mods = ChaosRules.modifiers("", Config)
+	eq(mods.Gravity, Config.NormalGravity); eq(mods.Friction, nil); eq(mods.JumpScale, 1); eq(mods.RareScale, 1); eq(mods.Respawn, nil)
+end)
+
+test("chaos rules: each kind changes only its own property", function()
+	local low = ChaosRules.modifiers("LowGravity", Config)
+	eq(low.Gravity, Config.Chaos.LowGravity); eq(low.JumpScale, 1); eq(low.Friction, nil); eq(low.RareScale, 1)
+	local bouncy = ChaosRules.modifiers("BouncyWorld", Config)
+	eq(bouncy.Gravity, Config.NormalGravity); eq(bouncy.JumpScale, Config.Chaos.BouncyJumpScale); eq(bouncy.Friction, nil)
+	assert(bouncy.JumpScale > 1, "Bouncy World must raise the jump")
+	local slip = ChaosRules.modifiers("SlipperyChaos", Config)
+	eq(slip.Friction, Config.SlipperyFriction); eq(slip.Gravity, Config.NormalGravity); eq(slip.JumpScale, 1)
+	local rush = ChaosRules.modifiers("BrainCellRush", Config)
+	eq(rush.RareScale, Config.Chaos.RushRarityScale); eq(rush.Respawn, Config.RushRespawn); eq(rush.Gravity, Config.NormalGravity)
+	assert(rush.RareScale > 1, "Brain Cell Rush must favour rare cells")
+end)
+
+test("chaos rules: an unknown kind is an error, never a silent neutral", function()
+	throws(function() ChaosRules.modifiers("MovingPlatforms", Config) end)
+	assert(not ChaosRules.isKnown("MovingPlatforms") and not ChaosRules.isKnown("VanishingPaths") and not ChaosRules.isKnown("Wildcard"), "retired kinds must not be known")
+end)
+
+test("chaos: Brain Cell Rush raises the odds of Rare and Prismatic cells", function()
+	-- Deterministic linear congruential stream, so the comparison is reproducible.
+	local function share(scale)
+		local seed = 12345
+		local ledger = PickupLedger.new(positions, Config.Kinds, 4.5, 5, function()
+			seed = (seed * 1103515245 + 12345) % 2147483648
+			return seed / 2147483648
+		end)
+		ledger:setRareScale(scale)
+		local valuable, total = 0, 0
+		for _ = 1, 4000 do
+			local kind = ledger.kinds[ledger:rollKind()]
+			total += 1
+			if kind.Value > 1 then valuable += 1 end
+		end
+		return valuable / total
+	end
+	local normal, rush = share(1), share(Config.Chaos.RushRarityScale)
+	assert(rush > normal + 0.15, "rush must clearly raise rare odds: normal " .. normal .. " rush " .. rush)
+	assert(rush < 0.75, "rush must stay a rush, not a guarantee: " .. rush)
+	throws(function() PickupLedger.new(positions, Config.Kinds, 4.5, 5, first):setRareScale(-1) end)
+end)
+
+test("chaos: a cell's species is unaffected by the rarity boost", function()
+	local ledger = PickupLedger.new(positions, Config.Kinds, 4.5, 5, function() return 0.999 end)
+	ledger:setRareScale(Config.Chaos.RushRarityScale)
+	local kind = ledger.kinds[ledger:rollKind()]
+	assert(kind.Value == 10 or kind.Value == 5 or kind.Value == 1, "rolled value must still be a server denomination")
+end)
+
+-- ---- QuickTest timing (explicit, so a regression cannot slip through) -----
+local AudioRules = require("../src/shared/AudioRules")
+
+test("timing: QuickTest fits a full 35 s event inside a 50 s round", function()
+	local fast = Config.FastTiming
+	eq(fast.Round, 50); eq(fast.ChaosStart, 8); eq(fast.ChaosDuration, 35); eq(fast.Warning, 3)
+	local m = startRound(scripted(1), fast)
+	local spec = m.schedule[1]
+	eq(spec.StartsAt, 8); eq(spec.EndsAt, 43); eq(spec.WarningAt, 5)
+	assert(spec.EndsAt < fast.Round, "the event must close before the round ends")
+end)
+
+test("timing: normal play runs the 35 s event at 105 s with a 6 s warning", function()
+	local normal = Config.Timing
+	eq(normal.Round, 180); eq(normal.ChaosStart, 105); eq(normal.ChaosDuration, 35); eq(normal.Warning, 6)
+	local m = startRound(scripted(1), normal)
+	local spec = m.schedule[1]
+	eq(spec.StartsAt, 105); eq(spec.EndsAt, 140); eq(spec.WarningAt, 99)
+end)
+
+-- ---- dynamic audio rules ---------------------------------------------------
+test("audio: the track follows phase and the Chaos flag", function()
+	eq(AudioRules.trackFor({ phase = "Waiting" }), "Lobby")
+	eq(AudioRules.trackFor({ phase = "Intermission" }), "Lobby")
+	eq(AudioRules.trackFor({ phase = "Results", eventActive = true }), "Lobby")
+	eq(AudioRules.trackFor({ phase = "Playing", eventActive = false }), "Arena")
+	eq(AudioRules.trackFor({ phase = "Playing" }), "Arena")
+	eq(AudioRules.trackFor({ phase = "Playing", eventActive = true }), "Chaos")
+end)
+
+test("audio: a crossfade step takes exactly the configured time and never overshoots", function()
+	local v, steps = 0, 0
+	while v < .35 do
+		v = AudioRules.stepVolume(v, .35, 1 / 60, .35, 1.5)
+		steps += 1
+		assert(steps < 10000, "fade never finished")
+	end
+	eq(v, .35)
+	assert(math.abs(steps / 60 - 1.5) < 1 / 60 + 1e-9, "fade lasted " .. tostring(steps / 60) .. " s")
+	eq(AudioRules.stepVolume(.1, .35, 100, .35, 1.5), .35)   -- large dt clamps to target
+	eq(AudioRules.stepVolume(.35, 0, 100, .35, 1.5), 0)      -- and down to silence
+	eq(AudioRules.stepVolume(.2, .2, 1, .35, 1.5), .2)       -- already there: no change
+	throws(function() AudioRules.stepVolume(0, .35, 1, .35, 0) end)
+end)
+
+test("audio: IDs must be empty (silent) or rbxassetid digits; typos are rejected", function()
+	assert(AudioRules.validId(""))
+	assert(AudioRules.validId("rbxassetid://123456"))
+	assert(not AudioRules.validId("rbxasset://sounds/x.wav"))
+	assert(not AudioRules.validId("rbxassetid://"))
+	assert(not AudioRules.validId("12345"))
+end)
+
+test("audio: unknown cue names fail loudly; configured-empty cues are silent", function()
+	local cues = { ChaosStart = "", Steal = "rbxassetid://42" }
+	throws(function() AudioRules.cueId({ Bad = "not-an-id" }, "Bad") end)
+	eq(AudioRules.cueId(cues, "ChaosStart"), nil)
+	eq(AudioRules.cueId(cues, "Steal"), "rbxassetid://42")
+	throws(function() AudioRules.cueId(cues, "ChaosStrat") end)
+end)
+
+test("audio: shipped configuration invents no asset IDs and every slot is documented", function()
+	local A = Config.Audio
+	assert(A.CrossfadeSeconds > 0 and A.MusicVolume > 0 and A.MusicVolume <= 1, "volumes")
+	for name, id in A.Tracks do
+		assert(AudioRules.validId(id), "track " .. name)
+		eq(id, "")
+	end
+	for name, id in A.Cues do
+		assert(AudioRules.validId(id), "cue " .. name)
+		eq(id, "")
+	end
+	for _, name in {"Lobby", "Arena", "Chaos"} do assert(A.Tracks[name] ~= nil, "missing track " .. name) end
 end)
 
 print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))
