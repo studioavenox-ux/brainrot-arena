@@ -1,6 +1,10 @@
 # The unavoidable Studio acceptance pass
 
-**Not yet performed:** this development environment is Linux without Roblox Studio or a Roblox control connector. The included Luau logic, adapter contracts, generated map and place structure were checked locally; only Roblox Studio can verify real character physics, rendering, audio and client/server replication.
+**Not yet performed:** this development environment is Linux without Roblox Studio or a Roblox control connector.
+The full Phase 5 matrix (20 rows: stealing, protection, stages, all five events, persistence,
+UI scaling) lives in [TEST_REPORT_PHASE5.md](TEST_REPORT_PHASE5.md). Automated checks are
+kept strictly separate from that matrix: 248 assertions pass, and none of them is a
+substitute for a Studio run. The included Luau logic, adapter contracts, generated map and place structure were checked locally; only Roblox Studio can verify real character physics, rendering, audio and client/server replication.
 
 ## Fastest beginner test
 
@@ -14,6 +18,8 @@
 | Active round | **180 seconds** | 30 seconds |
 | Low-gravity start | 60 seconds after round starts | 8 seconds after round starts |
 | Low-gravity duration | 25 seconds | 10 seconds |
+| Wildcard start / duration | 108 s / 18 s | 22 s / 6 s |
+| Stage boundaries | Collect 0 / Compete 45 / Chaos 105 / Final 150 | 0 / 8 / 18 / 24 |
 | Results | 9 seconds | 5 seconds |
 
 QuickTest is gated by `RunService:IsStudio()`. Even if that place is accidentally published, the server uses standard timings outside Studio. Use the standard place for normal play and any publishing.
@@ -61,8 +67,11 @@ Routing is server-authoritative (`src/server/core/ArenaRoute.luau` + the mover i
 - [ ] Low gravity raises a centre banner with a live countdown; it clears when the
       event ends. A pickup by another player raises a toast.
 - [ ] Device Emulator, small phone portrait **and** landscape: nothing overlaps the
-      clock, the action bar clears the thumbstick/jump zones, the leaderboard starts
-      collapsed behind **RANKS**, and every card fits the screen.
+      clock, the coin counter, the **SPECIMENS** chip or the **RANKS** chip (they form
+      one right-hand stack; the toast band starts below all of them on portrait and
+      in the gap between the cell chip and the stack on landscape), the action bar
+      clears the thumbstick/jump zones, the leaderboard starts collapsed behind
+      **RANKS**, and every card fits the screen.
 - [ ] iPad/tablet and 1280×720 desktop: brand lockup and rarity key appear, action bar
       hugs the bottom edge.
 

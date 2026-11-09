@@ -12,6 +12,8 @@ local RoundMachine = require(script.Parent.core.RoundMachine)
 local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
 local ArenaRoute = require(script.Parent.core.ArenaRoute)
+local EventDirector = require(script.Parent.EventDirector)
+local Persistence = require(script.Parent.Persistence)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
@@ -36,6 +38,13 @@ local routeStep = 0
 -- Appearance only. Idempotent with the lighting rig baked into the place file.
 ArtService.apply()
 local world = WorldService.new()
+-- Animates the baked event geometry by name. Owns gravity/friction *inside* an
+-- event window only; the round machine owns when a window opens.
+local director = EventDirector.new(workspace:FindFirstChild("BrainrotWorld") :: Model, Config.NormalGravity,
+	Config.LowGravity, .7, Config.SlipperyFriction)
+-- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
+-- does not: it is created and destroyed by the round.
+local profiles = Persistence.new({})
 Workspace.Gravity = Config.NormalGravity
 Workspace.FallenPartsDestroyHeight = -160
 Players.RespawnTime = 2
@@ -57,7 +66,9 @@ local pickupFolder = Instance.new("Folder")
 pickupFolder.Name = "BrainrotPickups"
 pickupFolder.Parent = Workspace
 local pickupParts: { [number]: Part } = {}
-type Record = { spawnIndex: number, connection: RBXScriptConnection?, requests: { [string]: number } }
+type Record = {
+	spawnIndex: number, connection: RBXScriptConnection?, requests: { [string]: number },
+}
 local records: { [number]: Record } = {}
 local nextSpawn = 0
 local dirty = true
@@ -89,6 +100,9 @@ local function snapshot()
 	return {
 		phase = state.phase, roundId = state.roundId, phaseEndsAt = state.phaseEndsAt,
 		eventActive = state.eventActive, eventEndsAt = state.eventEndsAt,
+		eventKind = state.eventKind, eventWarning = state.eventWarning,
+		eventWarningEndsAt = state.eventWarningEndsAt, events = state.events,
+		stage = state.stage, stageIndex = state.stageIndex, stageEndsAt = state.stageEndsAt,
 		rows = state.rows, results = state.results,
 		fastMode = fast, version = Config.Version,
 	}
@@ -276,6 +290,54 @@ local function spawnPickups()
 	end
 end
 
+-- --------------------------------------------------------------------------- #
+-- Stealing. The client sends ONE word and no arguments. Everything that decides
+-- the outcome — who is nearest, how far away they are, whether this thief is on
+-- cooldown, whether the victim was just hit — is resolved here, from server state.
+-- --------------------------------------------------------------------------- #
+local STEAL_MESSAGES = {
+	ok = "Steal",
+	["empty"] = "Nothing carried",
+	["out-of-range"] = "No rival in reach",
+	["cooldown"] = "Steal recharging",
+	["protected"] = "Spawn protection",
+	["immune"] = "They just got hit",
+	["repeat"] = "Same target too soon",
+	["self"] = "That is you",
+	["inactive-round"] = "Round not live",
+	["missing-player"] = "No rival in reach",
+	["invalid-player"] = "No rival in reach",
+}
+
+local function resolveSteal(thief: Player, now: number): (string, number, Player?)
+	local thiefCharacter, thiefHumanoid, thiefRoot = characterReady(thief)
+	if not thiefCharacter or not thiefHumanoid or not thiefRoot then
+		return "invalid-player", 0, nil
+	end
+	if not machine:isParticipating(thief.UserId) then
+		return "inactive-round", 0, nil
+	end
+	-- Short range, measured on the server from the same parts the engine moves.
+	local bestDistance: number = math.huge
+	local bestVictim: Player? = nil
+	for _, other in Players:GetPlayers() do
+		if other ~= thief then
+			local _, otherHumanoid, otherRoot = characterReady(other)
+			if otherRoot and otherHumanoid and machine:isParticipating(other.UserId) then
+				local distance = (otherRoot.Position - thiefRoot.Position).Magnitude
+				if distance < bestDistance then
+					bestDistance, bestVictim = distance, other
+				end
+			end
+		end
+	end
+	if not bestVictim then
+		return "out-of-range", 0, nil
+	end
+	local outcome, value = machine:trySteal(thief.UserId, bestVictim.UserId, bestDistance, now, machine.roundId)
+	return outcome, value, bestVictim
+end
+
 local function setGravity(active: boolean)
 	Workspace.Gravity = if active then Config.LowGravity else Config.NormalGravity
 	world:setLowGravity(active)
@@ -286,7 +348,15 @@ local function checkInvariants()
 		return
 	end
 	assert(ledger.running == (machine.phase == "Playing"), "Pickup lifecycle diverged")
-	assert(math.abs(Workspace.Gravity - (if machine.eventActive then Config.LowGravity else Config.NormalGravity)) < 0.01, "Gravity failed to reset")
+	-- Gravity is normal unless the *low gravity* window is the live one. Other
+	-- wildcards leave it alone, so the assertion names the only cause.
+	local low = machine.eventActive and machine.eventKind == "LowGravity"
+	assert(math.abs(Workspace.Gravity - (if low then Config.LowGravity else Config.NormalGravity)) < 0.01, "Gravity failed to reset")
+	-- Nothing can be negative, and carried values always sum to the round score.
+	for _, player in machine.players do
+		assert(player.carriedValue >= 0, "Negative carried value")
+		assert(player.score >= player.carriedValue, "Score below the carried stack")
+	end
 	local previous = math.huge
 	for _, row in machine:rows() do
 		assert(row.score >= 0 and row.score % 1 == 0 and row.score <= previous, "Invalid score ordering")
@@ -304,9 +374,42 @@ local function handleEffects(effects, now: number)
 	for _, effect in effects do
 		dirty = true
 		if effect.kind == "event" then
-			setGravity(effect.active == true)
-			print("[Brainrot] Low gravity " .. (if effect.active then "ON" else "OFF"))
+			if effect.active then
+				local duration = math.max(0, (machine.eventEndsAt or now) - now)
+				director:start(effect.event or "", now, duration)
+				world:setLowGravity(effect.event == "LowGravity")
+				print(string.format("[Brainrot] event ON • %s", tostring(effect.event)))
+			else
+				director:stop()
+				world:setLowGravity(false)
+				print("[Brainrot] event OFF")
+			end
+		elseif effect.kind == "warning" then
+			print(string.format("[Brainrot] event warning • %s in %.0fs", tostring(effect.event),
+				math.max(0, (effect.at or now) - now)))
+		elseif effect.kind == "stage" then
+			print(string.format("[Brainrot] stage • %s (banked all carried cells)", tostring(effect.stage)))
 		elseif effect.kind == "phase" then
+			if machine.phase == "Results" and machine.lastResults then
+				-- Pay the round into each profile once, from the machine's own result.
+				local winners = {}
+				for _, row in machine.lastResults.winners do
+					winners[row.id] = true
+				end
+				for _, row in machine:rows() do
+					local profile = profiles:profile(row.id)
+					if profile then
+						local paid = (machine.lastResults.rewards[tostring(row.id)] or 0)
+						Persistence.applyRound(profile, {
+							score = row.score, steals = row.steals, lost = row.lost,
+							pickups = row.pickups, coins = paid, won = winners[row.id] == true,
+							collection = row.collection,
+						})
+						-- The machine owns live coins; keep them in step with the profile.
+						profiles:save(row.id)
+					end
+				end
+			end
 			if machine.phase == "Playing" then
 				ledger:beginRound(machine.roundId)
 				spawnPickups()
@@ -320,7 +423,8 @@ local function handleEffects(effects, now: number)
 				ledger:clear()
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
-				setGravity(false)
+				director:reset()
+				world:setLowGravity(false)
 				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
 						routePlayer(player, now, true)
@@ -346,7 +450,10 @@ local function characterAdded(player: Player, character: Model)
 		-- Characters spawn in the lobby; the router decides where they belong and
 		-- keeps asserting it. This covers respawns mid-round and joins mid-round.
 		route:remove(player.UserId)
-		routePlayer(player, Workspace:GetServerTimeNow(), true)
+		local now = Workspace:GetServerTimeNow()
+		-- Spawn protection is real: the machine's clock, not a client's.
+		machine:spawnProtect(player.UserId, now)
+		routePlayer(player, now, true)
 		applyHalo(player)
 	end)
 end
@@ -357,6 +464,17 @@ local function playerAdded(player: Player)
 	end
 	local accepted = machine:addPlayer(player.UserId, player.DisplayName)
 	assert(accepted, "Could not register Roblox player")
+	-- Seed the session from the saved profile as soon as it is available. The
+	-- machine's numbers stay authoritative for the round; the profile is what
+	-- survives it.
+	profiles:load(player.UserId, function(profile)
+		if machine.players[player.UserId] then
+			machine:seedProfile(player.UserId, profile.Coins, profile.Halo)
+			applyHalo(player)
+			syncStats()
+			dirty = true
+		end
+	end)
 	nextSpawn += 1
 	local record: Record = { spawnIndex = nextSpawn, connection = nil, requests = {} }
 	records[player.UserId] = record
@@ -384,6 +502,18 @@ Players.PlayerRemoving:Connect(function(player)
 	if record and record.connection then
 		record.connection:Disconnect()
 	end
+	-- Persist what this session earned before the machine forgets the player.
+	local data = machine.players[player.UserId]
+	local profile = profiles:profile(player.UserId)
+	if data and profile then
+		local coins, halo = machine:cosmetics(player.UserId)
+		profile.Coins = math.max(profile.Coins, coins)
+		profile.Halo = halo
+		for species, amount in data.collection do
+			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
+		end
+		profiles:save(player.UserId)
+	end
 	records[player.UserId] = nil
 	movement:remove(player.UserId)
 	route:remove(player.UserId)
@@ -397,7 +527,7 @@ end
 requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: any)
 	-- Whitelist small verbs, reject extra arguments, and rate-limit per player/action.
 	-- There is intentionally NO score, pickup ID, position, price, or coin amount API.
-	if typeof(action) ~= "string" or (action ~= "Snapshot" and action ~= "Halo") or select("#", ...) ~= 0 then
+	if typeof(action) ~= "string" or (action ~= "Snapshot" and action ~= "Halo" and action ~= "Steal") or select("#", ...) ~= 0 then
 		return
 	end
 	local record = records[player.UserId]
@@ -410,9 +540,42 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 		return
 	end
 	record.requests[action] = now
+	if action == "Steal" then
+		-- Mirrors the server's own 8-second rule; the machine enforces it again.
+		if now - (record.requests.StealSent or -math.huge) < Config.Steal.Cooldown then
+			stateRemote:FireClient(player, snapshot(), STEAL_MESSAGES["cooldown"])
+			return
+		end
+		record.requests.StealSent = now
+		local outcome, value, victim = resolveSteal(player, now)
+		print(string.format("[Brainrot] steal %s • %s -> %s (+%d)", outcome, player.Name,
+			if victim then victim.Name else "nobody", value))
+		-- A steal moves score between two players: refresh leaderstats immediately
+		-- so the board never shows the old owner for even one frame.
+		if outcome == "ok" then
+			syncStats()
+		end
+		if outcome == "ok" and victim then
+			-- The victim sees exactly what they lost, from the server's own answer.
+			stateRemote:FireClient(victim, snapshot(),
+				string.format("STEAL: %s took %d from you", player.DisplayName, value))
+			dirty = true
+		end
+		stateRemote:FireClient(player, snapshot(), STEAL_MESSAGES[outcome] or "Steal refused")
+		return
+	end
 	if action == "Halo" then
 		local ok, message = machine:haloAction(player.UserId)
 		if ok then
+			-- Coins are spent inside the round, then written to the profile: one
+			-- transition, one save. A client never sends the price.
+			local coins, halo = machine:cosmetics(player.UserId)
+			local profile = profiles:profile(player.UserId)
+			if profile then
+				profile.Coins = coins
+				profile.Halo = halo
+				profiles:save(player.UserId)
+			end
 			applyHalo(player)
 			syncStats()
 			dirty = true
@@ -437,7 +600,14 @@ RunService.Heartbeat:Connect(function(dt: number)
 		for _, id in ledger:step(now) do
 			updatePickup(id)
 		end
+		ledger.respawn = if machine.eventKind == "CollectibleRush" then Config.RushRespawn
+			elseif machine.stage == "Final" then Config.FinalRespawn
+			else Config.PickupRespawn
+	else
+		ledger.respawn = Config.PickupRespawn
 	end
+	-- The director animates rafts and blinking paths between event edges.
+	director:step(now, machine.phaseStartedAt > 0 and (now - machine.phaseStartedAt) or 0)
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil

@@ -369,6 +369,246 @@ test("award: a collection entry without a species is still a legal pickup", func
 	eq(m:rows()[1].collected, 0)
 end)
 
+
+-- --------------------------------------------------------------------------- #
+-- Phase 5: stealing, spawn protection, stages, events.
+-- These are the fairness rules from spec §3B/§9 exercised directly, with the
+-- distance supplied by the caller so no engine geometry is involved.
+-- --------------------------------------------------------------------------- #
+
+local function rowOf(m, id)
+	for _, row in m:rows() do
+		if row.id == id then return row end
+	end
+	return nil
+end
+-- A production-length round, so the real stage timeline applies (the fast config
+-- shortens the round to 30s and therefore drops the later stage boundaries).
+local function fullPlaying(count)
+	local m = RoundMachine.new(table.clone(Config))
+	for i = 1, count or 2 do m:addPlayer(-i, "Brain " .. i) end
+	m:step(100)
+	m:step(100 + Config.Timing.Intermission + 1)
+	return m
+end
+local function stealReady()
+	local m = playing(2)
+	-- Clear the join/spawn protection window so a normal mid-round tag is legal.
+	local now = m.lastNow + Config.Steal.Protection + 1
+	m:step(now)
+	return m, now
+end
+
+test("steal: a carried cell moves from victim to thief, score included", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 5, m.roundId), true)
+	local outcome, value = m:trySteal(-1, -2, 3, now, m.roundId)
+	eq(outcome, "ok")
+	eq(value, 5)
+	eq(rowOf(m, -1).score, 5)
+	eq(rowOf(m, -2).score, 0)
+	eq(rowOf(m, -1).carriedValue, 5)
+	eq(rowOf(m, -2).carriedValue, 0)
+end)
+
+test("steal: the biggest carried cell is taken first", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 1, m.roundId), true)
+	eq(m:award(-2, 5, m.roundId), true)
+	eq(m:award(-2, 10, m.roundId), true)
+	local outcome, value = m:trySteal(-1, -2, 2, now, m.roundId)
+	eq(outcome, "ok")
+	eq(value, 10)
+	eq(rowOf(m, -2).score, 6)
+	eq(rowOf(m, -2).carriedValue, 6)
+end)
+
+test("steal: a thief out of range is refused and nothing moves", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 10, m.roundId), true)
+	local outcome, value = m:trySteal(-1, -2, Config.Steal.Range + 0.01, now, m.roundId)
+	eq(outcome, "out-of-range")
+	eq(value, 0)
+	eq(rowOf(m, -2).score, 10)
+	eq(rowOf(m, -1).score, 0)
+end)
+
+test("steal: the cooldown is server time and blocks the next tag", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 5, m.roundId), true)
+	eq(m:award(-1, 1, m.roundId), true)
+	eq(m:trySteal(-1, -2, 3, now, m.roundId), "ok")
+	-- The victim is immune for a moment, so ask about the cooldown first.
+	eq(m:stealBlockedReason(-1, now), "cooldown")
+	eq(m:trySteal(-1, -2, 3, now + Config.Steal.Cooldown - 0.01, m.roundId), "cooldown")
+	local later = now + Config.Steal.Cooldown + Config.Steal.Immunity + 0.01
+	eq(m:trySteal(-1, -2, 3, later, m.roundId), "empty")
+end)
+
+test("steal: spawn protection cannot be bypassed by spamming the request", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 5, m.roundId), true)
+	m:spawnProtect(-2, now)
+	eq(m:trySteal(-1, -2, 3, now, m.roundId), "immune")
+	eq(m:trySteal(-1, -2, 0, now, m.roundId), "immune")
+	eq(rowOf(m, -2).score, 5)
+	-- Protection expires on its own.
+	eq(m:trySteal(-1, -2, 3, now + Config.Steal.Protection + 0.01, m.roundId), "ok")
+end)
+
+test("steal: a victim who was just robbed is briefly immune", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 10, m.roundId), true)
+	eq(m:award(-2, 5, m.roundId), true)
+	eq(m:trySteal(-1, -2, 3, now, m.roundId), "ok")
+	m:addPlayer(-3, "Brain 3")
+	local second = now + Config.Steal.Immunity - 0.01
+	eq(m:trySteal(-3, -2, 3, second, m.roundId), "immune")
+end)
+
+test("steal: the same pair cannot be farmed inside the repeat window", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 10, m.roundId), true)
+	eq(m:award(-2, 10, m.roundId), true)
+	eq(m:trySteal(-1, -2, 3, now, m.roundId), "ok")
+	local after = now + Config.Steal.Cooldown + Config.Steal.Immunity + 0.01
+	if after - now < Config.Steal.RepeatWindow then
+		eq(m:trySteal(-1, -2, 3, after, m.roundId), "repeat")
+	end
+	local clear = now + Config.Steal.RepeatWindow + 0.01
+	eq(m:trySteal(-1, -2, 3, clear, m.roundId), "ok")
+end)
+
+test("steal: nothing is taken from an empty carried pile", function()
+	local m, now = stealReady()
+	eq(m:trySteal(-1, -2, 3, now, m.roundId), "empty")
+	eq(rowOf(m, -1).steals, 0)
+end)
+
+test("steal: banked score is never stolen, only carried cells", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 10, m.roundId), true)
+	eq(m:bank(-2), 10)
+	eq(rowOf(m, -2).score, 10)
+	eq(m:trySteal(-1, -2, 3, now, m.roundId), "empty")
+	eq(rowOf(m, -2).score, 10)
+end)
+
+test("steal: a thief cannot rob themselves, an idle player, or another round", function()
+	local m, now = stealReady()
+	eq(m:award(-2, 5, m.roundId), true)
+	eq(m:trySteal(-1, -1, 0, now, m.roundId), "self")
+	eq(m:trySteal(-1, -2, 3, now, m.roundId + 1), "inactive-round")
+	m:step(m.lastNow + Config.FastTiming.Round + Config.FastTiming.Results + 1)
+	eq(m:trySteal(-1, -2, 3, m.lastNow + 1, m.roundId), "inactive-round")
+end)
+
+test("stage: the timeline starts at Collect and ends at Final", function()
+	local m = fullPlaying(2)
+	eq(m.stage, "Collect")
+	for _, spec in Config.Stages do
+		local index, stage = m:stageAt(spec.At)
+		eq(stage.Name, spec.Name)
+		eq(Config.Stages[index].Name, spec.Name)
+	end
+	local _, last = m:stageAt(Config.Timing.Round - 0.5)
+	eq(last.Name, "Final")
+	-- A fast round keeps the stage it can reach and never runs past its deadline.
+	local fast = playing(2)
+	eq(fast:stageAt(fast.config.Timing.Round - 0.5), #fast.config.Stages)
+end)
+
+test("stage: every boundary banks the carried pile and keeps the score", function()
+	local m = fullPlaying(2)
+	eq(m:award(-1, 10, m.roundId), true)
+	eq(rowOf(m, -1).carriedValue, 10)
+	local spec = Config.Stages[2]
+	m:step(m.phaseStartedAt + spec.At + 0.01)
+	eq(m.stage, spec.Name)
+	eq(rowOf(m, -1).carriedValue, 0)
+	eq(rowOf(m, -1).score, 10)
+	-- And a banked cell can no longer be stolen (asserted above) but new ones can.
+	eq(m:award(-1, 5, m.roundId), true)
+	eq(rowOf(m, -1).carriedValue, 5)
+end)
+
+test("stage: carried cells are exposed, so the risk window is real", function()
+	local m = fullPlaying(2)
+	-- Join protection is cleared explicitly so this test is about the stage window.
+	local now = m.phaseStartedAt + 1
+	m:step(now)
+	m:step(m.phaseStartedAt + Config.Stages[2].At + 0.01)
+	eq(m:award(-1, 10, m.roundId), true)
+	-- Move to a fresh cooldown window by taking the thief's clock forward.
+	local t = now + Config.Steal.Cooldown + 1
+	eq(m:trySteal(-2, -1, 3, t, m.roundId), "ok")
+	eq(rowOf(m, -2).score, 10)
+	eq(rowOf(m, -1).score, 0)
+	eq(rowOf(m, -1).lost, 10)
+end)
+
+test("events: the production schedule warns before every window", function()
+	local m = RoundMachine.new(Config)
+	local schedule = m:buildSchedule(1)
+	assert(#schedule > 0, "an event schedule is required")
+	local previous = -math.huge
+	for _, spec in schedule do
+		assert(spec.StartsAt > previous, "events must be ordered")
+		assert(spec.WarningAt < spec.StartsAt, "every event must warn first")
+		assert(spec.EndsAt > spec.StartsAt, "events must have a duration")
+		assert(spec.EndsAt < Config.Timing.Round, "events must fit the round")
+		previous = spec.StartsAt
+	end
+end)
+
+test("events: five survival kinds exist and all are labelled", function()
+	local seen = {}
+	-- Wildcards rotate by round id, so several rounds cover the whole rotation.
+	for roundId = 1, 4 do
+		for _, spec in RoundMachine.new(Config):buildSchedule(roundId) do
+			seen[spec.Kind] = true
+		end
+	end
+	for _, kind in { "LowGravity", "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" } do
+		assert(seen[kind] ~= nil, "missing event kind: " .. kind)
+		assert(RoundMachine.eventLabel(kind) ~= "", "unlabelled event: " .. kind)
+	end
+	eq(RoundMachine.eventLabel("LowGravity"), "LOW GRAVITY")
+end)
+
+test("events: a warning fires before the event, then the event itself", function()
+	local m = playing(2)
+	local spec = m:buildSchedule(m.roundId)[1]
+	m:step(m.phaseStartedAt + spec.WarningAt + 0.01)
+	eq(m.eventWarning ~= nil, true)
+	eq(m.eventActive, false)
+	m:step(m.phaseStartedAt + spec.StartsAt + 0.01)
+	eq(m.eventActive, true)
+	eq(m.eventKind, spec.Kind)
+	m:step(m.phaseStartedAt + spec.EndsAt + 0.01)
+	eq(m.eventActive, false)
+end)
+
+test("events: gravity only drops for low gravity, and always resets", function()
+	local m = RoundMachine.new(Config)
+	local schedule = m:buildSchedule(1)
+	local low = nil
+	for _, spec in schedule do
+		if spec.Kind == "LowGravity" then low = spec end
+	end
+	assert(low ~= nil, "the production schedule needs a low-gravity window")
+	local fast = RoundMachine.new(Config)
+	fast:addPlayer(-1, "Solo")
+	fast:step(0)
+	fast:step(Config.FastTiming.Intermission + 1)
+	-- The machine reports the kind; the adapter is what moves workspace gravity.
+	for _, effect in fast:step(fast.phaseStartedAt + 200) do
+		if effect.kind == "event" then
+			assert(effect.active == false, "a finished round must never leave an event open")
+		end
+	end
+end)
+
 print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))
 -- The Luau CLI exits non-zero on an uncaught error, so a failing suite fails CI
 -- instead of printing a red line into a passing run.

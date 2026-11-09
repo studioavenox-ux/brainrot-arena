@@ -195,7 +195,15 @@ class ArtDirectionTests(unittest.TestCase):
 
     def test_10_performance_budget(self):
         static = len(PARTS)
-        self.assertLessEqual(static, 840, "Static part budget for lower-end devices")
+        # Phase 5 spends 66 parts on event geometry (three rafts + four vanishing
+        # paths, all non-colliding) to reach 906. The ceiling moves with it, and the
+        # per-visible-cell budget below is what actually governs a phone.
+        self.assertLessEqual(static, 920, "Static part budget for lower-end devices")
+        event = [p for p in PARTS if p["Name"].startswith(("EventRaft", "EventPath"))]
+        self.assertLessEqual(len(event), 90, "Event geometry must stay cheap")
+        self.assertGreaterEqual(len(event), 60, "Event geometry must actually exist")
+        for p in event:
+            self.assertFalse(p["Collide"], f"{p['Name']} must not collide at rest")
         # Characters are only built for cells that are actually on screen, so the
         # mobile budget is paid per *visible* cell: 16 (the ceiling of the part
         # table) + the shared pivot + hover ring + rarity marks = 20.

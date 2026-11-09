@@ -3,6 +3,10 @@
 -- The real server and client scripts execute against these services in adapter tests.
 local Mock = {}
 
+-- Vector3 / CFrame doubles. `V` is declared first so the CFrame operators defined
+-- below can build vectors before the constructor has been written.
+local V = {}
+
 local function signal()
 	local listeners = {}
 	local s = {}
@@ -20,7 +24,6 @@ local function signal()
 	return s
 end
 
-local V = {}
 local vmt = {}
 vmt.__index = function(self, key)
 	if key == "Magnitude" then return math.sqrt(self.X*self.X+self.Y*self.Y+self.Z*self.Z) end
@@ -44,6 +47,17 @@ cfmt = { __index = function(self,key)
 end }
 local function rotate(r,v)
 	return V.new(r[1]*v.X+r[2]*v.Y+r[3]*v.Z,r[4]*v.X+r[5]*v.Y+r[6]*v.Z,r[7]*v.X+r[8]*v.Y+r[9]*v.Z)
+end
+-- CFrame + Vector3 offsets the frame. The doubles carry a `_type` tag because the
+-- harness `typeof` reports "table" for both.
+cfmt.__add = function(a,b)
+	if b._type=="Vector3" then
+		return setmetatable({p=V.new(a.p.X+b.X,a.p.Y+b.Y,a.p.Z+b.Z),r=a.r,_type="CFrame"},cfmt)
+	end
+	if a._type=="Vector3" then
+		return setmetatable({p=V.new(b.p.X+a.X,b.p.Y+a.Y,b.p.Z+a.Z),r=b.r,_type="CFrame"},cfmt)
+	end
+	return a
 end
 cfmt.__mul = function(a,b)
 	if b._type=="Vector3" then return a.p+rotate(a.r,b) end
@@ -206,7 +220,12 @@ function Mock.new(sources, schema, options)
 	end
 	function methods:FindFirstChild(name,recursive)
 		for _,child in self._children do if child.Name==name then return child end end
-		if recursive then for _,child in self._children do local found=child:FindFirstChild(name,true); if found then return found end end end
+		if recursive then
+			for _,child in self._children do
+				local found=child:FindFirstChild(name,true)
+				if found then return found end
+			end
+		end
 		return nil
 	end
 	function methods:WaitForChild(name) local child=self:FindFirstChild(name); assert(child,"Mock missing child "..self.Name.."/"..name); return child end
@@ -275,10 +294,34 @@ function Mock.new(sources, schema, options)
 	env.Vector3,env.CFrame=V,CF
 	env.services={}
 	env.game=new("DataModel")
-	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui"} do
+	-- DataStoreService is a deterministic in-memory double: the same key always
+	-- returns what was last written, and `options.store` can preseed or inspect it.
+	env.stores={}
+	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui","DataStoreService"} do
 		local service=new(name); service.Name=name; service.Parent=env.game; env.services[name]=service
 	end
 	function methods:GetService(name) assert(env.services[name],"Unknown service "..name); return env.services[name] end
+	local dataStore=env.services.DataStoreService
+	rawset(dataStore,"GetDataStore",function(self,name)
+		env.stores[name]=env.stores[name] or {}
+		local store=env.stores[name]
+		local methods2={}
+		function methods2:GetAsync(key)
+			if options.storeFail then error("DataStore disabled in this test") end
+			return store[key]
+		end
+		function methods2:SetAsync(key,value)
+			if options.storeFail then error("DataStore disabled in this test") end
+			store[key]=value
+			return key
+		end
+		function methods2:UpdateAsync(key,fn)
+			store[key]=fn(store[key])
+			return store[key]
+		end
+		function methods2:RemoveAsync(key) store[key]=nil end
+		return methods2
+	end)
 	local camera=new("Camera"); camera.CFrame=CF.new(0,45,70); camera.Parent=env.services.Workspace
 	env.services.Workspace.CurrentCamera=camera
 	local starterScripts=new("StarterPlayerScripts"); starterScripts.Parent=env.services.StarterPlayer
@@ -308,6 +351,9 @@ function Mock.new(sources, schema, options)
 		game=env.game,workspace=env.services.Workspace,Instance={new=new},Enum=enum,
 		Vector3=V,Vector2=Vector2,CFrame=CF,Color3=Color,UDim=UDim,UDim2=UDim2,
 		TweenInfo={new=function(...) return {...} end},
+		PhysicalProperties={new=function(density,friction,elasticity,weight,strength)
+			return {_type="PhysicalProperties",Density=density,Friction=friction,Elasticity=elasticity,
+				FrictionWeight=weight,ElasticityWeight=strength} end},
 		Random={new=function() return {NextNumber=function() return options.roll or .1 end} end},
 		task={spawn=function(fn,...) fn(...) end,wait=function() return 0 end,delay=function(delay,fn) table.insert(env.delayed,{at=env.now+delay,fn=fn}) end},
 		typeof=function(value) return if type(value)=="table" then (value._type or (if value._class then "Instance" else "table")) else type(value) end,

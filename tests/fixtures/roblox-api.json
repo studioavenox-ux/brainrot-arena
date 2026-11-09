@@ -623,6 +623,10 @@
         "RunService": {
           "Type": "RunService",
           "CanLoad": false
+        },
+        "Gravity": {
+          "Type": "float",
+          "CanLoad": true
         }
       }
     },
@@ -3366,6 +3370,18 @@
           "CanLoad": true
         }
       }
+    },
+    "DataStoreService": {
+      "Superclass": "Instance",
+      "Properties": {}
+    },
+    "DataStore": {
+      "Superclass": "Instance",
+      "Properties": {}
+    },
+    "GlobalDataStore": {
+      "Superclass": "Instance",
+      "Properties": {}
     }
   },
   "Enums": {

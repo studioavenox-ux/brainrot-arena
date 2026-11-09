@@ -123,6 +123,10 @@ GLYPHS = {
     "inventory": {"Box": 20, "Kind": "grid", "Accent": "Cyan"},
     "settings": {"Box": 20, "Kind": "cog", "Accent": "Violet"},
     "rank": {"Box": 14, "Kind": "chevron", "Accent": "Violet"},
+    # a hooked hand: the steal action
+    "steal": {"Box": 20, "Kind": "hook", "Accent": "Danger"},
+    # a lightning bolt: the live event chip
+    "bolt": {"Box": 16, "Kind": "bolt", "Accent": "Cyan"},
 }
 
 # --------------------------------------------------------------------------- #
@@ -132,7 +136,7 @@ GLYPHS = {
 COPY = {
     "BrandTop": "BRAINROT",
     "BrandBottom": "A R E N A",
-    "BrandTag": "COLLECT • SURVIVE • REPEAT",
+    "BrandTag": "COLLECT • STEAL • SURVIVE • DOMINATE",
     "CellsLabel": "BRAIN CELLS",
     "CoinsLabel": "COINS",
     "TimerLabel": "ROUND",
@@ -162,6 +166,29 @@ COPY = {
     "WinBanner": "BIG BRAIN ENERGY",
     "NoScoreBanner": "THE BRAINS ARE WARMING UP",
     "TouchHint": "Drag to look • thumbstick to move",
+    # Phase 5: stealing and the staged round.
+    "StealBar": "STEAL",
+    "StealReady": "STEAL READY",
+    "StealCooling": "STEAL",
+    "StealEmpty": "NOTHING TO TAKE",
+    "StealProtected": "PROTECTED",
+    "StealOutOfRange": "TOO FAR",
+    "StealCooldown": "RECHARGING",
+    "StealRepeat": "SAME TARGET",
+    "StealImmune": "JUST HIT",
+    "StealWon": "STEAL",
+    "StealLost": "STOLEN",
+    "StealHint": "TAP STEAL BESIDE A RIVAL TO TAKE ONE CARRIED CELL",
+    "StageCollect": "COLLECT PHASE — BANK WHAT YOU CATCH",
+    "StageCompete": "COMPETE — CARRIED CELLS ARE AT RISK",
+    "StageChaos": "CHAOS — EVENTS ARE LIVE",
+    "StageFinal": "FINAL RUSH — EVERYTHING IS ON THE LINE",
+    "EventIncoming": "INCOMING",
+    "EventLive": "ACTIVE",
+    "CarriedLabel": "CARRIED",
+    "BankedLabel": "BANKED",
+    "ResultsSteals": "STEALS",
+    "ResultsLost": "LOST",
 }
 
 # --------------------------------------------------------------------------- #

@@ -56,11 +56,12 @@ return function(Mock, sources, schema)
 	test("server builds original world and safe lobby spawn",function()
 		local e,a=fixture()
 		local w=e.services.Workspace.BrainrotWorld
-		-- 824 runtime geometry parts after the Phase 2 architecture pass (588 after
-		-- Phase 1, 358 before the redesign). The exported
-		-- place adds 13 bake-only sign boards on top; the budget is asserted in
+		-- 906 runtime geometry parts: 824 from the Phase 2 architecture pass (588
+		-- after Phase 1, 358 before the redesign) plus 82 for the Phase 5 event
+		-- geometry (three rafts, four vanishing paths, all non-colliding). The
+		-- exported place adds 13 bake-only sign boards on top; the budgets live in
 		-- tools/verify_place.py and tools/artcheck.py.
-		eq(#w:GetChildren(),824)
+		eq(#w:GetChildren(),906)
 		eq(w.LobbySpawn:IsA("SpawnLocation"),true)
 		eq(a.RespawnLocation,w.LobbySpawn)
 		assert(a.Character.HumanoidRootPart.Position.Z>140)
@@ -71,7 +72,7 @@ return function(Mock, sources, schema)
 		local initial=World.new().root
 		e:addPlayer(-1,"Solo"); e:startServer()
 		eq(e.services.Workspace.BrainrotWorld,initial)
-		eq(#initial:GetChildren(),824)
+		eq(#initial:GetChildren(),906)
 	end)
 	test("server creates only three whitelisted remotes",function()
 		local e=fixture(); local r=e.services.ReplicatedStorage.BrainrotRemotes
@@ -220,10 +221,13 @@ return function(Mock, sources, schema)
 	test("mobile HUD stays inside safe bounds without overlapping top controls",function()
 		for _,size in {{320,568},{360,740},{390,800},{430,900},{844,354},{1280,720}} do
 			local e=fixture(nil,true); e:setViewport(size[1],size[2])
-			local names={"RoundClock","Ranks","Help","Coins"}
+			-- Specimens and the toast band are in the list because the phone RANKS chip
+			-- used to tuck into the coin chip, and the centred 432px toast used to run
+			-- straight over the specimen chip.
+			local names={"RoundClock","Ranks","Help","CoinCounter","Specimens","Toast"}
 			for i,name in names do
-				local a=rect(e:find(name)); assert(a.x>=0 and a.y>=0 and a.x+a.w<=size[1]+1 and a.y+a.h<=size[2]+1,"Out of bounds: "..name)
-				for j=i+1,#names do assert(not overlaps(a,rect(e:find(names[j]))),"Overlap at "..size[1]..": "..name.." / "..names[j]) end
+				local a=rect(e:find(name)); assert(a.x>=0 and a.y>=0 and a.x+a.w<=size[1]+1 and a.y+a.h<=size[2]+1,"Out of bounds: "..name.." at "..size[1].."x"..size[2].." -> "..a.x..","..a.y.." "..a.w.."x"..a.h)
+				for j=i+1,#names do assert(not overlaps(a,rect(e:find(names[j]))),"Overlap at "..size[1].."x"..size[2]..": "..name.."("..a.x..","..a.y.." "..a.w.."x"..a.h..") / "..names[j].."("..rect(e:find(names[j])).x..","..rect(e:find(names[j])).y.." "..rect(e:find(names[j])).w.."x"..rect(e:find(names[j])).h..")") end
 			end
 			-- Bottom action bar must clear the thumbstick / jump zones.
 			local bar=rect(e:find("ActionBar"))
@@ -240,7 +244,7 @@ return function(Mock, sources, schema)
 		assert(string.find(e:find("Card").Body.Text,"0 coins",1,true))
 		e:find("Action").Activated:Fire()
 		eq(a.leaderstats.Coins.Value,0); eq(a.Character:FindFirstChild("PulseHalo"),nil)
-		eq(e:find("Message").Text,"Not enough session coins")
+		eq(e:find("Message").Text,"Not enough coins — collect cells to earn them")
 		-- Gear now opens the specimen log (its own screen, six live 3D cards).
 		e:find("Close").Activated:Fire()
 		e:find("Inventory").Activated:Fire(); eq(e:find("Collection").Visible,true)
@@ -633,6 +637,227 @@ return function(Mock, sources, schema)
 		local e,a,b=fixture(); play(e); e:removePlayer(a); e:step(.5)
 		eq(zoneOf(b),"arena")
 		eq(#e:lastState().rows,1)
+	end)
+
+
+	-- ------------------------------------------------------------------------ #
+	-- Event director (spec §3C): the baked geometry must actually move, and must
+	-- always come back. These run against the real world builder, not a stub.
+	-- ------------------------------------------------------------------------ #
+	local function directorFixture()
+		-- One Mock per fixture: a module's `workspace` is *that* mock's Workspace, so
+		-- the world and the director must be imported from the same environment.
+		local e=Mock.new(sources,schema,{fast=true})
+		local EventDirector=e:import("src/server/EventDirector.luau")
+		local World=e:import("src/server/WorldService.luau")
+		local Config=e:import("src/shared/Config.luau")
+		local root=World.new().root
+		-- The DataModel is the Model's own root object in this engine mock.
+		e.services.Workspace.Gravity=Config.NormalGravity
+		local director=EventDirector.new(root,Config.NormalGravity,Config.LowGravity,.7,Config.SlipperyFriction)
+		return e,root,director,Config
+	end
+	local function find(root,name) return root:FindFirstChild(name,true) end
+	local function snapshotRafts(root)
+		local poses={}
+		for _,suffix in {"A","B","C"} do
+			local deck=find(root,"EventRaft_"..suffix.."_Deck")
+			poses[suffix]=deck.CFrame.Position
+		end
+		return poses
+	end
+
+	test("director: finds every baked event part in the real world",function()
+		local e,root,director=directorFixture()
+		local rafts,spans=director:counts()
+		eq(rafts,3)
+		eq(spans,12)
+		-- and the rest poses were captured from the geometry, not invented
+		for _,suffix in {"A","B","C"} do
+			assert(director.rest.raftPose[suffix]~=nil,"no rest pose for raft "..suffix)
+		end
+	end)
+	test("director: moving platforms actually orbit, then park exactly",function()
+		local e,root,director=directorFixture()
+		local parked=snapshotRafts(root)
+		director:start("MovingPlatforms",10,18)
+		director:step(15,5)
+		local moved=snapshotRafts(root)
+		local travelled=0
+		for _,suffix in {"A","B","C"} do
+			travelled+= (moved[suffix]-parked[suffix]).Magnitude
+		end
+		assert(travelled>1,"the rafts must actually move during the event")
+		director:stop()
+		local after=snapshotRafts(root)
+		for _,suffix in {"A","B","C"} do
+			assert((after[suffix]-parked[suffix]).Magnitude<0.01,"raft "..suffix.." did not return to its parked pose")
+		end
+	end)
+	test("director: low gravity owns gravity and gives it back",function()
+		local e,root,director,Config=directorFixture()
+		director:start("LowGravity",0,25)
+		eq(e.services.Workspace.Gravity,Config.LowGravity)
+		director:step(24.9,24.9)
+		eq(e.services.Workspace.Gravity,Config.LowGravity)
+		director:step(25.1,25.1)
+		eq(e.services.Workspace.Gravity,Config.NormalGravity)
+		eq(director.active,"")
+	end)
+	test("director: slipping is a friction change that is always reverted",function()
+		local e,root,director,Config=directorFixture()
+		local floor=find(root,"ArenaFloor") or root:GetChildren()[1]
+		director:start("Slippery",0,18)
+		assert(floor.CustomPhysicalProperties~=nil,"friction must be authored, not implied")
+		near(floor.CustomPhysicalProperties.Friction,Config.SlipperyFriction)
+		director:stop()
+		near(floor.CustomPhysicalProperties.Friction,.7)
+	end)
+	test("director: vanishing paths become solid only while the event runs",function()
+		local e,root,director=directorFixture()
+		local span=find(root,"EventPath_0_Span_0")
+		local glow=find(root,"EventPath_0_Glow_0")
+		local restY=span.CFrame.Position.Y
+		eq(span.CanCollide,false)
+		eq(span.Transparency,1)
+		director:start("VanishingPaths",0,18)
+		eq(span.CanCollide,true)
+		eq(span.Transparency,0)
+		assert(span.CFrame.Position.Y>restY+.5,"a solid span must lift to the floor height")
+		assert(glow.CFrame.Position.Y>restY,"the glow strip must ride with its span")
+		director:stop()
+		eq(span.CanCollide,false)
+		eq(span.Transparency,1)
+		near(span.CFrame.Position.Y,restY)
+		near(glow.CFrame.Position.Y,restY+.2)
+	end)
+	test("director: an unrelated event never leaves another event's state behind",function()
+		local e,root,director,Config=directorFixture()
+		local span=find(root,"EventPath_1_Span_0")
+		director:start("LowGravity",0,25)
+		eq(e.services.Workspace.Gravity,Config.LowGravity)
+		-- A second event supersedes the first without needing a stop in between.
+		director:start("Slippery",1,18)
+		eq(e.services.Workspace.Gravity,Config.NormalGravity)
+		eq(span.CanCollide,false)
+		director:reset()
+		eq(director.active,"")
+		eq(e.services.Workspace.Gravity,Config.NormalGravity)
+	end)
+	-- ------------------------------------------------------------------------ #
+	-- Persistence (spec §8): secure, schema-checked, failure-tolerant saves.
+	-- The mock DataStore is in-memory and deterministic.
+	-- ------------------------------------------------------------------------ #
+	local Persistence
+	local storeProbe=Mock.new(sources,schema,{fast=true})
+	Persistence=storeProbe:import("src/server/Persistence.luau")
+
+	test("steal: a real client tag moves a carried cell and reports both sides",function()
+		local e,a,b=fixture({fast=true,studio=true},true)
+		play(e)
+		-- Give the victim something to lose, through the engine's own pickup path.
+		collect(e,b,1)
+		local before=score(b)
+		assert(before>0,"the victim needs a carried cell")
+		-- Put the two characters inside the configured range, then ask to steal.
+		local base=a.Character.HumanoidRootPart.Position
+		b.Character:PivotTo(e.CFrame.new(base+e.Vector3.new(3,0,0)))
+		e:step(6)   -- clear spawn protection and let the client snapshot settle
+		e:request(a,"Steal")
+		eq(score(a)>0,true)
+		eq(score(b)<before,true)
+		local line=""
+		for _,entry in e:logsMatching("[Brainrot] steal") do line=line.." | "..entry end
+		assert(string.find(line,"steal ok",1,true),"the server must report a successful steal:"..line)
+	end)
+	test("steal: out of range is refused by the server, not the client",function()
+		local e,a,b=fixture({fast=true,studio=true},true)
+		play(e)
+		collect(e,b,1)
+		local before=score(b)
+		local base=a.Character.HumanoidRootPart.Position
+		b.Character:PivotTo(e.CFrame.new(base+e.Vector3.new(60,0,0)))
+		e:step(6)
+		e:request(a,"Steal")
+		eq(score(b),before)
+		eq(score(a),0)
+	end)
+	test("steal: the request carries no arguments, so nothing can be forged",function()
+		local e,a=fixture({fast=true,studio=true},true)
+		play(e)
+		-- Extra arguments are rejected wholesale by the whitelist.
+		e:request(a,"Steal",-1,999)
+		e:step(.1)
+		eq(score(a),0)
+	end)
+	test("persistence: a missing record becomes a valid default profile",function()
+		local p=Persistence.sanitise(nil)
+		eq(p.Coins,0); eq(p.Halo,"None"); eq(p.Rounds,0)
+		eq(next(p.Specimens),nil)
+	end)
+	test("persistence: corrupt fields are repaired, not trusted",function()
+		local p=Persistence.sanitise({
+			Coins="lots", Halo="Invisible", Rounds=-5, Wins=99, BestScore=math.huge,
+			Specimens={brain=-3, frog=2, [5]=1, hacker=1e9},
+		})
+		eq(p.Coins,0); eq(p.Halo,"None"); eq(p.Rounds,0)
+		-- wins can never exceed rounds played
+		eq(p.Wins,0)
+		eq(p.BestScore,0)
+		-- a non-positive or non-string key is dropped entirely, not clamped to zero
+		eq(p.Specimens.brain,nil)
+		eq(p.Specimens[5],nil)
+		eq(p.Specimens.frog,2)
+		eq(p.Specimens.hacker,100000)
+	end)
+	test("persistence: only the six known halos can be equipped",function()
+		local p=Persistence.sanitise({Halo="Violet"}); eq(p.Halo,"Violet")
+		eq(Persistence.sanitise({Halo="Rainbow"}).Halo,"None")
+	end)
+	test("persistence: a round is paid once, from the server's result",function()
+		local p=Persistence.sanitise(nil)
+		Persistence.applyRound(p,{score=42,steals=2,lost=5,pickups=9,coins=30,won=true,
+			collection={brain=3,fish=1}})
+		eq(p.Rounds,1); eq(p.TotalScore,42); eq(p.Steals,2); eq(p.Lost,5)
+		eq(p.Picked,9); eq(p.Coins,30); eq(p.Wins,1); eq(p.BestScore,42)
+		eq(p.Specimens.brain,3); eq(p.Specimens.fish,1)
+		-- a worse round still counts, but cannot lower the best
+		Persistence.applyRound(p,{score=10,steals=0,lost=0,pickups=1,coins=10,won=false})
+		eq(p.Rounds,2); eq(p.BestScore,42); eq(p.Wins,1); eq(p.Coins,40)
+	end)
+	test("persistence: coins are spend-proof — a halo costs its server price",function()
+		local store=Persistence.new({memoryOnly=true})
+		store.profiles[-1]=Persistence.sanitise({Coins=40,Halo="None"})
+		local ok,reason=store:buyHalo(-1,"Cyan",100)
+		eq(ok,false); eq(reason,"poor")
+		eq(store.profiles[-1].Coins,40)
+		store.profiles[-1].Coins=100
+		local ok2,reason2=store:buyHalo(-1,"Cyan",100)
+		eq(ok2,true); eq(reason2,"ok")
+		eq(store.profiles[-1].Coins,0); eq(store.profiles[-1].Halo,"Cyan")
+		-- and a halo it does not sell is refused outright
+		eq((store:buyHalo(-1,"Hacker",0)),false)
+	end)
+	test("persistence: a saved profile reloads with the same coins and specimens",function()
+		local store=Persistence.new({memoryOnly=false,persistInStudio=true})
+		store.profiles[-7]=Persistence.sanitise({Coins=250,Specimens={toast=2},Halo="Gold"})
+		store:save(-7)
+		assert(store.writes==1,"the save must reach the store")
+		local reopened=Persistence.new({memoryOnly=false,persistInStudio=true})
+		reopened:load(-7)
+		local p=reopened:profile(-7)
+		eq(p.Coins,250); eq(p.Specimens.toast,2); eq(p.Halo,"Gold")
+	end)
+	test("persistence: an unavailable DataStore degrades to memory, never crashes",function()
+		local store=Persistence.new({memoryOnly=false,persistInStudio=true,storeFail=true})
+		store:load(-9)
+		local p=store:profile(-9)
+		assert(p~=nil,"a profile must exist even without storage")
+		eq(p.Coins,0)
+		store.profiles[-9].Coins=5
+		store:save(-9)
+		eq(store.profiles[-9].Coins,5)
+		assert(store.errors>0,"the failure must be counted, not hidden")
 	end)
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")

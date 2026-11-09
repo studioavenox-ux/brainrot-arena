@@ -126,18 +126,25 @@ class PlaceTests(unittest.TestCase):
 
     def test_09_map_baked_and_editable(self):
         self.assertEqual(self.world.attrib["class"], "Model")
-        self.assertEqual(len(WORLD["Parts"]), 824)
+        # 824 baked Phase 2 parts + 82 Phase 5 event parts (rafts + vanishing paths).
+        self.assertEqual(len(WORLD["Parts"]), 906)
         # One extra non-colliding board layer per sign carries the SurfaceGui.
         self.assertEqual(len(self.world.findall("Item")), len(WORLD["Parts"]) + len(WORLD["Signs"]))
 
     def test_10_part_budget(self):
-        # Budget for lower-end mobile: 824 static parts (was 588 after Phase 1, 358
-        # before the redesign) bought with zero extra lights beyond the seven
-        # shadowless landmark lights.
-        self.assertLessEqual(len(WORLD["Parts"]), 840)
+        # Budget for lower-end mobile: 906 static parts (was 824; the 82 extra are
+        # the Phase 5 event rafts and vanishing paths, all non-colliding) bought
+        # with zero extra lights beyond the seven shadowless landmark lights.
+        self.assertLessEqual(len(WORLD["Parts"]), 920)
+        event = [q for q in WORLD["Parts"] if q["Name"].startswith(("EventRaft", "EventPath"))]
+        self.assertLessEqual(len(event), 90, "event geometry stays cheap")
         # Per cell: pivot + creature (<=9) + hover ring + rarity mark (<=2), and one
         # server root each. 13 is the true worst case, asserted in tools/creatures.py.
-        self.assertLessEqual(len(WORLD["Parts"]) + len(WORLD["PickupPositions"])*14, 1500)
+        # Worst case if every one of the 48 slots were showing a full 14-part cell
+        # (pivot + creature + hover ring + rarity mark + server root) at once. Real
+        # play never reaches it — artcheck caps parts *per visible cell* at 20 — but
+        # the arithmetic has to hold, so the ceiling tracks the map size.
+        self.assertLessEqual(len(WORLD["Parts"]) + len(WORLD["PickupPositions"])*14, 1600)
 
     def test_10b_materials_and_shadows_exported_per_part(self):
         SCHEMA_MATERIAL = SCHEMA["Enums"]["Material"]
@@ -254,8 +261,13 @@ class PlaceTests(unittest.TestCase):
 
     def test_24_no_dynamic_code_or_external_network(self):
         source = "\n".join(f.read_text() for f in (ROOT / "src").rglob("*.luau"))
-        for forbidden in ("loadstring(", "HttpGet(", "GetAsync(", "InsertService", "MarketplaceService", "DataStoreService"):
+        for forbidden in ("loadstring(", "HttpGet(", "HttpService", "InsertService", "MarketplaceService"):
             self.assertNotIn(forbidden, source)
+        # Persistence is the one place allowed to touch durable storage, and it may
+        # only use the DataStore API — no web calls, no asset insertion.
+        for file in (ROOT / "src").rglob("*.luau"):
+            if "DataStoreService" in file.read_text():
+                self.assertEqual(file.relative_to(ROOT).as_posix(), "src/server/Persistence.luau")
 
     def test_25_environment_has_normal_gravity_and_void_limit(self):
         workspace = resolve(self.regular, "Workspace")

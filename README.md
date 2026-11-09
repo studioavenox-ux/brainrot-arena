@@ -59,24 +59,54 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for the complete included/missi
   (each on a plinth in the lobby exhibit) *and* instantiated in the arena. The server rolls the
   species and the reward; the client can only animate the receipt.
   [Phase 4 report →](docs/CHARACTERS_PHASE4.md)
+- **Phase 5:** stealing, staged rounds, five survival events and persistent profiles.
+  [Phase 5 report →](docs/PHASE5_STEAL_AND_EVENTS.md) · [Test report →](docs/TEST_REPORT_PHASE5.md)
+
+### 5. The steal, in one paragraph
+
+Carried cells are at risk between stage boundaries; banked cells never are. Stand within
+13 studs of a rival and press **E** or tap **STEAL**. The server finds the nearest eligible
+rival, refuses if you are on cooldown, if they just spawned, if they were robbed in the last
+four seconds or if you robbed *them* in the last twelve, takes their largest carried cell and
+puts it in your carried pile — where it can be taken back. Every refusal has its own message
+(`PROTECTED`, `TOO FAR`, `NOTHING TO TAKE`, `RECHARGING`, `SAME TARGET`), and the button's cooldown
+is driven by the server's own timestamp.
 - **Specimen log:** a collection screen of six live 3D viewports showing name, rarity, reward,
   catch count and whether the character has been seen. Uncaught entries render as silhouettes
   reading `NOT SEEN YET`. Open it with the gear card, the `SPECIMENS n / 6` chip or **C**.
-- **Automatic multiplayer lifecycle:** waiting → 12s intermission → **180s round** → 9s results → repeat. Solo testing also works. Late joiners enter the active round at zero.
+- **Staged 3-minute rounds:** waiting → 12s intermission → **180s round** split into
+  **Collect → Compete → Chaos → Final Rush** → 9s results → repeat. Every stage boundary
+  **banks** what you are carrying; what is banked can never be lost. Solo testing also works,
+  and late joiners enter the active round at zero.
+- **Stealing:** a short-range tag (**E** or the on-screen **STEAL** button) that moves **one
+  carried cell** from the nearest rival to you. 8s cooldown, 3s spawn protection, 4s victim
+  immunity and a 12s no-repeat window, all validated on the server from server positions.
+  Banked score is never at risk and nothing leaves the round — it only changes hands.
+- **Five survival events:** low gravity, slippery stone, three orbiting rafts (real geometry,
+  server-moved), collectible rush and four vanishing paths. Each is announced **6 seconds
+  ahead** in an amber `INCOMING` banner, then runs with a live countdown, then resets itself.
 - **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**
   (displayed as Common / Rare / Legendary); five-second respawns. Atomic claiming prevents
   double rewards, and each cell resolves to one specific character.
-- **Low gravity:** activates 60 seconds into each standard round for 25 seconds, with UI and lighting feedback, then restores normal gravity.
+- **Event schedule:** low gravity at 60s for 25s, then a wildcard at 108s for 18s — rotated
+  deterministically by round number, so consecutive rounds differ and every client agrees.
 - **Complete game UI:** a top HUD (brain cells, coins, synchronized round clock), a live server-driven leaderboard, centre notifications (round flow, chaos events, winner/tie), a bottom bar with **Shop**, **Gear** and **Settings**, and a lobby panel with the next-round countdown. Dark navy translucent panels, cyan/violet/amber accents, rounded corners and short tweens; it reflows for desktop, tablet and phone in both orientations.
 - **Recovery:** death/reset rejoins the current arena; falling rescues the player without losing points; round cleanup removes cells and resets gravity.
-- **Session rewards:** 10 coins for participation + 2 per point + 30 for each tied winner. Earn 100 coins to unlock/equip the original Pulse Halo from the **Shop**. No Robux, no monetization.
-- **Server boundaries:** no score-submission remote; server-only positions, values, eligibility, payout, prices, and ownership. Requests use two small rate-limited verbs.
+- **Persistent progression:** 10 coins for participation + 2 per point + 30 for each tied
+  winner. Coins, the specimen log, lifetime stats (rounds, wins, best score, steals, losses),
+  and the original Pulse Halo (100 coins) are saved server-side in a DataStore with
+  schema-checked, retried, pcall-protected reads and writes — and a documented memory
+  fallback if storage is unavailable. No Robux, no monetization, no pay-to-win.
+- **Server boundaries:** no score-submission remote; server-only positions, values, eligibility, payout, prices, and ownership. Requests use three small rate-limited argument-free verbs: `Snapshot`, `Halo` and `Steal`.
 
-**Coins and the halo last only for the current server session.** Persistent saves, extra maps/events, pets, custom character packs, and monetization are deliberately outside this release.
+Coins, the specimen log, lifetime stats and the halo now persist across sessions. Extra maps,
+pets, custom character packs, emotes and monetization are deliberately outside this release; see
+[KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the full list, including the pending
+Roblox Studio acceptance pass.
 
 ### Controls
 
-Use Roblox's normal **WASD / Space / mouse** controls on desktop or the default **thumbstick / jump** controls on mobile. Walk into cells; no pickup button is required. **Tab** toggles the leaderboard, **H** opens the how-to card, **B** opens the shop, **C** opens the specimen log, **Esc** closes a card. Every one of those also has an on-screen button. On phones the action bar sits above the thumbstick and jump zones, and the leaderboard collapses behind **RANKS** so it never covers the round clock.
+Use Roblox's normal **WASD / Space / mouse** controls on desktop or the default **thumbstick / jump** controls on mobile. Walk into cells; no pickup button is required. **E** steals, **Tab** toggles the leaderboard, **H** opens the how-to card, **B** opens the shop, **C** opens the specimen log, **Esc** closes a card. Every one of those also has an on-screen button. On phones the action bar sits above the thumbstick and jump zones, and the leaderboard collapses behind **RANKS** so it never covers the round clock.
 
 ## Included files
 

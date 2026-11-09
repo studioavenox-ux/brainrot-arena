@@ -28,6 +28,7 @@ import math
 
 from theme import MATERIALS, rgb, shade
 import terrain_aug
+import events
 
 
 def make_world():
@@ -509,6 +510,10 @@ def make_world():
     terrain_aug.extend_nature({
         "part": part, "disk": disk, "ball": ball, "beam": beam,
     })
+    # ---- Phase 5 event geometry: three moving rafts and four vanishing paths.
+    # Both are ordinary anchored parts; the server animates them by name during a
+    # round, and they rest in the pose baked here.
+    events.build({"part": part, "disk": disk})
 
     _finalize(parts)
     return {"Version": 1, "Parts": parts, "Signs": signs, "PickupPositions": pickups,
