@@ -15,10 +15,8 @@ substitute for a Studio run. The included Luau logic, adapter contracts, generat
 | Stage | Standard place | QuickTest (Studio only) |
 |---|---:|---:|
 | Intermission | 12 seconds | 4 seconds |
-| Active round | **180 seconds** | 30 seconds |
-| Low-gravity start | 60 seconds after round starts | 8 seconds after round starts |
-| Low-gravity duration | 25 seconds | 10 seconds |
-| Wildcard start / duration | 108 s / 18 s | 22 s / 6 s |
+| Active round | **180 seconds** | 50 seconds |
+| Chaos Event start / duration | 105 s / 35 s (one random kind) | 8 s / 35 s (one random kind) |
 | Stage boundaries | Collect 0 / Compete 45 / Chaos 105 / Final 150 | 0 / 8 / 18 / 24 |
 | Results | 9 seconds | 5 seconds |
 

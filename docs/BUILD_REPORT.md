@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-09T07:45:45+00:00**.
+Verified: **2026-11-09T08:15:23+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -55,11 +55,11 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
 
 | Check | Result |
 |---|---:|
-| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 107 passed |
-| Real server/client scripts against mocked Roblox services (+ steal and persistence) | 76 passed |
+| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 116 passed |
+| Real server/client scripts against mocked Roblox services (+ steal and persistence) | 80 passed |
 | XML/API/geometry export tests | 36 passed |
 | Art-direction gate (palette, hierarchy, legibility, lighting) | 35 passed |
-| Official Luau compilation | 26 files passed |
+| Official Luau compilation | 27 files passed |
 | Strict analysis | 3 authority modules + Config passed |
 | Repeat build | Byte-for-byte deterministic |
 | Git whitespace check | Passed |
@@ -96,7 +96,7 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 ## Export integrity
 
-Source SHA-256: `3dbd31d70d0bab8e0863837a0db904d250dd54badbadcaafd16ce94b558ed744`
+Source SHA-256: `71e05c4ecdd504fcf4059013aced86e86c55264d736370e1f86f4aad9f806940`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,791,117 bytes; SHA-256 `589d2927e6d83797efc39f0db09aa4c62096337c5068ba3c49b18908381dc29d`
-- `BrainrotArena.rbxlx` — 1,791,118 bytes; SHA-256 `81f07df282224afdc21209eac2c67ee29bd009afe840d4cb54bd71e4563c9bdb`
+- `BrainrotArena-QuickTest.rbxlx` — 1,788,065 bytes; SHA-256 `739faaa9d1f7a9f83f81417e7a4d241747b9a745bf853ae600f1ca11969ee8b5`
+- `BrainrotArena.rbxlx` — 1,788,066 bytes; SHA-256 `ffa101dd60273cf7c03e18db6cf0229c56d25dd2f85815697214520bfa8eb80c`

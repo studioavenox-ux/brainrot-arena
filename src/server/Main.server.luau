@@ -13,6 +13,7 @@ local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
 local ArenaRoute = require(script.Parent.core.ArenaRoute)
 local EventDirector = require(script.Parent.EventDirector)
+local ChaosRules = require(script.Parent.core.ChaosRules)
 local Persistence = require(script.Parent.Persistence)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
@@ -21,8 +22,12 @@ local ArtService = require(script.Parent.ArtService)
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
 settings.Timing = if fast then Config.FastTiming else Config.Timing
-local machine = RoundMachine.new(settings)
 local random = Random.new()
+-- Chaos draws are server-side and uniform over the configured pool. Clamped so a
+-- rounding edge can never index past the end of the list.
+local machine = RoundMachine.new(settings, function(n: number): number
+	return math.min(n, math.floor(random:NextNumber() * n) + 1)
+end)
 -- Species is rolled here, on the server, from the ledger's own slot id and rarity, so
 -- the receipt a client animates names the character that player really collected.
 local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.PickupRadius, Config.PickupRespawn, function()
@@ -40,8 +45,11 @@ ArtService.apply()
 local world = WorldService.new()
 -- Animates the baked event geometry by name. Owns gravity/friction *inside* an
 -- event window only; the round machine owns when a window opens.
-local director = EventDirector.new(workspace:FindFirstChild("BrainrotWorld") :: Model, Config.NormalGravity,
-	Config.LowGravity, .7, Config.SlipperyFriction)
+local director = EventDirector.new(Config.NormalGravity)
+-- The live Chaos modifiers. Only syncChaos() writes this, so every consumer (jump,
+-- respawn, rarity, gravity, friction) agrees on the same snapshot of the event.
+local appliedChaos = ""
+local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
 local profiles = Persistence.new({})
@@ -186,7 +194,7 @@ local function movePlayer(player: Player, arena: boolean, now: number, escalate:
 	root.AssemblyAngularVelocity = Vector3.zero
 	humanoid.WalkSpeed = Config.WalkSpeed
 	humanoid.UseJumpPower = true
-	humanoid.JumpPower = Config.JumpPower
+	humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
 	movement:teleport(player.UserId, position(target.Position), now)
 	route:attempt(player.UserId, if arena then "arena" else "lobby", now)
 
@@ -338,20 +346,15 @@ local function resolveSteal(thief: Player, now: number): (string, number, Player
 	return outcome, value, bestVictim
 end
 
-local function setGravity(active: boolean)
-	Workspace.Gravity = if active then Config.LowGravity else Config.NormalGravity
-	world:setLowGravity(active)
-end
-
 local function checkInvariants()
 	if not RunService:IsStudio() then
 		return
 	end
 	assert(ledger.running == (machine.phase == "Playing"), "Pickup lifecycle diverged")
-	-- Gravity is normal unless the *low gravity* window is the live one. Other
-	-- wildcards leave it alone, so the assertion names the only cause.
+	-- Gravity is normal unless the *low gravity* Chaos Event is the live one. Other
+	-- kinds leave it alone, so the assertion names the only cause.
 	local low = machine.eventActive and machine.eventKind == "LowGravity"
-	assert(math.abs(Workspace.Gravity - (if low then Config.LowGravity else Config.NormalGravity)) < 0.01, "Gravity failed to reset")
+	assert(math.abs(Workspace.Gravity - (if low then Config.Chaos.LowGravity else Config.NormalGravity)) < 0.01, "Gravity failed to reset")
 	-- Nothing can be negative, and carried values always sum to the round score.
 	for _, player in machine.players do
 		assert(player.carriedValue >= 0, "Negative carried value")
@@ -370,19 +373,29 @@ local function checkInvariants()
 	end
 end
 
+-- Make the world match the live Chaos Event. Runs every step, so a missed effect can
+-- never leave gravity, friction, jump power or rarity stuck after the window closes.
+local function syncChaos()
+	local kind = if machine.eventActive then machine.eventKind else ""
+	if kind == appliedChaos then
+		return
+	end
+	appliedChaos = kind
+	chaos = ChaosRules.modifiers(kind, Config)
+	director:apply(chaos)
+	world:setLowGravity(kind == "LowGravity")
+	ledger:setRareScale(chaos.RareScale)
+end
+
 local function handleEffects(effects, now: number)
 	for _, effect in effects do
 		dirty = true
 		if effect.kind == "event" then
+			-- The world itself is changed by syncChaos(), which reconciles on every step.
 			if effect.active then
-				local duration = math.max(0, (machine.eventEndsAt or now) - now)
-				director:start(effect.event or "", now, duration)
-				world:setLowGravity(effect.event == "LowGravity")
-				print(string.format("[Brainrot] event ON • %s", tostring(effect.event)))
+				print(string.format("[Brainrot] chaos ON • %s", tostring(effect.event)))
 			else
-				director:stop()
-				world:setLowGravity(false)
-				print("[Brainrot] event OFF")
+				print("[Brainrot] chaos OFF")
 			end
 		elseif effect.kind == "warning" then
 			print(string.format("[Brainrot] event warning • %s in %.0fs", tostring(effect.event),
@@ -424,7 +437,6 @@ local function handleEffects(effects, now: number)
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
 				director:reset()
-				world:setLowGravity(false)
 				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
 						routePlayer(player, now, true)
@@ -433,9 +445,6 @@ local function handleEffects(effects, now: number)
 			end
 			print(string.format("[Brainrot] %s • round %d", machine.phase, machine.roundId))
 		end
-	end
-	if #effects > 0 then
-		checkInvariants()
 	end
 end
 
@@ -594,24 +603,32 @@ RunService.Heartbeat:Connect(function(dt: number)
 	end
 	accumulator = 0
 	local now = Workspace:GetServerTimeNow()
-	handleEffects(machine:step(now), now)
+	local effects = machine:step(now)
+	handleEffects(effects, now)
+	syncChaos()
+	if #effects > 0 then
+		-- Checked after the world has been reconciled, so the invariant sees the result.
+		checkInvariants()
+	end
 
 	if machine.phase == "Playing" then
 		for _, id in ledger:step(now) do
 			updatePickup(id)
 		end
-		ledger.respawn = if machine.eventKind == "CollectibleRush" then Config.RushRespawn
+		ledger.respawn = if chaos.Respawn then chaos.Respawn
 			elseif machine.stage == "Final" then Config.FinalRespawn
 			else Config.PickupRespawn
 	else
 		ledger.respawn = Config.PickupRespawn
 	end
-	-- The director animates rafts and blinking paths between event edges.
-	director:step(now, machine.phaseStartedAt > 0 and (now - machine.phaseStartedAt) or 0)
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
 		local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
+		-- Bouncy World: the jump scale follows the live event. Written only on change.
+		if humanoid and humanoid.JumpPower ~= Config.JumpPower * chaos.JumpScale then
+			humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
+		end
 		if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health <= 0 then
 			continue
 		end

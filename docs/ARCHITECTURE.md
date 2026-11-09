@@ -22,8 +22,8 @@ ServerScriptService/BrainrotServer
   core/RoundMachine                    pure phase, score, result and reward authority
   core/PickupLedger                    pure atomic ownership / respawn generations
   core/MovementGuard                   pure basic horizontal movement sanity layer
-  EventDirector                        animates baked event geometry (gravity, friction,
-                                       rafts, spans); never decides *when* an event runs
+  EventDirector                        applies gravity and surface friction from the live
+                                       Chaos modifiers; never decides *when* or *which*
   Persistence                          DataStore profiles: coins, specimens, stats, halo
   WorldService / WorldData              world construction and server spawn locations
   ArtService                            applies the shared lighting rig (idempotent)
@@ -75,10 +75,11 @@ answer. Banked score is never touched.
 - **Stages** (`Config.Stages`): Collect 0 s, Compete 45 s, Chaos 105 s, Final 150 s of a
   180 s round. Each boundary banks every player's carried cells. `RoundMachine.bank` is the
   only way a carried cell becomes permanent, and `score` is always banked + carried.
-- **Events** (`Config.Events`): `LowGravity` at 60 s for 25 s, then a `Wildcard` at 108 s for
-  18 s, rotated deterministically by round id over Slippery / MovingPlatforms /
-  CollectibleRush / VanishingPaths. `buildSchedule(roundId)` is pure, so every client and
-  every replay of a round agree, and every window carries a `WarningAt` six seconds ahead.
+- **Chaos Event** (`Config.Chaos`, `Config.Timing.ChaosStart/ChaosDuration`): exactly one 35 s
+  window per round at 105 s, drawn uniformly over Low Gravity / Bouncy World / Slippery Chaos /
+  Brain Cell Rush when the round starts. `RoundMachine.drawChaos` uses an injected chooser, and
+  `buildSchedule` returns a single entry that carries a `WarningAt` six seconds ahead. Per-kind
+  effects live in the pure `core/ChaosRules`. See [CHAOS_EVENTS.md](CHAOS_EVENTS.md).
 - **EventDirector** reacts to the machine's `event` effects and owns gravity, walking
   friction, raft CFrames and span solidity *inside* a window only. `stop()` is called on
   every close **and** on every phase change, so a dropped effect cannot leave the arena
@@ -116,7 +117,7 @@ meshes, copyrighted meme characters, external scripts or web requests.
   `tools/events.py`; both use the same primitive vocabulary as the terrain. Every
   event part is **non-colliding at rest**, so a parked raft can never trap a player
   and a hidden vanishing span can never be walked on.
-- **48** simple server pickup roots. During `CollectibleRush` the server drops the
+- **48** simple server pickup roots. During `BrainCellRush` the server drops the
   respawn to 1.5 s and to 2 s during the Final Rush; the pickup roots themselves and
   the claiming rules are unchanged. Touch/query/collision disabled on pickup and
   decorative roots.

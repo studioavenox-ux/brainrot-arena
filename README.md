@@ -32,7 +32,7 @@ The place already contains the map and scripts. Opening `src` files individually
 3. Set the **number of clients to 2** in the adjacent client-count control.
 4. Click **Play** or press **F7** (**Fn+F7** on some laptops). Studio launches **one server session and two client sessions**. Wait for both clients to finish loading. This does not require two Roblox accounts or publishing the game.
 5. In each **client** window, click inside the game viewport and move that player's character. The **server** window is for inspection, not player control. Confirm both clients see matching round state and leaderboard changes.
-6. QuickTest uses **4 seconds intermission → 30 seconds play → 5 seconds results**. Low gravity begins **8 seconds into play**, lasts **10 seconds**, then restores normal gravity. Watch for the winner card and the next automatic round. A complete first intermission/play/results cycle is approximately **39 seconds**, excluding loading time.
+6. QuickTest uses **4 seconds intermission → 50 seconds play → 5 seconds results**. The round's single **Chaos Event** (one of Low Gravity, Bouncy World, Slippery Chaos or Brain Cell Rush) starts **8 seconds into play** and lasts **35 seconds**, then everything resets. Watch for the warning banner, the event name and the next automatic round. A complete first intermission/play/results cycle is approximately **59 seconds**, excluding loading time.
 7. Try collecting the same cell with both players: only one should receive that generation's points. Reset one avatar through Roblox's in-game menu and confirm its score is retained after respawn.
 8. When finished, click **End Session** in any simulated session to close the simulated server and clients. On Studio versions with the older ribbon UI, the same controls are under **Test → Server & Clients / Local Server**: choose **2 players**, then **Start**. Do not use Team Test for this local check.
 
@@ -82,14 +82,15 @@ is driven by the server's own timestamp.
   carried cell** from the nearest rival to you. 8s cooldown, 3s spawn protection, 4s victim
   immunity and a 12s no-repeat window, all validated on the server from server positions.
   Banked score is never at risk and nothing leaves the round — it only changes hands.
-- **Five survival events:** low gravity, slippery stone, three orbiting rafts (real geometry,
-  server-moved), collectible rush and four vanishing paths. Each is announced **6 seconds
-  ahead** in an amber `INCOMING` banner, then runs with a live countdown, then resets itself.
+- **One Chaos Event per round:** the server draws exactly one of **Low Gravity**, **Bouncy World**,
+  **Slippery Chaos** or **Brain Cell Rush** and runs it for **35 seconds**, starting at 105 s in a
+  standard round. It is announced **6 seconds ahead** in an amber `INCOMING` banner, then runs with
+  a live countdown, then resets itself. See [CHAOS_EVENTS.md](docs/CHAOS_EVENTS.md).
 - **48 server-controlled Brain Cell slots:** pink **+1**, gold **+5**, prismatic **+10**
   (displayed as Common / Rare / Legendary); five-second respawns. Atomic claiming prevents
   double rewards, and each cell resolves to one specific character.
-- **Event schedule:** low gravity at 60s for 25s, then a wildcard at 108s for 18s — rotated
-  deterministically by round number, so consecutive rounds differ and every client agrees.
+- **Event schedule:** a single 35-second window at 105 s, drawn uniformly by the server at round start.
+  Every client receives the kind in the snapshot, so all players see the same event.
 - **Complete game UI:** a top HUD (brain cells, coins, synchronized round clock), a live server-driven leaderboard, centre notifications (round flow, chaos events, winner/tie), a bottom bar with **Shop**, **Gear** and **Settings**, and a lobby panel with the next-round countdown. Dark navy translucent panels, cyan/violet/amber accents, rounded corners and short tweens; it reflows for desktop, tablet and phone in both orientations.
 - **Recovery:** death/reset rejoins the current arena; falling rescues the player without losing points; round cleanup removes cells and resets gravity.
 - **Persistent progression:** 10 coins for participation + 2 per point + 30 for each tied

@@ -33,14 +33,13 @@ local function phaseWord(phase, fastMode)
 	return Copy.WaitingStatus
 end
 
--- Server event kinds -> the words the player reads. Shared with the server's own
--- labels through Config-independent literals so a snapshot only needs the kind.
+-- Chaos Event kinds -> the words the player reads. Mirrors RoundMachine's LABEL, which
+-- the server also sends in the snapshot schedule.
 local EVENT_LABEL = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 local function eventLabel(kind)
