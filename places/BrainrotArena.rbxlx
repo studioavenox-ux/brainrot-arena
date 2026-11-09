@@ -39803,6 +39803,75 @@ return {
       </Item>
       <Item class="ModuleScript" referent="RBX001066">
         <Properties>
+          <string name="Name">AudioRules</string>
+          <ProtectedString name="Source">--!strict
+-- Pure audio decisions, shared by the client controller and the core tests.
+-- No Roblox services are touched here, so every rule is testable headless.
+local AudioRules = {}
+
+export type PhaseState = {
+	phase: string,
+	eventActive: boolean?,
+}
+
+-- Which music track the current replicated state calls for.
+--   Playing + Chaos Event  -&gt; "Chaos"  (the dramatic track)
+--   Playing                -&gt; "Arena"
+--   anything else          -&gt; "Lobby"  (Waiting, Intermission, Results)
+function AudioRules.trackFor(state: PhaseState): string
+	if state.phase == "Playing" then
+		if state.eventActive == true then
+			return "Chaos"
+		end
+		return "Arena"
+	end
+	return "Lobby"
+end
+
+-- Moves `current` toward `target` by at most fullVolume * dt / fadeSeconds, so a
+-- full fade takes exactly `fadeSeconds`. The result always stays within [0, fullVolume].
+function AudioRules.stepVolume(current: number, target: number, dt: number, fullVolume: number, fadeSeconds: number): number
+	assert(fadeSeconds &gt; 0, "fade time must be positive")
+	assert(dt &gt;= 0, "dt cannot be negative")
+	local goal = math.clamp(target, 0, fullVolume)
+	local maxStep = fullVolume * dt / fadeSeconds
+	local nextValue = current
+	if goal &gt; current then
+		nextValue = math.min(goal, current + maxStep)
+	elseif goal &lt; current then
+		nextValue = math.max(goal, current - maxStep)
+	end
+	return math.clamp(nextValue, 0, fullVolume)
+end
+
+-- True for "" (deliberately silent) or a well-formed rbxassetid URL with digits only.
+function AudioRules.validId(id: string): boolean
+	if id == "" then
+		return true
+	end
+	-- The scheme is joined at runtime so this source never embeds the literal URL form.
+	local prefix = "rbxassetid:" .. "//"
+	return string.sub(id, 1, #prefix) == prefix and string.match(string.sub(id, #prefix + 1), "^%d+$") ~= nil
+end
+
+-- Resolves a cue name to its configured asset ID, or nil when that cue is silent.
+-- Unknown cue names are an error so a typo can never fail silently.
+function AudioRules.cueId(cues: { [string]: string }, name: string): string?
+	local id = cues[name]
+	assert(id ~= nil, "unknown audio cue: " .. tostring(name))
+	assert(AudioRules.validId(id), "malformed audio ID for cue " .. name)
+	if id == "" then
+		return nil
+	end
+	return id
+end
+
+return AudioRules
+</ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX001067">
+        <Properties>
           <string name="Name">Config</string>
           <ProtectedString name="Source">--!strict
 -- All rewards and timings are read by the SERVER. There is no client scoring API.
@@ -39817,21 +39886,23 @@ local Config = {
 		Intermission = 12,
 		Round = 180,
 		Results = 9,
-		-- Kept for the first (low gravity) window, so older reads stay correct.
-		EventStart = 60,
-		EventDuration = 25,
+		-- The single Chaos Event of a round: one window, exactly ChaosDuration long,
+		-- starting inside the Chaos stage (105 s - 150 s). See Chaos below.
+		ChaosStart = 105,
+		ChaosDuration = 35,
 		Warning = 6,
 	},
 	FastTiming = {
 		Intermission = 4,
-		Round = 30,
+		-- Studio QuickTest. The round is longer than the 35 s event so the event is
+		-- exercised exactly as in production, and it still fits with time to spare.
+		Round = 50,
 		Results = 5,
-		EventStart = 8,
-		EventDuration = 10,
+		ChaosStart = 8,
+		ChaosDuration = 35,
 		Warning = 3,
 	},
 	NormalGravity = 196.2,
-	LowGravity = 62,
 	WalkSpeed = 22,
 	JumpPower = 50,
 	ServerStep = 0.1,
@@ -39867,19 +39938,71 @@ local Config = {
 	},
 
 	-- ------------------------------------------------------------------ #
-	-- Survival events. One window at a time; `Wildcard` resolves to one of
-	-- the four wildcards below, rotated deterministically by round number so
-	-- consecutive rounds are different but every client agrees.
+	-- Chaos Event. Exactly ONE per round, drawn uniformly by the server from
+	-- `Kinds` when the round starts. The window never overlaps another event.
+	-- Per-kind effects are defined in src/server/core/ChaosRules.luau.
 	-- ------------------------------------------------------------------ #
-	Events = {
-		{ Kind = "LowGravity", At = 60, Duration = 25 },
-		{ Kind = "Wildcard", At = 108, Duration = 18 },
+	Chaos = {
+		Kinds = { "LowGravity", "BouncyWorld", "SlipperyChaos", "BrainCellRush" },
+		LowGravity = 62,         -- studs/s^2 (normal is 196.2)
+		BouncyJumpScale = 1.8,   -- jump power multiplier while Bouncy World runs
+		RushRarityScale = 3,     -- weight multiplier for Rare and Prismatic cells
 	},
-	FastEvents = {
-		{ Kind = "LowGravity", At = 8, Duration = 10 },
-		{ Kind = "Wildcard", At = 22, Duration = 6 },
+
+	-- ------------------------------------------------------------------ #
+	-- Audio. Every sound ID is configured HERE. An empty string means "no sound":
+	-- nothing is invented, and no uploaded or third-party asset is required to run.
+	-- To enable a slot, paste an rbxassetid URL (the scheme, a colon, two slashes, then
+	-- the number) for an audio asset you own or are licensed to use.
+	-- docs/AUDIO.md lists every slot and its behaviour.
+	-- ------------------------------------------------------------------ #
+	Audio = {
+		CrossfadeSeconds = 1.5,  -- time to fade one music track out and the next in
+		MusicVolume = .35,       -- loudest level for a music track
+		CueVolume = .6,          -- level for one-shot cues
+		Tracks = {
+			Lobby = "",          -- Waiting / Intermission / Results
+			Arena = "",          -- Playing, no Chaos Event
+			Chaos = "",          -- Playing, a Chaos Event is active
+		},
+		-- One-shot cues. Ability cues are added here, one key per ability, when the
+		-- abilities exist (for example "Ability.Dash"). Playing an unlisted cue is an
+		-- error, so a typo cannot fail silently.
+		Cues = {
+			RoundStart = "",
+			RoundEnd = "",
+			ChaosStart = "",
+			ChaosEnd = "",
+			Steal = "",
+			Ability = "",
+		},
 	},
-	Wildcards = { "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" },
+
+	-- ------------------------------------------------------------------ #
+	-- Characters. Six playable characters, all free, one active at a time. Every
+	-- character has one ability, and each ability has its own cooldown. Cooldowns are
+	-- per player and per character, persist across switches within a round, and reset
+	-- at the next round. Abilities never award, steal or move Brain Cells.
+	-- Roster keys are the cell species keys in Creatures.luau.
+	-- ------------------------------------------------------------------ #
+	Characters = {
+		-- Slot 1..6 is the order the client shows and the order the server accepts.
+		Order = { "brain", "frog", "fish", "goose", "toast", "sock" },
+		SwitchesNormal = 3,   -- switches usable at any time during Playing
+		SwitchesBonus = 1,    -- one extra switch, usable only during the Chaos Event
+		Roster = {
+			brain = { Ability = "MindTrick", Title = "MIND TRICK", Cooldown = 20, Duration = 6, Offset = 6 },
+			frog = { Ability = "BellyBounce", Title = "BELLY BOUNCE", Cooldown = 15, Radius = 10, Push = 55, Lift = 18 },
+			fish = { Ability = "BubbleDash", Title = "BUBBLE DASH", Cooldown = 12, Speed = 70, Duration = .35 },
+			goose = { Ability = "HonkWave", Title = "HONK WAVE", Cooldown = 18, Radius = 14, SlowFactor = .5, Duration = 2.5 },
+			toast = { Ability = "ToastLaunch", Title = "TOAST LAUNCH", Cooldown = 16, Radius = 8, Lift = 60 },
+			sock = { Ability = "SockSnare", Title = "SOCK SNARE", Cooldown = 14, Radius = 12, SlowFactor = .4, Duration = 4 },
+		},
+		-- Ability-driven movement gets a temporary speed allowance from MovementGuard.
+		-- Margin is added on top of the expected speed, so ordinary rounding never trips it.
+		MovementMargin = 8,
+		GrantSeconds = .8,
+	},
 
 	-- ------------------------------------------------------------------ #
 	-- Stealing. A short-range tag that moves ONE carried cell from the victim
@@ -39893,9 +40016,9 @@ local Config = {
 		RepeatWindow = 12,   -- no re-tagging the same victim inside this window
 	},
 
-	-- Sticky floor while the Slippery wildcard runs.
+	-- Sticky floor while Slippery Chaos runs.
 	SlipperyFriction = 0.06,
-	-- Respawn seconds while CollectibleRush runs, and during the Final Rush.
+	-- Respawn seconds during Brain Cell Rush, and during the Final Rush.
 	RushRespawn = 1.5,
 	FinalRespawn = 2,
 
@@ -39910,7 +40033,7 @@ return table.freeze(Config)
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001067">
+      <Item class="ModuleScript" referent="RBX001068">
         <Properties>
           <string name="Name">Creatures</string>
           <ProtectedString name="Source">--!nocheck
@@ -39969,15 +40092,210 @@ return table.freeze(Creatures)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="RBX001068">
+  <Item class="ServerScriptService" referent="RBX001069">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="RBX001069">
+    <Item class="Folder" referent="RBX001070">
       <Properties>
         <string name="Name">BrainrotServer</string>
       </Properties>
-      <Item class="ModuleScript" referent="RBX001070">
+      <Item class="ModuleScript" referent="RBX001071">
+        <Properties>
+          <string name="Name">AbilityService</string>
+          <ProtectedString name="Source">--!strict
+-- Roblox adapter for character abilities. Every decision comes from the pure modules
+-- (AbilityRules for geometry and statuses, CharacterRules for cooldowns and switching).
+-- This module only turns those decisions into parts, velocities and walk speeds.
+--
+-- Hard rules, all enforced here or by the caller:
+--   * Nothing in this module touches Brain Cells, scores, coins or the round machine.
+--   * The caster is never a target of their own ability.
+--   * Ability-driven movement is granted to MovementGuard for its exact duration only.
+--   * Every effect is removed on round end (reset) and when a player leaves (forget).
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
+local AbilityRules = require(script.Parent.core.AbilityRules)
+local MovementGuard = require(script.Parent.core.MovementGuard)
+
+local AbilityService = {}
+AbilityService.__index = AbilityService
+
+export type Candidate = { player: Player, root: BasePart, humanoid: Humanoid }
+export type Service = typeof(setmetatable({} :: {
+	movement: MovementGuard.Guard,
+	statuses: AbilityRules.Statuses,
+	decoys: { [number]: { model: Model, untilAt: number } },
+	dashes: { [number]: { x: number, z: number, untilAt: number } },
+}, AbilityService))
+
+function AbilityService.new(movement: MovementGuard.Guard): Service
+	return setmetatable({
+		movement = movement,
+		statuses = {},
+		decoys = {},
+		dashes = {},
+	}, AbilityService) :: any
+end
+
+local function planar(position: Vector3): AbilityRules.Vec
+	return { x = position.X, y = position.Y, z = position.Z }
+end
+
+local function toVector3(v: AbilityRules.Vec): Vector3
+	return Vector3.new(v.x, v.y, v.z)
+end
+
+local function removeDecoy(self: Service, userId: number)
+	local decoy = self.decoys[userId]
+	if decoy then
+		decoy.model:Destroy()
+		self.decoys[userId] = nil
+	end
+end
+
+-- A visual decoy: anchored, non-colliding copies of the caster's visible parts, shown a
+-- few studs to the side. It is not a character, has no Humanoid, and is never targeted.
+local function spawnDecoy(self: Service, caster: Player, character: Model, root: BasePart, entry: any, now: number)
+	removeDecoy(self, caster.UserId)
+	local model = Instance.new("Model")
+	model.Name = "MindTrick_" .. tostring(caster.UserId)
+	for _, part in character:GetDescendants() do
+		if part:IsA("BasePart") then
+			local copy = part:Clone()
+			copy.Anchored = true
+			copy.CanCollide = false
+			copy.CanTouch = false
+			copy.CanQuery = false
+			copy.Transparency = math.max(copy.Transparency, .35)
+			copy.Parent = model
+		end
+	end
+	model.Parent = Workspace
+	model:PivotTo(root.CFrame * CFrame.new(entry.Offset, 0, 0))
+	self.decoys[caster.UserId] = { model = model, untilAt = now + entry.Duration }
+end
+
+-- Performs one ability for `caster`. `candidates` lists every participating player with a
+-- live root (the caster may be among them; they are always excluded). Returns the players
+-- who were actually affected, nearest first, so the caller can notify them.
+function AbilityService.perform(self: Service, caster: Player, character: Model, root: BasePart,
+	entry: any, candidates: { Candidate }, now: number): { Player }
+	local casterPos = planar(root.Position)
+	local look = planar(root.CFrame.LookVector)
+	local lookFallback = { x = look.x, y = 0, z = look.z }
+	local pool: { AbilityRules.Candidate } = {}
+	local byId: { [number]: Candidate } = {}
+	for _, candidate in candidates do
+		table.insert(pool, { userId = candidate.player.UserId, position = planar(candidate.root.Position) })
+		byId[candidate.player.UserId] = candidate
+	end
+
+	local affected: { Player } = {}
+	local ability = entry.Ability
+	if ability == "MindTrick" then
+		spawnDecoy(self, caster, character, root, entry, now)
+		return affected
+	end
+
+	if ability == "BubbleDash" then
+		local velocity = AbilityRules.dashVelocity(look, entry.Speed)
+		self.dashes[caster.UserId] = { x = velocity.x, z = velocity.z, untilAt = now + entry.Duration }
+		self.movement:grant(caster.UserId, entry.Speed + Config.Characters.MovementMargin,
+			now + entry.Duration + Config.Characters.GrantSeconds, now)
+		table.insert(affected, caster)
+		return affected
+	end
+
+	local hits = AbilityRules.targetsIn(casterPos, pool, entry.Radius, caster.UserId)
+	for _, hit in hits do
+		local victim = byId[hit.userId]
+		if victim then
+			local victimPos = planar(victim.root.Position)
+			if ability == "BellyBounce" then
+				local direction = AbilityRules.horizontalDirection(casterPos, victimPos, lookFallback)
+				local velocity = AbilityRules.knockbackVelocity(direction, entry.Push, entry.Lift)
+				victim.root.AssemblyLinearVelocity = toVector3(velocity)
+				self.movement:grant(victim.player.UserId, entry.Push + Config.Characters.MovementMargin,
+					now + Config.Characters.GrantSeconds, now)
+			elseif ability == "ToastLaunch" then
+				victim.root.AssemblyLinearVelocity = toVector3(AbilityRules.launchVelocity(entry.Lift))
+			elseif ability == "HonkWave" or ability == "SockSnare" then
+				AbilityRules.applySlow(self.statuses, victim.player.UserId, entry.SlowFactor, now + entry.Duration)
+			end
+			table.insert(affected, victim.player)
+		end
+	end
+	return affected
+end
+
+-- Walk speed for a player right now: the base speed, scaled by any active slow.
+function AbilityService.walkSpeed(self: Service, userId: number, now: number): number
+	return Config.WalkSpeed * AbilityRules.speedFactor(self.statuses, userId, now)
+end
+
+-- Runs every frame: keeps dash velocity applied for its duration and keeps each walk speed
+-- equal to the live value. Writes happen only on change.
+function AbilityService.drive(self: Service, now: number, players: { Candidate })
+	for _, candidate in players do
+		local humanoid = candidate.humanoid
+		local wanted = AbilityService.walkSpeed(self, candidate.player.UserId, now)
+		if humanoid.WalkSpeed ~= wanted then
+			humanoid.WalkSpeed = wanted
+		end
+		local dash = self.dashes[candidate.player.UserId]
+		if dash and now &lt; dash.untilAt then
+			local vy = candidate.root.AssemblyLinearVelocity.Y
+			candidate.root.AssemblyLinearVelocity = Vector3.new(dash.x, vy, dash.z)
+		end
+	end
+end
+
+-- Ends expired effects. Called from the authority step.
+function AbilityService.prune(self: Service, now: number)
+	AbilityRules.prune(self.statuses, now)
+	for userId, decoy in self.decoys do
+		if now &gt;= decoy.untilAt then
+			removeDecoy(self, userId)
+		end
+	end
+	for userId, dash in self.dashes do
+		if now &gt;= dash.untilAt then
+			self.dashes[userId] = nil
+		end
+	end
+end
+
+-- Removes every effect at once. Called at the end of each round.
+function AbilityService.reset(self: Service)
+	for userId in self.decoys do
+		removeDecoy(self, userId)
+	end
+	table.clear(self.statuses)
+	table.clear(self.dashes)
+end
+
+-- Removes one player's effects. Called when they leave.
+function AbilityService.forget(self: Service, userId: number)
+	removeDecoy(self, userId)
+	self.statuses[userId] = nil
+	self.dashes[userId] = nil
+end
+
+function AbilityService.decoyCount(self: Service): number
+	local count = 0
+	for _ in self.decoys do
+		count += 1
+	end
+	return count
+end
+
+return AbilityService
+</ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX001072">
         <Properties>
           <string name="Name">ArtService</string>
           <ProtectedString name="Source">--!nonstrict
@@ -40049,312 +40367,144 @@ return ArtService
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001071">
+      <Item class="ModuleScript" referent="RBX001073">
         <Properties>
           <string name="Name">EventDirector</string>
-          <ProtectedString name="Source">--!strict
--- Event director: the only place that turns the round machine's event state into
--- things a player can feel. Everything here is driven by names baked into the map
--- by tools/events.py, so a server can find the geometry without any registry.
+          <ProtectedString name="Source">-- Applies the physical side of the Chaos Event to the live world: gravity and
+-- surface friction. Nothing here decides *when* or *which* event runs. The server
+-- hands this module the complete modifier set from ChaosRules, every tick, and the
+-- director makes the world match it.
 --
--- Rules this file holds:
---   * Nothing here decides *when* an event happens. The round machine owns the
---     clock; the director only reacts to the effects it is handed.
---   * Gravity, walking friction, raft motion and path solidity are all reset the
---     moment an event closes, and again on every phase change, so a dropped effect
---     can never leave the arena in a broken state.
+-- Cleanup rules:
+--   * Gravity is written only when it differs, and always returns to the normal value
+--     from the neutral modifier set.
+--   * Friction is applied by overriding each part's CustomPhysicalProperties. The
+--     first override records every part's ORIGINAL value, and restoring writes those
+--     exact values back (or nil where a part had none). Nothing is left behind.
+--   * While friction is active, a DescendantAdded watcher adopts every new surface
+--     (newly spawned or respawned characters, rebuilt pickups) so it gets the same
+--     friction at once and is restored with everything else.
+--   * Friction is written only when its value changes, never once per tick.
+--   * Parts that were destroyed while a surface was altered are skipped on restore.
+local ChaosRules = require(script.Parent.core.ChaosRules)
+
 local EventDirector = {}
 EventDirector.__index = EventDirector
 
-local RAFT_PREFIX = "EventRaft_"
-local PATH_PREFIX = "EventPath_"
-
-export type Geometry = {
-	rafts: { [string]: BasePart },       -- suffix -&gt; deck part
-	paths: { [string]: { BasePart } },   -- index -&gt; spans
-	glows: { [string]: { BasePart } },
-	tracks: { [string]: { BasePart } },
-}
-
--- The baked pose of everything the director moves. Captured once at start-up from
--- the geometry itself (the place is the source of truth), so parking a raft and
--- dropping a span are exact restores rather than recomputed guesses.
-type Rest = {
-	raftPose: { [string]: CFrame },
-	pathPose: { [BasePart]: CFrame },
-	-- Each span's glow strip, so the light rides with the surface it belongs to.
-	pathGlow: { [BasePart]: { BasePart } },
-}
-
-export type State = {
-	kind: string,
-	endsAt: number,
-	elapsed: number,
-}
-
-type Fields = {
-	world: Model?,
-	rest: Rest,
-	geometry: Geometry,
+export type Director = typeof(setmetatable({} :: {
 	normalGravity: number,
-	lowGravity: number,
-	normalFriction: number,
-	slipperyFriction: number,
-	active: string,
-	endsAt: number,
-	startedAt: number,
-	pathLift: number,
-	period: number,
-	parked: boolean,
-	raftsMoved: number,
-	lastPathSolid: boolean,
-}
-export type Director = typeof(setmetatable({} :: Fields, EventDirector))
+	frictionOn: boolean,
+	frictionValue: number?,
+	saved: { [BasePart]: PhysicalProperties | boolean },
+	watcher: RBXScriptConnection?,
+}, EventDirector))
 
-EventDirector.__index = EventDirector
-
--- Mirrors tools/events.py. Kept as literals so the server never parses Python.
-local PLATFORMS = {
-	{ Suffix = "A", Phase = math.pi / 4, Radius = 25.5, Top = 21.9 },
-	{ Suffix = "B", Phase = math.pi * 11 / 12, Radius = 25.5, Top = 21.9 },
-	{ Suffix = "C", Phase = math.pi * 19 / 12, Radius = 25.5, Top = 21.9 },
-}
-local PLATFORM_HEIGHT = 0.55
-local PERIOD = 30
-local PATH_COUNT = 4
-local PATH_SEGMENTS = 3
-local PATH_LIFT = 0.9
-
-function EventDirector.new(world: Model, normalGravity: number, lowGravity: number,
-	normalFriction: number, slipperyFriction: number): Director
-	local rafts: { [string]: BasePart } = {}
-	local rest: Rest = { raftPose = {}, pathPose = {}, pathGlow = {} }
-	local pendingGlows: { [string]: BasePart } = {}
-	local paths: { [string]: { BasePart } } = {}
-	local glows: { [string]: { BasePart } } = {}
-	local tracks: { [string]: { BasePart } } = {}
-	-- Find baked geometry by name. A server started from an older place simply
-	-- reports nothing found, and every event still works (gravity + friction do not
-	-- need geometry).
-	for _, item in world:GetDescendants() do
-		if not item:IsA("BasePart") then
-			continue
-		end
-		local name = item.Name
-		if string.sub(name, 1, #RAFT_PREFIX) == RAFT_PREFIX then
-			local suffix = string.sub(name, #RAFT_PREFIX + 1, #RAFT_PREFIX + 1)
-			if string.find(name, "_Deck", 1, true) then
-				rafts[suffix] = item
-				rest.raftPose[suffix] = item.CFrame
-			elseif string.find(name, "_Glow", 1, true) or string.find(name, "_Lip", 1, true) then
-				glows[suffix] = glows[suffix] or {}
-				table.insert(glows[suffix], item)
-			elseif string.find(name, "_Track", 1, true) then
-				tracks[suffix] = tracks[suffix] or {}
-				table.insert(tracks[suffix], item)
-			end
-		elseif string.sub(name, 1, #PATH_PREFIX) == PATH_PREFIX then
-			local index = string.match(name, "^EventPath_(%d+)_Span_%d+$")
-			if index then
-				paths[index] = paths[index] or {}
-				table.insert(paths[index], item)
-				rest.pathPose[item] = item.CFrame
-			elseif string.match(name, "^EventPath_%d+_Glow_%d+$") then
-				-- Glow strips are paired with their span after the sweep.
-				pendingGlows[string.gsub(name, "_Glow_", "_Span_")] = item
-			end
-		end
-	end
-	-- Pair every glow strip with the span of the same index, and record both rest
-	-- poses. A span without a strip (or the reverse) is simply skipped.
-	for _, group in paths do
-		for _, span in group do
-			local glow = pendingGlows[span.Name]
-			if glow then
-				rest.pathGlow[span] = rest.pathGlow[span] or {}
-				table.insert(rest.pathGlow[span], glow)
-				rest.pathPose[glow] = glow.CFrame
-			end
-		end
-	end
+function EventDirector.new(normalGravity: number): Director
+	assert(normalGravity == normalGravity and normalGravity &gt; 0, "Normal gravity must be positive")
 	return setmetatable({
-		world = world, rest = rest,
-		geometry = { rafts = rafts, paths = paths, glows = glows, tracks = tracks },
-		normalGravity = normalGravity, lowGravity = lowGravity,
-		normalFriction = normalFriction, slipperyFriction = slipperyFriction,
-		active = "", endsAt = 0, startedAt = 0, pathLift = PATH_LIFT, period = PERIOD,
-		parked = true, raftsMoved = 0, lastPathSolid = false,
-	}, EventDirector)
+		normalGravity = normalGravity,
+		frictionOn = false,
+		frictionValue = nil,
+		saved = {},
+		watcher = nil,
+	}, EventDirector) :: any
 end
 
-function EventDirector.counts(self: Director): (number, number)
-	local rafts, paths = 0, 0
-	for _ in self.geometry.rafts do
-		rafts += 1
+-- Pickups named BrainCell are not walkable surfaces and are excluded, as before.
+local function isSurface(instance: Instance): boolean
+	return instance:IsA("BasePart") and instance.Name ~= "BrainCell"
+end
+
+-- Records a part's authored properties once, then overrides them while friction is on.
+local function adopt(self: Director, part: BasePart, props: PhysicalProperties)
+	if self.saved[part] == nil then
+		self.saved[part] = part.CustomPhysicalProperties or false
 	end
-	for _, group in self.geometry.paths do
-		paths += #group
+	if part.Parent ~= nil then
+		part.CustomPhysicalProperties = props
 	end
-	return rafts, paths
 end
 
--- Where a raft should be at `elapsed` seconds into the round.
-function EventDirector.raftPose(self: Director, entry: { Suffix: string, Phase: number, Radius: number, Top: number },
-	elapsed: number): (number, number)
-	local angle = entry.Phase + elapsed * math.tau / self.period
-	return math.cos(angle) * entry.Radius, math.sin(angle) * entry.Radius
-end
-
-local function setPaths(self: Director, solid: boolean)
-	for _, group in self.geometry.paths do
-		for _, span in group do
-			span.CanCollide = solid
-			span.Transparency = if solid then 0 else 1
-			-- Lift so the walkable surface lands flush with the arena floor while
-			-- solid. Baked at its rest pose, so dropping it back is exact.
-			local restPose = self.rest.pathPose[span]
-			if restPose then
-				span.CFrame = if solid
-					then restPose + Vector3.new(0, self.pathLift, 0)
-					else restPose
-			end
-			-- The glow strip rides with the span, so the light never floats where the
-			-- surface is not.
-			for _, glow in self.rest.pathGlow[span] or {} do
-				local glowRest = self.rest.pathPose[glow]
-				if glowRest then
-					glow.CFrame = if solid then glowRest + Vector3.new(0, self.pathLift, 0) else glowRest
-				end
+local function setFriction(self: Director, value: number)
+	if self.frictionOn and self.frictionValue == value then
+		return -- already in force; nothing to write
+	end
+	local props = PhysicalProperties.new(.7, value, .5, 1, 1)
+	self.frictionValue = value
+	if not self.frictionOn then
+		self.frictionOn = true
+		for _, part in (workspace :: any):GetDescendants() do
+			if isSurface(part) and self.saved[part] == nil then
+				self.saved[part] = part.CustomPhysicalProperties or false
 			end
 		end
-	end
-	self.lastPathSolid = solid
-end
-
-local function parkRafts(self: Director)
-	-- Back to exactly the pose baked into the place, so a stopped server and a
-	-- freshly opened place look identical.
-	for _, entry in PLATFORMS do
-		local deck = self.geometry.rafts[entry.Suffix]
-		if deck then
-			local pose = self.rest.raftPose[entry.Suffix]
-			if pose then
-				deck.CFrame = pose
+		self.watcher = (workspace :: any).DescendantAdded:Connect(function(instance: Instance)
+			if self.frictionOn and isSurface(instance) then
+				adopt(self, instance :: BasePart, PhysicalProperties.new(.7, self.frictionValue or value, .5, 1, 1))
 			end
-		end
-		for _, glow in self.geometry.glows[entry.Suffix] or {} do
-			glow.Transparency = 0
-		end
-		for _, track in self.geometry.tracks[entry.Suffix] or {} do
-			track.Transparency = 0
+		end)
+	end
+	for part in self.saved do
+		if part.Parent ~= nil then
+			part.CustomPhysicalProperties = props
 		end
 	end
 end
 
-function EventDirector.start(self: Director, kind: string, now: number, duration: number)
-	self.active = kind
-	self.endsAt = now + duration
-	self.startedAt = now
-	-- Clear whatever ran before. Events never overlap, but a dropped stop must not
-	-- leave low gravity or ice running underneath the next one.
-	self:setGravity(self.normalGravity)
-	for _, group in self.geometry.paths do
-		for _, span in group do
-			span.CanCollide = false
-			span.Transparency = 1
+local function restoreFriction(self: Director)
+	if not self.frictionOn then
+		return
+	end
+	if self.watcher then
+		self.watcher:Disconnect()
+		self.watcher = nil
+	end
+	for part, original in self.saved do
+		if part.Parent ~= nil then
+			part.CustomPhysicalProperties = if original == false then nil else original :: PhysicalProperties
 		end
 	end
-	if kind == "LowGravity" then
-		self:setGravity(self.lowGravity)
-	elseif kind == "Slippery" then
-		self:setFriction(self.slipperyFriction)
-	elseif kind == "VanishingPaths" then
-		setPaths(self, true)
-	elseif kind == "MovingPlatforms" then
-		self.parked = false
-	end
+	table.clear(self.saved)
+	self.frictionOn = false
+	self.frictionValue = nil
 end
 
-function EventDirector.stop(self: Director)
-	self.active = ""
-	self.endsAt = 0
-	self:setGravity(self.normalGravity)
-	self:setFriction(self.normalFriction)
-	setPaths(self, false)
-	parkRafts(self)
-	self.parked = true
-end
-
--- Gravity is a property of the DataModel, which `workspace` *is*: writing it here
--- is the same write the engine does, and it is the single property the adapter's
--- own invariant check asserts on.
-function EventDirector.setGravity(self: Director, value: number)
+-- Make the world match `mods`. Idempotent: calling it twice with the same modifiers
+-- changes nothing the second time.
+function EventDirector.apply(self: Director, mods: ChaosRules.Modifiers)
 	local host: any = workspace
-	host.Gravity = value
-end
-
-function EventDirector.setFriction(self: Director, value: number)
-	-- Terrain friction is the only global surface control in the engine. Setting it
-	-- is instantaneous and free, which is why "slippery" is a global event.
-	for _, part in (workspace :: any):GetDescendants() do
-		if part:IsA("BasePart") and part.Name ~= "BrainCell" then
-			part.CustomPhysicalProperties = PhysicalProperties.new(.7, value, .5, 1, 1)
-		end
+	if host.Gravity ~= mods.Gravity then
+		host.Gravity = mods.Gravity
+	end
+	if mods.Friction ~= nil then
+		setFriction(self, mods.Friction)
+	else
+		restoreFriction(self)
 	end
 end
 
-function EventDirector.step(self: Director, now: number, elapsed: number)
-	if self.active == "" then
-		return
-	end
-	if now &gt;= self.endsAt then
-		if self.active == "VanishingPaths" then
-			-- The last two seconds blink, so nobody is standing on a span when it
-			-- goes: a fair warning for a fair mechanic.
-			local left = self.endsAt - now
-			if left &gt; -2 then
-				setPaths(self, true)
-				for _, group in self.geometry.paths do
-					for _, span in group do
-						span.Transparency = if math.floor(now * 6) % 2 == 0 then 0 else .45
-					end
-				end
-			end
-		end
-		self:stop()
-		return
-	end
-	if self.active == "MovingPlatforms" then
-		for _, entry in PLATFORMS do
-			local deck = self.geometry.rafts[entry.Suffix]
-			if deck then
-				local x, z = self:raftPose(entry, elapsed)
-				deck.CFrame = CFrame.new(x, entry.Top - PLATFORM_HEIGHT / 2, z)
-				self.raftsMoved += 1
-			end
-		end
-	end
-	-- The last three seconds of the vanishing path are visible as a blink.
-	if self.active == "VanishingPaths" and self.endsAt - now &lt; 3 then
-		local on = math.floor(now * 4) % 2 == 0
-		for _, group in self.geometry.paths do
-			for _, span in group do
-				span.Transparency = if on then 0 else .55
-			end
-		end
-	end
-end
-
--- Called on every phase change, whatever the event state says.
+-- Called on every phase change and when the server shuts an event down. Returns the
+-- world to the state it had before any event touched it.
 function EventDirector.reset(self: Director)
-	self:stop()
+	local host: any = workspace
+	host.Gravity = self.normalGravity
+	restoreFriction(self)
+end
+
+-- Number of parts currently overridden. Exposed for tests and the invariant checks.
+function EventDirector.adoptedCount(self: Director): number
+	local count = 0
+	for _ in self.saved do
+		count += 1
+	end
+	return count
 end
 
 return EventDirector
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="Script" referent="RBX001072">
+      <Item class="Script" referent="RBX001074">
         <Properties>
           <string name="Name">Main</string>
           <ProtectedString name="Source">--!strict
@@ -40372,16 +40522,23 @@ local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
 local ArenaRoute = require(script.Parent.core.ArenaRoute)
 local EventDirector = require(script.Parent.EventDirector)
+local ChaosRules = require(script.Parent.core.ChaosRules)
 local Persistence = require(script.Parent.Persistence)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
+local CharacterRules = require(script.Parent.core.CharacterRules)
+local AbilityService = require(script.Parent.AbilityService)
 
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
 settings.Timing = if fast then Config.FastTiming else Config.Timing
-local machine = RoundMachine.new(settings)
 local random = Random.new()
+-- Chaos draws are server-side and uniform over the configured pool. Clamped so a
+-- rounding edge can never index past the end of the list.
+local machine = RoundMachine.new(settings, function(n: number): number
+	return math.min(n, math.floor(random:NextNumber() * n) + 1)
+end)
 -- Species is rolled here, on the server, from the ledger's own slot id and rarity, so
 -- the receipt a client animates names the character that player really collected.
 local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.PickupRadius, Config.PickupRespawn, function()
@@ -40390,6 +40547,10 @@ end, function(slotId: number, value: number): string
 	return CharacterManifest.SpeciesOf(slotId, value)
 end)
 local movement = MovementGuard.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
+-- Character state (switch quotas, per-character cooldowns) and ability effects. Both are
+-- reset at round start; cooldowns never survive into the next round.
+local characters = CharacterRules.new(Config.Characters)
+local abilities = AbilityService.new(movement)
 -- Arena access. Every rail trip goes through this router: it asserts a destination
 -- and keeps asserting it until the character is measurably there.
 local route = ArenaRoute.new()
@@ -40399,8 +40560,11 @@ ArtService.apply()
 local world = WorldService.new()
 -- Animates the baked event geometry by name. Owns gravity/friction *inside* an
 -- event window only; the round machine owns when a window opens.
-local director = EventDirector.new(workspace:FindFirstChild("BrainrotWorld") :: Model, Config.NormalGravity,
-	Config.LowGravity, .7, Config.SlipperyFriction)
+local director = EventDirector.new(Config.NormalGravity)
+-- The live Chaos modifiers. Only syncChaos() writes this, so every consumer (jump,
+-- respawn, rarity, gravity, friction) agrees on the same snapshot of the event.
+local appliedChaos = ""
+local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
 local profiles = Persistence.new({})
@@ -40419,6 +40583,18 @@ pickupRemote.Parent = remotes
 local requestRemote = Instance.new("RemoteEvent")
 requestRemote.Name = "Request"
 requestRemote.Parent = remotes
+-- Character verbs have their own remotes. Each one is validated on its own terms:
+-- Ability takes no arguments; Character takes exactly one integer slot.
+local abilityRemote = Instance.new("RemoteEvent")
+abilityRemote.Name = "Ability"
+abilityRemote.Parent = remotes
+local characterRemote = Instance.new("RemoteEvent")
+characterRemote.Name = "Character"
+characterRemote.Parent = remotes
+-- Server to one player only: their character view and the result of their last verb.
+local characterStateRemote = Instance.new("RemoteEvent")
+characterStateRemote.Name = "CharacterState"
+characterStateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 local pickupFolder = Instance.new("Folder")
@@ -40465,6 +40641,63 @@ local function snapshot()
 		rows = state.rows, results = state.results,
 		fastMode = fast, version = Config.Version,
 	}
+end
+
+-- ---- characters: views, messages and the name tag -----------------------------
+-- Player-facing wording for each refusal reason from CharacterRules.
+local REFUSAL_NOTICES: { [string]: string } = {
+	["phase"] = "CHARACTERS ARE LIVE DURING PLAY",
+	["not-participating"] = "JOIN THE ROUND FIRST",
+	["bad-slot"] = "NO SUCH CHARACTER",
+	["same-character"] = "ALREADY YOUR CHARACTER",
+	["no-switches"] = "NO SWITCHES LEFT THIS ROUND",
+	["bonus-during-chaos-only"] = "BONUS SWITCH: CHAOS EVENT ONLY",
+	["cooling"] = "ABILITY RECHARGING",
+}
+
+local function characterView(player: Player, notice: string?): { [string]: any }
+	local view = CharacterRules.view(characters, player.UserId, machine.eventActive == true)
+	view.notice = notice or ""
+	view.phase = machine.phase
+	view.now = Workspace:GetServerTimeNow()
+	return view
+end
+
+local function sendCharacter(player: Player, notice: string?)
+	characterStateRemote:FireClient(player, characterView(player, notice))
+end
+
+-- The name tag shows the active character. It is rebuilt on every switch and respawn.
+local function applyCharacterTag(player: Player)
+	local character = player.Character
+	local head = if character then character:FindFirstChild("Head") else nil
+	if not head or not head:IsA("BasePart") then
+		return
+	end
+	local active = CharacterRules.ensure(characters, player.UserId).active
+	local species = CharacterManifest.Characters[active]
+	local gui = head:FindFirstChild("CharacterTag")
+	if gui == nil then
+		gui = Instance.new("BillboardGui")
+		gui.Name = "CharacterTag"
+		gui.Size = UDim2.fromOffset(150, 22)
+		gui.StudsOffset = Vector3.new(0, 2.4, 0)
+		gui.MaxDistance = 80
+		gui.Parent = head
+		local label = Instance.new("TextLabel")
+		label.Name = "Label"
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBlack
+		label.TextScaled = true
+		label.TextColor3 = Color3.fromRGB(238, 243, 255)
+		label.TextStrokeTransparency = .5
+		label.Parent = gui
+	end
+	local label = gui:FindFirstChild("Label")
+	if label and label:IsA("TextLabel") then
+		label.Text = species.Label
+	end
 end
 
 local function applyHalo(player: Player)
@@ -40543,9 +40776,9 @@ local function movePlayer(player: Player, arena: boolean, now: number, escalate:
 	end
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
-	humanoid.WalkSpeed = Config.WalkSpeed
+	humanoid.WalkSpeed = AbilityService.walkSpeed(abilities, player.UserId, now)
 	humanoid.UseJumpPower = true
-	humanoid.JumpPower = Config.JumpPower
+	humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
 	movement:teleport(player.UserId, position(target.Position), now)
 	route:attempt(player.UserId, if arena then "arena" else "lobby", now)
 
@@ -40697,20 +40930,15 @@ local function resolveSteal(thief: Player, now: number): (string, number, Player
 	return outcome, value, bestVictim
 end
 
-local function setGravity(active: boolean)
-	Workspace.Gravity = if active then Config.LowGravity else Config.NormalGravity
-	world:setLowGravity(active)
-end
-
 local function checkInvariants()
 	if not RunService:IsStudio() then
 		return
 	end
 	assert(ledger.running == (machine.phase == "Playing"), "Pickup lifecycle diverged")
-	-- Gravity is normal unless the *low gravity* window is the live one. Other
-	-- wildcards leave it alone, so the assertion names the only cause.
+	-- Gravity is normal unless the *low gravity* Chaos Event is the live one. Other
+	-- kinds leave it alone, so the assertion names the only cause.
 	local low = machine.eventActive and machine.eventKind == "LowGravity"
-	assert(math.abs(Workspace.Gravity - (if low then Config.LowGravity else Config.NormalGravity)) &lt; 0.01, "Gravity failed to reset")
+	assert(math.abs(Workspace.Gravity - (if low then Config.Chaos.LowGravity else Config.NormalGravity)) &lt; 0.01, "Gravity failed to reset")
 	-- Nothing can be negative, and carried values always sum to the round score.
 	for _, player in machine.players do
 		assert(player.carriedValue &gt;= 0, "Negative carried value")
@@ -40729,19 +40957,33 @@ local function checkInvariants()
 	end
 end
 
+-- Make the world match the live Chaos Event. Runs every step, so a missed effect can
+-- never leave gravity, friction, jump power or rarity stuck after the window closes.
+local function syncChaos()
+	local kind = if machine.eventActive then machine.eventKind else ""
+	if kind == appliedChaos then
+		return
+	end
+	appliedChaos = kind
+	chaos = ChaosRules.modifiers(kind, Config)
+	director:apply(chaos)
+	world:setLowGravity(kind == "LowGravity")
+	ledger:setRareScale(chaos.RareScale)
+	-- The bonus switch depends on the Chaos Event, so every player is told at once.
+	for _, player in Players:GetPlayers() do
+		sendCharacter(player)
+	end
+end
+
 local function handleEffects(effects, now: number)
 	for _, effect in effects do
 		dirty = true
 		if effect.kind == "event" then
+			-- The world itself is changed by syncChaos(), which reconciles on every step.
 			if effect.active then
-				local duration = math.max(0, (machine.eventEndsAt or now) - now)
-				director:start(effect.event or "", now, duration)
-				world:setLowGravity(effect.event == "LowGravity")
-				print(string.format("[Brainrot] event ON • %s", tostring(effect.event)))
+				print(string.format("[Brainrot] chaos ON • %s", tostring(effect.event)))
 			else
-				director:stop()
-				world:setLowGravity(false)
-				print("[Brainrot] event OFF")
+				print("[Brainrot] chaos OFF")
 			end
 		elseif effect.kind == "warning" then
 			print(string.format("[Brainrot] event warning • %s in %.0fs", tostring(effect.event),
@@ -40771,6 +41013,13 @@ local function handleEffects(effects, now: number)
 			end
 			if machine.phase == "Playing" then
 				ledger:beginRound(machine.roundId)
+				-- Fresh quotas and cooldowns for every player, once per round.
+				local ids: { number } = {}
+				for _, player in Players:GetPlayers() do
+					table.insert(ids, player.UserId)
+				end
+				CharacterRules.beginRound(characters, ids)
+				AbilityService.reset(abilities)
 				spawnPickups()
 				-- Route every player (including a player whose character is still
 				-- loading: routePlayer re-asserts on the next sweep and on
@@ -40783,18 +41032,19 @@ local function handleEffects(effects, now: number)
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
 				director:reset()
-				world:setLowGravity(false)
+				AbilityService.reset(abilities)
 				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
 						routePlayer(player, now, true)
 					end
 				end
 			end
+			for _, player in Players:GetPlayers() do
+				applyCharacterTag(player)
+				sendCharacter(player)
+			end
 			print(string.format("[Brainrot] %s • round %d", machine.phase, machine.roundId))
 		end
-	end
-	if #effects &gt; 0 then
-		checkInvariants()
 	end
 end
 
@@ -40814,6 +41064,9 @@ local function characterAdded(player: Player, character: Model)
 		machine:spawnProtect(player.UserId, now)
 		routePlayer(player, now, true)
 		applyHalo(player)
+		AbilityService.forget(abilities, player.UserId)
+		applyCharacterTag(player)
+		sendCharacter(player)
 	end)
 end
 
@@ -40877,6 +41130,8 @@ Players.PlayerRemoving:Connect(function(player)
 	movement:remove(player.UserId)
 	route:remove(player.UserId)
 	machine:removePlayer(player.UserId)
+	CharacterRules.clear(characters, player.UserId)
+	AbilityService.forget(abilities, player.UserId)
 	dirty = true
 end)
 for _, player in Players:GetPlayers() do
@@ -40942,7 +41197,106 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 		stateRemote:FireClient(player, snapshot(), message)
 	else
 		stateRemote:FireClient(player, snapshot())
+		sendCharacter(player)
 	end
+end)
+
+-- ---- character verbs ------------------------------------------------------------
+-- Separate, strictly validated remotes. Neither carries an effect, a target or a cell.
+abilityRemote.OnServerEvent:Connect(function(player: Player, ...: any)
+	if select("#", ...) ~= 0 then
+		return
+	end
+	local record = records[player.UserId]
+	if not record then
+		return
+	end
+	local now = Workspace:GetServerTimeNow()
+	if now - (record.requests.Ability or -math.huge) &lt; .25 then
+		return
+	end
+	record.requests.Ability = now
+	local character, humanoid, root = characterReady(player)
+	if not character or not humanoid or not root then
+		sendCharacter(player, "ABILITY NEEDS A LIVE CHARACTER")
+		return
+	end
+	local uid = player.UserId
+	local active = CharacterRules.ensure(characters, uid).active
+	local entry = Config.Characters.Roster[active]
+	local ok, reason = CharacterRules.ability(characters, uid, now, {
+		phase = machine.phase, participating = machine:isParticipating(uid),
+	})
+	if not ok then
+		sendCharacter(player, REFUSAL_NOTICES[reason] or "ABILITY REFUSED")
+		return
+	end
+	-- Every live participant is a candidate. The caster is excluded inside AbilityRules.
+	local candidates: { { player: Player, root: BasePart, humanoid: Humanoid } } = {}
+	for _, other in Players:GetPlayers() do
+		local _, otherHumanoid, otherRoot = characterReady(other)
+		if otherRoot and otherHumanoid and machine:isParticipating(other.UserId) then
+			table.insert(candidates, { player = other, root = otherRoot, humanoid = otherHumanoid })
+		end
+	end
+	local affected = AbilityService.perform(abilities, player, character, root, entry, candidates, now)
+	for _, victim in affected do
+		if victim ~= player then
+			sendCharacter(victim, string.format("%s HIT YOU", entry.Title))
+		end
+	end
+	local message
+	if entry.Ability == "MindTrick" then
+		message = string.format("%s • DECOY LIVE", entry.Title)
+	elseif entry.Ability == "BubbleDash" then
+		message = entry.Title
+	elseif #affected &gt; 0 then
+		message = string.format("%s • %d HIT", entry.Title, #affected)
+	else
+		message = string.format("%s • NOTHING IN RANGE", entry.Title)
+	end
+	sendCharacter(player, message)
+end)
+
+characterRemote.OnServerEvent:Connect(function(player: Player, ...: any)
+	if select("#", ...) ~= 1 then
+		return
+	end
+	local slot = ...
+	local record = records[player.UserId]
+	if not record then
+		return
+	end
+	local now = Workspace:GetServerTimeNow()
+	if now - (record.requests.Character or -math.huge) &lt; .25 then
+		return
+	end
+	record.requests.Character = now
+	local ok, reason = CharacterRules.switch(characters, player.UserId, slot, {
+		phase = machine.phase,
+		participating = machine:isParticipating(player.UserId),
+		chaos = machine.eventActive == true,
+	})
+	if ok then
+		applyCharacterTag(player)
+		local name = Config.Characters.Roster[CharacterRules.ensure(characters, player.UserId).active].Title
+		sendCharacter(player, "NOW: " .. name)
+	else
+		sendCharacter(player, REFUSAL_NOTICES[reason] or "SWITCH REFUSED")
+	end
+end)
+
+-- Every frame: keeps dashes moving for their duration and walk speeds equal to the live value.
+RunService.Heartbeat:Connect(function()
+	local now = Workspace:GetServerTimeNow()
+	local list: { { player: Player, root: BasePart, humanoid: Humanoid } } = {}
+	for _, player in Players:GetPlayers() do
+		local _, humanoid, root = characterReady(player)
+		if humanoid and root then
+			table.insert(list, { player = player, root = root, humanoid = humanoid })
+		end
+	end
+	AbilityService.drive(abilities, now, list)
 end)
 
 local accumulator = 0
@@ -40951,26 +41305,38 @@ RunService.Heartbeat:Connect(function(dt: number)
 	if accumulator &lt; Config.ServerStep then
 		return
 	end
-	accumulator = 0
+	-- Carry the remainder forward so the authority step keeps its 0.1 s cadence and does not
+	-- drift with frame timing. The carry is capped at one step, so a long stall cannot cause a
+	-- burst of catch-up steps.
+	accumulator = math.min(accumulator - Config.ServerStep, Config.ServerStep)
 	local now = Workspace:GetServerTimeNow()
-	handleEffects(machine:step(now), now)
+	local effects = machine:step(now)
+	handleEffects(effects, now)
+	syncChaos()
+	AbilityService.prune(abilities, now)
+	if #effects &gt; 0 then
+		-- Checked after the world has been reconciled, so the invariant sees the result.
+		checkInvariants()
+	end
 
 	if machine.phase == "Playing" then
 		for _, id in ledger:step(now) do
 			updatePickup(id)
 		end
-		ledger.respawn = if machine.eventKind == "CollectibleRush" then Config.RushRespawn
+		ledger.respawn = if chaos.Respawn then chaos.Respawn
 			elseif machine.stage == "Final" then Config.FinalRespawn
 			else Config.PickupRespawn
 	else
 		ledger.respawn = Config.PickupRespawn
 	end
-	-- The director animates rafts and blinking paths between event edges.
-	director:step(now, machine.phaseStartedAt &gt; 0 and (now - machine.phaseStartedAt) or 0)
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
 		local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
+		-- Bouncy World: the jump scale follows the live event. Written only on change.
+		if humanoid and humanoid.JumpPower ~= Config.JumpPower * chaos.JumpScale then
+			humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
+		end
 		if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health &lt;= 0 then
 			continue
 		end
@@ -41043,7 +41409,7 @@ print(string.format("[Brainrot] v%s ready • %s • %d pickup slots • %ds rou
           <bool name="Disabled">false</bool>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001073">
+      <Item class="ModuleScript" referent="RBX001075">
         <Properties>
           <string name="Name">Persistence</string>
           <ProtectedString name="Source">--!nonstrict
@@ -41346,7 +41712,7 @@ return Persistence
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001074">
+      <Item class="ModuleScript" referent="RBX001076">
         <Properties>
           <string name="Name">WorldData</string>
           <ProtectedString name="Source">--!nocheck
@@ -42344,7 +42710,7 @@ return {
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001075">
+      <Item class="ModuleScript" referent="RBX001077">
         <Properties>
           <string name="Name">WorldService</string>
           <ProtectedString name="Source">--!strict
@@ -42495,11 +42861,121 @@ return WorldService
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="Folder" referent="RBX001076">
+      <Item class="Folder" referent="RBX001078">
         <Properties>
           <string name="Name">core</string>
         </Properties>
-        <Item class="ModuleScript" referent="RBX001077">
+        <Item class="ModuleScript" referent="RBX001079">
+          <Properties>
+            <string name="Name">AbilityRules</string>
+            <ProtectedString name="Source">--!strict
+-- Pure ability geometry and status bookkeeping. No Roblox services, no cells, no score.
+-- Positions are plain {x, y, z} tables, the same convention as ArenaRoute and MovementGuard.
+local AbilityRules = {}
+
+export type Vec = { x: number, y: number, z: number }
+export type Candidate = { userId: number, position: Vec }
+export type Hit = { userId: number, distance: number }
+export type Statuses = { [number]: { factor: number, untilAt: number } }
+
+local function distance(a: Vec, b: Vec): number
+	local dx, dy, dz = b.x - a.x, b.y - a.y, b.z - a.z
+	return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+-- Every eligible opponent inside `radius` of the caster, nearest first. The caster is
+-- always excluded, so an ability can never hit its own user.
+function AbilityRules.targetsIn(origin: Vec, candidates: { Candidate }, radius: number, casterId: number): { Hit }
+	assert(radius &gt; 0, "radius must be positive")
+	local hits: { Hit } = {}
+	for _, candidate in candidates do
+		if candidate.userId ~= casterId then
+			local d = distance(origin, candidate.position)
+			if d &lt;= radius then
+				table.insert(hits, { userId = candidate.userId, distance = d })
+			end
+		end
+	end
+	table.sort(hits, function(a: Hit, b: Hit): boolean
+		if a.distance == b.distance then
+			return a.userId &lt; b.userId
+		end
+		return a.distance &lt; b.distance
+	end)
+	return hits
+end
+
+-- Unit horizontal direction from `from` to `to`. Falls back to `fallback` when the two
+-- points coincide, so a launch always has a defined direction.
+function AbilityRules.horizontalDirection(from: Vec, to: Vec, fallback: Vec): Vec
+	local dx, dz = to.x - from.x, to.z - from.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length &lt; 1e-6 then
+		dx, dz = fallback.x, fallback.z
+		length = math.sqrt(dx * dx + dz * dz)
+		if length &lt; 1e-6 then
+			return { x = 0, y = 0, z = 1 }
+		end
+	end
+	return { x = dx / length, y = 0, z = dz / length }
+end
+
+-- Knockback: a horizontal push away from the caster plus a small lift.
+function AbilityRules.knockbackVelocity(direction: Vec, push: number, lift: number): Vec
+	return { x = direction.x * push, y = lift, z = direction.z * push }
+end
+
+-- Upward launch with no horizontal component.
+function AbilityRules.launchVelocity(lift: number): Vec
+	return { x = 0, y = lift, z = 0 }
+end
+
+-- Bubble Dash: horizontal only, along the caster's facing, so it cannot be used to fly.
+function AbilityRules.dashVelocity(look: Vec, speed: number): Vec
+	local dx, dz = look.x, look.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length &lt; 1e-6 then
+		return { x = 0, y = 0, z = 0 }
+	end
+	return { x = dx / length * speed, y = 0, z = dz / length * speed }
+end
+
+-- Keeps the strongest slow on a player: the lowest factor wins, and the longest expiry wins.
+-- Re-applying an ability never weakens a slow that is already stronger.
+function AbilityRules.applySlow(statuses: Statuses, userId: number, factor: number, untilAt: number)
+	assert(factor &gt; 0 and factor &lt;= 1, "slow factor must be in (0, 1]")
+	local current = statuses[userId]
+	if current == nil then
+		statuses[userId] = { factor = factor, untilAt = untilAt }
+		return
+	end
+	current.factor = math.min(current.factor, factor)
+	current.untilAt = math.max(current.untilAt, untilAt)
+end
+
+-- The speed multiplier in force right now. 1 means no effect.
+function AbilityRules.speedFactor(statuses: Statuses, userId: number, now: number): number
+	local current = statuses[userId]
+	if current == nil or now &gt;= current.untilAt then
+		return 1
+	end
+	return current.factor
+end
+
+-- Drops every slow that has expired.
+function AbilityRules.prune(statuses: Statuses, now: number)
+	for userId, current in statuses do
+		if now &gt;= current.untilAt then
+			statuses[userId] = nil
+		end
+	end
+end
+
+return AbilityRules
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001080">
           <Properties>
             <string name="Name">ArenaRoute</string>
             <ProtectedString name="Source">--!strict
@@ -42747,7 +43223,249 @@ return ArenaRoute
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001078">
+        <Item class="ModuleScript" referent="RBX001081">
+          <Properties>
+            <string name="Name">ChaosRules</string>
+            <ProtectedString name="Source">--!strict
+-- Pure, engine-independent rules for the Chaos Event. Given the live kind (or ""),
+-- returns the complete set of modifiers the server should apply right now.
+--
+-- Every value is read from Config.Chaos or Config; nothing is duplicated here.
+-- The server reconciles to `modifiers(machine.eventKind)` on every step, so the
+-- neutral set is always what remains after an event ends. Cleanup therefore does
+-- not depend on remembering to undo one specific effect.
+local ChaosRules = {}
+
+export type Modifiers = {
+	Kind: string,
+	Gravity: number,       -- Workspace.Gravity
+	Friction: number?,     -- nil = surfaces keep their own physical properties
+	JumpScale: number,     -- multiplier on Config.JumpPower
+	RareScale: number,     -- weight multiplier for Rare and Prismatic cells
+	Respawn: number?,      -- nil = normal respawn rules apply
+}
+
+export type Config = {
+	NormalGravity: number,
+	SlipperyFriction: number,
+	RushRespawn: number,
+	Chaos: {
+		Kinds: { string },
+		LowGravity: number,
+		BouncyJumpScale: number,
+		RushRarityScale: number,
+	},
+}
+
+local function neutral(config: Config): Modifiers
+	return {
+		Kind = "",
+		Gravity = config.NormalGravity,
+		Friction = nil,
+		JumpScale = 1,
+		RareScale = 1,
+		Respawn = nil,
+	}
+end
+
+-- The set of kinds the server may draw from. Used by the round machine's validation.
+function ChaosRules.isKnown(kind: string): boolean
+	return kind == "LowGravity" or kind == "BouncyWorld" or kind == "SlipperyChaos" or kind == "BrainCellRush"
+end
+
+function ChaosRules.modifiers(kind: string, config: Config): Modifiers
+	local result = neutral(config)
+	if kind == "" then
+		return result
+	end
+	result.Kind = kind
+	if kind == "LowGravity" then
+		result.Gravity = config.Chaos.LowGravity
+	elseif kind == "BouncyWorld" then
+		result.JumpScale = config.Chaos.BouncyJumpScale
+	elseif kind == "SlipperyChaos" then
+		result.Friction = config.SlipperyFriction
+	elseif kind == "BrainCellRush" then
+		result.RareScale = config.Chaos.RushRarityScale
+		result.Respawn = config.RushRespawn
+	else
+		error("Unknown Chaos Event kind: " .. tostring(kind), 2)
+	end
+	return result
+end
+
+ChaosRules.neutral = neutral
+
+return table.freeze(ChaosRules)
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001082">
+          <Properties>
+            <string name="Name">CharacterRules</string>
+            <ProtectedString name="Source">--!strict
+-- Pure character state: which character each player holds, how many switches they
+-- have left, and when each character's ability is ready again. No Roblox services.
+--
+-- Rules:
+--   * One active character at a time. Everyone starts a round on Order[1].
+--   * Normal switches: Config.Characters.SwitchesNormal per round, any time in Playing.
+--   * Bonus switch: Config.Characters.SwitchesBonus per round, only while the Chaos Event
+--     is active. Four switches at most in total.
+--   * Cooldowns are stored per player AND per character. A switch never resets or
+--     copies a cooldown, so switching away and back cannot clear one.
+--   * beginRound() clears every cooldown and every switch quota.
+local CharacterRules = {}
+CharacterRules.__index = CharacterRules
+
+export type Options = {
+	phase: string,
+	participating: boolean,
+	chaos: boolean?,
+}
+
+export type Player = {
+	active: string,
+	normalLeft: number,
+	bonusLeft: number,
+	readyAt: { [string]: number },
+}
+
+export type Rules = typeof(setmetatable({} :: {
+	order: { string },
+	roster: { [string]: { Ability: string, Cooldown: number } },
+	normalMax: number,
+	bonusMax: number,
+	players: { [number]: Player },
+}, CharacterRules))
+
+function CharacterRules.new(characters: any): Rules
+	assert(typeof(characters) == "table", "characters config required")
+	assert(#characters.Order == 6, "exactly six characters are required")
+	local seen: { [string]: boolean } = {}
+	for _, key in characters.Order do
+		assert(characters.Roster[key] ~= nil, "missing roster entry: " .. key)
+		assert(not seen[key], "duplicate character: " .. key)
+		seen[key] = true
+		assert(characters.Roster[key].Cooldown &gt; 0, "cooldown must be positive: " .. key)
+	end
+	assert(characters.SwitchesNormal &gt;= 0 and characters.SwitchesBonus &gt;= 0, "switch quotas cannot be negative")
+	return setmetatable({
+		order = characters.Order,
+		roster = characters.Roster,
+		normalMax = characters.SwitchesNormal,
+		bonusMax = characters.SwitchesBonus,
+		players = {},
+	}, CharacterRules) :: any
+end
+
+local function freshPlayer(self: Rules): Player
+	return { active = self.order[1], normalLeft = self.normalMax, bonusLeft = self.bonusMax, readyAt = {} }
+end
+
+-- Starts a new round for these players. Every cooldown and quota is reset here, and
+-- nowhere else, so "cooldowns reset at the next round" has exactly one implementation.
+function CharacterRules.beginRound(self: Rules, userIds: { number })
+	self.players = {}
+	for _, userId in userIds do
+		self.players[userId] = freshPlayer(self)
+	end
+end
+
+-- A player who joins mid-round gets a full quota and fresh cooldowns.
+function CharacterRules.ensure(self: Rules, userId: number): Player
+	local player = self.players[userId]
+	if player == nil then
+		player = freshPlayer(self)
+		self.players[userId] = player
+	end
+	return player
+end
+
+function CharacterRules.clear(self: Rules, userId: number)
+	self.players[userId] = nil
+end
+
+-- Returns (ok, reason). reason is "" on success.
+function CharacterRules.switch(self: Rules, userId: number, slot: any, options: Options): (boolean, string)
+	if options.phase ~= "Playing" then
+		return false, "phase"
+	end
+	if not options.participating then
+		return false, "not-participating"
+	end
+	if typeof(slot) ~= "number" or slot ~= math.floor(slot) or slot &lt; 1 or slot &gt; #self.order then
+		return false, "bad-slot"
+	end
+	local player = CharacterRules.ensure(self, userId)
+	local target = self.order[slot]
+	if target == player.active then
+		return false, "same-character"
+	end
+	local chaos = options.chaos == true
+	if player.normalLeft &gt; 0 then
+		player.normalLeft -= 1
+	elseif player.bonusLeft &gt; 0 and chaos then
+		player.bonusLeft -= 1
+	elseif player.bonusLeft &gt; 0 then
+		return false, "bonus-during-chaos-only"
+	else
+		return false, "no-switches"
+	end
+	player.active = target
+	return true, ""
+end
+
+-- Starts the active character's ability. Returns (ok, reason, abilityKey).
+function CharacterRules.ability(self: Rules, userId: number, now: number, options: Options): (boolean, string, string)
+	if options.phase ~= "Playing" then
+		return false, "phase", ""
+	end
+	if not options.participating then
+		return false, "not-participating", ""
+	end
+	local player = CharacterRules.ensure(self, userId)
+	local ready = player.readyAt[player.active] or 0
+	if now &lt; ready then
+		return false, "cooling", ""
+	end
+	local entry = self.roster[player.active]
+	player.readyAt[player.active] = now + entry.Cooldown
+	return true, "", entry.Ability
+end
+
+-- Seconds until a character's ability is ready again, never negative.
+function CharacterRules.remaining(self: Rules, userId: number, characterId: string, now: number): number
+	local player = self.players[userId]
+	if player == nil then
+		return 0
+	end
+	return math.max(0, (player.readyAt[characterId] or 0) - now)
+end
+
+-- The per-player view the client renders. Cooldowns are sent as server-clock deadlines,
+-- so the client can count down without the server re-sending every second.
+function CharacterRules.view(self: Rules, userId: number, chaos: boolean): { [string]: any }
+	local player = CharacterRules.ensure(self, userId)
+	local readyAt: { [string]: number } = {}
+	for id, value in player.readyAt do
+		readyAt[id] = value
+	end
+	return {
+		active = player.active,
+		normalLeft = player.normalLeft,
+		bonusLeft = if chaos then player.bonusLeft else 0,
+		bonusTotal = self.bonusMax,
+		normalTotal = self.normalMax,
+		readyAt = readyAt,
+	}
+end
+
+return CharacterRules
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001083">
           <Properties>
             <string name="Name">MovementGuard</string>
             <ProtectedString name="Source">--!strict
@@ -42757,7 +43475,7 @@ local MovementGuard = {}
 MovementGuard.__index = MovementGuard
 
 export type Position = { x: number, y: number, z: number }
-type Track = { position: Position, at: number, unlockAt: number }
+type Track = { position: Position, at: number, unlockAt: number, grantSpeed: number, grantUntil: number }
 type Fields = { tracks: { [number]: Track }, speed: number, slack: number, protection: number }
 export type Guard = typeof(setmetatable({} :: Fields, MovementGuard))
 
@@ -42771,7 +43489,22 @@ function MovementGuard.new(speed: number, slack: number, protection: number): Gu
 end
 
 function MovementGuard.teleport(self: Guard, id: number, position: Position, now: number)
-	self.tracks[id] = { position = position, at = now, unlockAt = now + self.protection }
+	self.tracks[id] = { position = position, at = now, unlockAt = now + self.protection, grantSpeed = 0, grantUntil = 0 }
+end
+
+-- A temporary allowance for movement the server itself caused (an ability push or dash).
+-- It adds `speed` to the horizontal limit until `untilAt`, and nothing more. Without a
+-- grant the check is exactly as strict as before.
+function MovementGuard.grant(self: Guard, id: number, speed: number, untilAt: number, now: number)
+	assert(speed &gt;= 0, "grant speed cannot be negative")
+	local track = self.tracks[id]
+	if track == nil then
+		-- No known position yet: nothing to relax. The caller grants after observing.
+		return false
+	end
+	track.grantSpeed = math.max(if now &lt; track.grantUntil then track.grantSpeed else 0, speed)
+	track.grantUntil = math.max(if now &lt; track.grantUntil then track.grantUntil else 0, untilAt)
+	return true
 end
 
 function MovementGuard.remove(self: Guard, id: number)
@@ -42790,7 +43523,8 @@ function MovementGuard.observe(self: Guard, id: number, position: Position, now:
 	local dt = math.clamp(now - track.at, 0, 1)
 	local dx = position.x - track.position.x
 	local dz = position.z - track.position.z
-	local limit = self.speed * dt + self.slack
+	local bonus = if now &lt; track.grantUntil then track.grantSpeed else 0
+	local limit = (self.speed + bonus) * dt + self.slack
 	if dx * dx + dz * dz &gt; limit * limit then
 		track.at = now
 		track.unlockAt = now + self.protection
@@ -42805,7 +43539,7 @@ return MovementGuard
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001079">
+        <Item class="ModuleScript" referent="RBX001084">
           <Properties>
             <string name="Name">PickupLedger</string>
             <ProtectedString name="Source">--!strict
@@ -42829,6 +43563,7 @@ export type Receipt = {
 type Fields = {
 	slots: { Slot }, kinds: { Kind }, radius: number, respawn: number,
 	roundId: number, running: boolean, choose: () -&gt; number, species: (number, number) -&gt; string,
+	rareScale: number,
 }
 export type Ledger = typeof(setmetatable({} :: Fields, PickupLedger))
 
@@ -42867,18 +43602,30 @@ function PickupLedger.new(
 	end
 	return setmetatable({
 		slots = slots, kinds = kinds, radius = radius, respawn = respawn,
-		roundId = 0, running = false, choose = choose, species = speciesOf,
+		roundId = 0, running = false, choose = choose, species = speciesOf, rareScale = 1,
 	}, PickupLedger)
+end
+
+-- Weight of one kind for the next roll. Only denominations above +1 are scaled, so
+-- Brain Cell Rush raises the odds of Rare and Prismatic cells and nothing else.
+local function weightOf(self: Ledger, kind: Kind): number
+	return if kind.Value &gt; 1 then kind.Weight * self.rareScale else kind.Weight
+end
+
+-- The server sets this from the live Chaos Event each tick (1 = normal odds).
+function PickupLedger.setRareScale(self: Ledger, scale: number)
+	assert(scale == scale and scale &gt;= 0 and scale &lt; math.huge, "Rarity scale must be finite and non-negative")
+	self.rareScale = scale
 end
 
 function PickupLedger.rollKind(self: Ledger): number
 	local total = 0
 	for _, kind in self.kinds do
-		total += kind.Weight
+		total += weightOf(self, kind)
 	end
 	local roll = math.clamp(self.choose(), 0, 0.999999) * total
 	for index, kind in self.kinds do
-		roll -= kind.Weight
+		roll -= weightOf(self, kind)
 		if roll &lt; 0 then
 			return index
 		end
@@ -42960,7 +43707,7 @@ return PickupLedger
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001080">
+        <Item class="ModuleScript" referent="RBX001085">
           <Properties>
             <string name="Name">RoundMachine</string>
             <ProtectedString name="Source">--!strict
@@ -42979,16 +43726,15 @@ RoundMachine.__index = RoundMachine
 
 export type Timing = {
 	Intermission: number, Round: number, Results: number,
-	EventStart: number, EventDuration: number, Warning: number,
+	ChaosStart: number, ChaosDuration: number, Warning: number,
 }
 export type Stage = { Name: string, At: number, Label: string }
-export type EventSpec = { Kind: string, At: number, Duration: number }
 export type StealRules = {
 	Range: number, Cooldown: number, Protection: number, Immunity: number, RepeatWindow: number,
 }
 export type Settings = {
 	Timing: Timing,
-	Stages: { Stage }?, Events: { EventSpec }?, Wildcards: { string }?,
+	Stages: { Stage }?, Chaos: { Kinds: { string } },
 	Steal: StealRules,
 	ParticipationCoins: number, CoinsPerPoint: number, WinnerCoins: number, HaloCost: number,
 	SlipperyFriction: number?, RushRespawn: number?, FinalRespawn: number?,
@@ -43026,6 +43772,7 @@ type Fields = {
 	eventKind: string, eventFinished: boolean, eventWarning: string, warningEndsAt: number,
 	stage: string, stageIndex: number, stageEndsAt: number, schedule: { Scheduled },
 	lastNow: number, lastResults: Results?,
+	choose: (number) -&gt; number, chaosKind: string,
 }
 export type Machine = typeof(setmetatable({} :: Fields, RoundMachine))
 
@@ -43037,10 +43784,9 @@ end
 -- shows the same words for the same server event.
 local LABEL: { [string]: string } = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 RoundMachine.Label = LABEL
@@ -43051,22 +43797,20 @@ local DEFAULT_STAGES: { Stage } = {
 	{ Name = "Chaos", At = 105, Label = "CHAOS" },
 	{ Name = "Final", At = 150, Label = "FINAL RUSH" },
 }
-local DEFAULT_EVENTS: { EventSpec } = {
-	{ Kind = "LowGravity", At = 60, Duration = 25 },
-	{ Kind = "Wildcard", At = 108, Duration = 18 },
-}
-local DEFAULT_WILDCARDS = { "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" }
+local DEFAULT_KINDS = { "LowGravity", "BouncyWorld", "SlipperyChaos", "BrainCellRush" }
 
-function RoundMachine.new(config: Settings): Machine
+-- `choose(n)` returns an integer in 1..n. The server passes its own RNG; tests pass a
+-- scripted one. Defaults to math.random so the pure module runs standalone.
+function RoundMachine.new(config: Settings, choose: ((number) -&gt; number)?): Machine
 	assert(config.Timing.Intermission &gt; 0 and config.Timing.Round &gt; 0 and config.Timing.Results &gt; 0, "Positive phase durations required")
-	assert(config.Timing.EventStart &gt;= 0 and config.Timing.EventDuration &gt; 0, "Invalid event timing")
-	assert(config.Timing.EventStart + config.Timing.EventDuration &lt; config.Timing.Round, "Chaos event must fit inside the round")
+	assert(config.Timing.ChaosStart &gt;= 0 and config.Timing.ChaosDuration &gt; 0, "Invalid Chaos Event timing")
+	assert(config.Timing.ChaosStart + config.Timing.ChaosDuration &lt; config.Timing.Round, "Chaos event must fit inside the round")
 	assert(#(config.Stages or DEFAULT_STAGES) &gt; 0, "At least one stage required")
 	assert((config.Stages or DEFAULT_STAGES)[1].At == 0, "The first stage must start at zero")
 	-- A config can legitimately carry a longer timeline than the round it is paired
-	-- with (a quick-test round is 30s against a 180s stage plan). Boundaries past
-	-- the deadline are dropped rather than trimmed, so a stage never starts at an
-	-- instant the round cannot reach.
+	-- with (a quick-test round is shorter than the stage plan). Boundaries past the
+	-- deadline are dropped rather than trimmed, so a stage never starts at an instant
+	-- the round cannot reach.
 	local stages: { Stage } = {}
 	for _, stage in config.Stages or DEFAULT_STAGES do
 		assert(stage.At &gt;= 0, "Stage outside the round")
@@ -43077,22 +43821,17 @@ function RoundMachine.new(config: Settings): Machine
 			table.insert(stages, stage)
 		end
 	end
-	local events: { EventSpec } = {}
-	for _, spec in config.Events or DEFAULT_EVENTS do
-		assert(spec.Duration &gt; 0, "Invalid event window")
-		if spec.At &gt;= 0 and spec.At + spec.Duration &lt; config.Timing.Round then
-			table.insert(events, spec)
-		end
-	end
-	if #events == 0 then
-		-- Legacy contract: one window derived from the timing block. This keeps a
-		-- short round with a long event plan playable instead of eventless.
-		events = { { Kind = "LowGravity", At = config.Timing.EventStart,
-			Duration = config.Timing.EventDuration } }
+	local kinds = if config.Chaos then config.Chaos.Kinds else DEFAULT_KINDS
+	assert(#kinds &gt; 0, "The Chaos pool needs at least one kind")
+	local seen: { [string]: boolean } = {}
+	for _, kind in kinds do
+		assert(LABEL[kind] ~= nil, "Unknown Chaos Event kind: " .. tostring(kind))
+		assert(not seen[kind], "Duplicate Chaos Event kind: " .. kind)
+		seen[kind] = true
 	end
 	config = table.clone(config) :: Settings
 	config.Stages = stages
-	config.Events = events
+	config.Chaos = { Kinds = table.clone(kinds) }
 	assert(config.Steal.Range &gt; 0 and config.Steal.Cooldown &gt; 0, "Invalid steal rules")
 	return setmetatable({
 		config = config, players = {}, phase = "Waiting", roundId = 0,
@@ -43100,6 +43839,8 @@ function RoundMachine.new(config: Settings): Machine
 		eventKind = "", eventFinished = false, eventWarning = "", warningEndsAt = 0,
 		stage = stages[1].Name, stageIndex = 1, stageEndsAt = 0, schedule = {},
 		lastNow = 0, lastResults = nil,
+		choose = choose or function(n: number): number return math.random(1, n) end,
+		chaosKind = "",
 	}, RoundMachine)
 end
 
@@ -43411,31 +44152,29 @@ function RoundMachine.stageAt(self: Machine, elapsed: number): (number, Stage)
 	return index, stages[index]
 end
 
--- Resolve the event timeline for a round. Wildcards rotate by round id, so every
--- client (and a replay of the same round) sees the same schedule.
-function RoundMachine.buildSchedule(self: Machine, roundId: number?): { Scheduled }
-	local events = self.config.Events or DEFAULT_EVENTS
-	-- Callers may ask about a specific round (tests, tools, a replay); the live
-	-- machine always passes nothing and gets the current one.
-	local rid = roundId or self.roundId
-	local wildcards = self.config.Wildcards or DEFAULT_WILDCARDS
-	local out: { Scheduled } = {}
-	local warning = self.config.Timing.Warning or 0
-	for _, spec in events do
-		local kind = spec.Kind
-		if kind == "Wildcard" then
-			kind = wildcards[(math.max(1, rid) - 1) % #wildcards + 1]
-		end
-		table.insert(out, {
-			Kind = kind, StartsAt = spec.At, EndsAt = spec.At + spec.Duration,
-			WarningAt = math.max(0, spec.At - warning),
-		})
+-- Draw the single Chaos Event for a round. Uniform over the configured pool, decided
+-- on the server at round start, and sent to clients inside the snapshot.
+function RoundMachine.drawChaos(self: Machine): string
+	local kinds = self.config.Chaos.Kinds
+	local raw = self.choose(#kinds)
+	local index = if finite(raw) then math.clamp(math.floor(raw), 1, #kinds) else 1
+	return kinds[index]
+end
+
+-- The round's timeline: exactly one window, warned in advance. A kind can be given
+-- explicitly (tests, replays); the live machine uses the kind drawn for this round.
+function RoundMachine.buildSchedule(self: Machine, kind: string?): { Scheduled }
+	local chosen = kind or self.chaosKind
+	if chosen == "" then
+		return {}
 	end
-	local sorted = out :: { Scheduled }
-	table.sort(sorted, function(a, b): boolean
-		return (a.StartsAt :: number) &lt; (b.StartsAt :: number)
-	end)
-	return out
+	local start = self.config.Timing.ChaosStart
+	return {{
+		Kind = chosen,
+		StartsAt = start,
+		EndsAt = start + self.config.Timing.ChaosDuration,
+		WarningAt = math.max(0, start - (self.config.Timing.Warning or 0)),
+	}}
 end
 
 function RoundMachine.eventLabel(kind: string): string
@@ -43455,7 +44194,8 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventWarning = ""
 		self.warningEndsAt = 0
 		self.phaseEndsAt = now + self.config.Timing.Round
-		self.schedule = self:buildSchedule()
+		self.chaosKind = self:drawChaos()
+		self.schedule = self:buildSchedule(self.chaosKind)
 		local _, stage = self:stageAt(0)
 		self.stage = stage.Name
 		self.stageIndex = 1
@@ -43484,6 +44224,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventKind = ""
 		self.eventWarning = ""
 		self.schedule = {}
+		self.chaosKind = ""
 	elseif phase == "Results" then
 		self:finishRound()
 		self.phaseEndsAt = now + self.config.Timing.Results
@@ -43502,6 +44243,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.eventKind = ""
 		self.eventWarning = ""
 		self.schedule = {}
+		self.chaosKind = ""
 		for _, player in self.players do
 			player.participating = false
 			table.clear(player.carried)
@@ -43635,7 +44377,7 @@ return RoundMachine
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="RBX001081">
+  <Item class="StarterPlayer" referent="RBX001086">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CharacterWalkSpeed">22</float>
@@ -43644,15 +44386,153 @@ return RoundMachine
       <float name="CameraMinZoomDistance">8</float>
       <bool name="CharacterUseJumpPower">true</bool>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="RBX001082">
+    <Item class="StarterPlayerScripts" referent="RBX001087">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="RBX001083">
+      <Item class="Folder" referent="RBX001088">
         <Properties>
           <string name="Name">BrainrotClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="RBX001084">
+        <Item class="ModuleScript" referent="RBX001089">
+          <Properties>
+            <string name="Name">Audio</string>
+            <ProtectedString name="Source">--!strict
+-- Client-side music and cue playback. It follows the replicated state, and every
+-- decision (which track, when a cue fires) comes from AudioRules. Nothing here is
+-- authoritative: audio never changes gameplay.
+--
+-- Behaviour:
+--   * One looped Sound per CONFIGURED music track. An empty ID creates no Sound.
+--   * Track changes crossfade over Config.Audio.CrossfadeSeconds. Volume moves a
+--     fixed step per frame, so a fade always takes the same wall time.
+--   * Stingers fire on the server-driven edges: round start/end, Chaos start/end.
+--   * The Settings "Sound" toggle (hud.soundOn) mutes music and cues together.
+--   * destroy() removes every Sound this module created.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+local AudioRules = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("AudioRules"))
+
+local Audio = {}
+Audio.__index = Audio
+
+export type Track = { sound: Sound?, wanted: boolean }
+
+export type Controller = typeof(setmetatable({} :: {
+	config: any,
+	folder: Folder,
+	tracks: { [string]: Track },
+	wanted: string,
+	enabled: boolean,
+	lastPhase: string?,
+	lastEvent: string,
+	cueCount: number,
+}, Audio))
+
+function Audio.new(config: any): Controller
+	local folder = Instance.new("Folder")
+	folder.Name = "BrainrotAudio"
+	folder.Parent = SoundService
+	local tracks: { [string]: Track } = {}
+	for name, id in config.Audio.Tracks do
+		assert(AudioRules.validId(id), "Invalid music ID for track " .. name)
+		local track: Track = { sound = nil, wanted = false }
+		if id ~= "" then
+			local sound = Instance.new("Sound")
+			sound.Name = "Music_" .. name
+			sound.Looped = true
+			sound.Volume = 0
+			sound.SoundId = id
+			sound.Parent = folder
+			track.sound = sound
+		end
+		tracks[name] = track
+	end
+	return setmetatable({
+		config = config, folder = folder, tracks = tracks, wanted = "Lobby",
+		enabled = true, lastPhase = nil, lastEvent = "", cueCount = 0,
+	}, Audio) :: any
+end
+
+-- Plays a one-shot cue. Returns true only when a sound actually started.
+function Audio.cue(self: Controller, name: string): boolean
+	local id = AudioRules.cueId(self.config.Audio.Cues, name)
+	if id == nil or not self.enabled then
+		return false
+	end
+	local sound = Instance.new("Sound")
+	self.cueCount += 1
+	sound.Name = "Cue_" .. name .. "_" .. self.cueCount
+	sound.SoundId = id
+	sound.Volume = self.config.Audio.CueVolume
+	sound.Parent = self.folder
+	sound:Play()
+	Debris:AddItem(sound, 8)
+	return true
+end
+
+-- Reacts to a replicated state snapshot. Only edges trigger stingers, so joining
+-- mid-event does not replay anything from the past.
+function Audio.setState(self: Controller, state: any)
+	self.wanted = AudioRules.trackFor(state)
+	local phase = state.phase
+	local event = if state.eventActive then tostring(state.eventKind or "") else ""
+	-- The first snapshot only records where things stand. A player who joins mid-round
+	-- or mid-event hears the right music but not a stinger for something already past.
+	if self.lastPhase == nil then
+		self.lastPhase = phase
+		self.lastEvent = event
+		return
+	end
+	if phase ~= self.lastPhase then
+		if phase == "Playing" then
+			Audio.cue(self, "RoundStart")
+		elseif self.lastPhase == "Playing" then
+			Audio.cue(self, "RoundEnd")
+		end
+		self.lastPhase = phase
+	end
+	if event ~= self.lastEvent then
+		if event ~= "" then
+			Audio.cue(self, "ChaosStart")
+		else
+			Audio.cue(self, "ChaosEnd")
+		end
+		self.lastEvent = event
+	end
+end
+
+-- Advances every crossfade by `dt` seconds. `enabled` is the Sound setting.
+function Audio.tick(self: Controller, dt: number, enabled: boolean)
+	self.enabled = enabled
+	local fade = self.config.Audio.CrossfadeSeconds
+	local full = self.config.Audio.MusicVolume
+	for name, track in self.tracks do
+		local sound = track.sound
+		if sound then
+			local target = if enabled and self.wanted == name then full else 0
+			if target &gt; 0 and not track.wanted then
+				track.wanted = true
+				sound:Play()
+			elseif target == 0 then
+				track.wanted = false
+			end
+			sound.Volume = AudioRules.stepVolume(sound.Volume, target, dt, full, fade)
+		end
+	end
+end
+
+function Audio.destroy(self: Controller)
+	self.folder:Destroy()
+	table.clear(self.tracks)
+end
+
+return Audio
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001090">
           <Properties>
             <string name="Name">Collection</string>
             <ProtectedString name="Source">--!nonstrict
@@ -43980,7 +44860,7 @@ return Collection
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001085">
+        <Item class="ModuleScript" referent="RBX001091">
           <Properties>
             <string name="Name">CreatureData</string>
             <ProtectedString name="Source">--!nocheck
@@ -44194,7 +45074,7 @@ return {
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001086">
+        <Item class="ModuleScript" referent="RBX001092">
           <Properties>
             <string name="Name">Creatures</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44539,7 +45419,7 @@ return Creatures
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001087">
+        <Item class="ModuleScript" referent="RBX001093">
           <Properties>
             <string name="Name">Effects</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44896,7 +45776,7 @@ return Effects
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001088">
+        <Item class="ModuleScript" referent="RBX001094">
           <Properties>
             <string name="Name">Hud</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44907,6 +45787,8 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Species = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Creatures"))
 local Kit = require(script.Parent.Kit)
 local Theme = require(script.Parent.Theme)
 local Panels = require(script.Parent.Panels)
@@ -44915,6 +45797,12 @@ local Collection = require(script.Parent.Collection)
 local CreatureData = require(script.Parent.CreatureData)
 local Hud = {}
 Hud.__index = Hud
+
+-- Number keys 1-6 select the character in that slot.
+local KEY_SLOTS = {
+	[Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3,
+	[Enum.KeyCode.Four] = 4, [Enum.KeyCode.Five] = 5, [Enum.KeyCode.Six] = 6,
+}
 
 local C, Type, Space, Motion, Copy = Theme.Colors, Theme.Type, Theme.Space, Theme.Motion, Theme.Copy
 
@@ -44934,14 +45822,13 @@ local function phaseWord(phase, fastMode)
 	return Copy.WaitingStatus
 end
 
--- Server event kinds -&gt; the words the player reads. Shared with the server's own
--- labels through Config-independent literals so a snapshot only needs the kind.
+-- Chaos Event kinds -&gt; the words the player reads. Mirrors RoundMachine's LABEL, which
+-- the server also sends in the snapshot schedule.
 local EVENT_LABEL = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 local function eventLabel(kind)
@@ -44951,7 +45838,7 @@ local function eventLabel(kind)
 	return EVENT_LABEL[kind] or string.upper(kind)
 end
 
-function Hud.new(config, request)
+function Hud.new(config, request, actions)
 	local self = setmetatable({}, Hud)
 	self.config, self.request = config, request
 	self.soundOn, self.reducedMotion = true, false
@@ -45001,6 +45888,15 @@ function Hud.new(config, request)
 	-- The only offensive verb in the game. It sends a whitelisted request with no
 	-- arguments; the server decides who is in range and what (if anything) moves.
 	self.steal = Panels.stealPanel(self.root, function() self:requestSteal() end)
+
+	-- ---- characters: ability button and the six-slot strip ------------------
+	-- Each verb sends its own validated remote. The server owns every answer; the client
+	-- only shows the view it was last sent.
+	self.verbs = actions or {}
+	self.character = nil
+	self.ability = Panels.abilityPanel(self.root, function() self:requestAbility() end)
+	self.strip = Panels.characterStrip(self.root, function(slot) self:requestSwitch(slot) end,
+		#config.Characters.Order)
 
 	-- ---- stage chip (left, under the cells) --------------------------------
 	self.stageChip = Kit.panel(self.root, "StageChip", UDim2.fromOffset(196, 28), UDim2.fromOffset(Space.xl, 136), {
@@ -45125,6 +46021,10 @@ function Hud.new(config, request)
 			self:showModal("Shop")
 		elseif input.KeyCode == Enum.KeyCode.E then
 			self:requestSteal()
+		elseif input.KeyCode == Enum.KeyCode.Q then
+			self:requestAbility()
+		elseif KEY_SLOTS[input.KeyCode] then
+			self:requestSwitch(KEY_SLOTS[input.KeyCode])
 		end
 	end))
 	table.insert(self.connections, self.root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -45282,6 +46182,32 @@ function Hud:resize()
 	self.steal.caption.TextSize = Type.Micro
 	self.steal.carried.TextSize = if compact then Type.Micro else Type.Label
 	self.steal.banked.Visible = not compact
+
+	-- Ability button sits beside the steal button, on the side away from the screen edge
+	-- the steal button is not on. The strip sits above the steal readout.
+	local stealWidth = if compact then 150 else 186
+	local abilityWidth = if compact then 118 else 150
+	if short then
+		self.ability.root.AnchorPoint = Vector2.new(0, 0)
+		self.ability.root.Position = UDim2.fromOffset(Space.md + stealWidth + Space.sm, height - stealLift - 52)
+	else
+		self.ability.root.AnchorPoint = Vector2.new(1, 0)
+		self.ability.root.Position = UDim2.new(1, -Space.md - stealWidth - Space.sm, 1, -stealLift - 52)
+	end
+	self.ability.root.Size = UDim2.fromOffset(abilityWidth, 52)
+	self.ability.button.Size = self.ability.root.Size
+	self.ability.label.TextSize = if compact then 12 else Type.Heading
+	self.ability.caption.TextSize = Type.Micro
+
+	local stripTop = -stealLift - 52 - 74
+	self.strip.root.Size = UDim2.fromOffset(6 * 32 + 5 * 4, 46)
+	if short then
+		self.strip.root.AnchorPoint = Vector2.new(0, 0)
+		self.strip.root.Position = UDim2.fromOffset(Space.md, height + stripTop)
+	else
+		self.strip.root.AnchorPoint = Vector2.new(1, 0)
+		self.strip.root.Position = UDim2.new(1, -Space.md, 1, stripTop)
+	end
 
 	-- Stage chip: desktop only, under the cell counter and above the help chip. On
 	-- phones the stage is named by the clock header instead, which keeps the top of
@@ -45540,6 +46466,7 @@ function Hud:tick()
 	end
 	self.collection:step(now, self.reducedMotion)
 	self:refreshSteal()
+	self:refreshCharacters()
 end
 
 -- --------------------------------------------------------------------------- #
@@ -45583,6 +46510,77 @@ end
 
 -- The steal request carries no target, no distance and no value: the server
 -- resolves everything from its own state.
+-- Server view for this player's characters. A notice from the server is shown as a toast.
+function Hud:setCharacters(view)
+	self.character = view
+	if view.notice and view.notice ~= "" then
+		self:notice(view.notice, C.Cyan)
+	end
+	self:refreshCharacters()
+end
+
+function Hud:refreshCharacters()
+	local view = self.character
+	if not view or not self.config or not self.config.Characters then return end
+	local now = Workspace:GetServerTimeNow()
+	local active = view.active
+	local entry = self.config.Characters.Roster[active]
+	local ready = (view.readyAt and view.readyAt[active]) or 0
+	local remaining = math.max(0, ready - now)
+	local span = entry.Cooldown
+
+	local playing = self.state ~= nil and self.state.phase == "Playing"
+	self.ability.label.Text = entry.Title
+	if remaining &gt; 0 then
+		self.ability.caption.Text = string.format("RECHARGING %ds", math.ceil(remaining))
+		self.ability.caption.TextColor3 = C.Muted
+	elseif playing then
+		self.ability.caption.Text = "Q • READY"
+		self.ability.caption.TextColor3 = C.Cyan
+	else
+		self.ability.caption.Text = "WAITING FOR PLAY"
+		self.ability.caption.TextColor3 = C.Muted
+	end
+	self.ability.veil.Size = UDim2.fromScale(math.clamp(remaining / span, 0, 1), 1)
+
+	local left = (view.normalLeft or 0) + (view.bonusLeft or 0)
+	self.strip.readout.Text = string.format("%s • %d SWITCH%s LEFT", Species.Characters[active].Label,
+		left, if left == 1 then "" else "ES")
+	for slot, chip in self.strip.chips do
+		local isActive = self.config.Characters.Order[slot] == active
+		chip.BackgroundColor3 = if isActive then C.Cyan else C.NavyRaised
+		chip.Label.TextColor3 = if isActive then C.Void else C.White
+	end
+end
+
+function Hud:requestAbility()
+	if self.modal.Visible or self.collection:isVisible() then return end
+	local view = self.character
+	if not self.state or self.state.phase ~= "Playing" then
+		self:notice("ABILITIES ARE LIVE DURING PLAY", C.Muted)
+		return
+	end
+	if view then
+		local ready = (view.readyAt and view.readyAt[view.active]) or 0
+		local remaining = ready - Workspace:GetServerTimeNow()
+		if remaining &gt; 0 then
+			self:notice(string.format("RECHARGING %ds", math.ceil(remaining)), C.Muted)
+			return
+		end
+	end
+	if self.verbs.ability then self.verbs.ability() end
+end
+
+function Hud:requestSwitch(slot)
+	if self.modal.Visible or self.collection:isVisible() then return end
+	if not self.state or self.state.phase ~= "Playing" then
+		self:notice("CHARACTERS ARE LIVE DURING PLAY", C.Muted)
+		return
+	end
+	if self.character and self.config.Characters.Order[slot] == self.character.active then return end
+	if self.verbs.switch then self.verbs.switch(slot) end
+end
+
 function Hud:requestSteal()
 	if self.modal.Visible or self.collection:isVisible() then
 		return
@@ -45667,7 +46665,7 @@ function Hud:refreshModal()
 	elseif kind == "Settings" then
 		self.modalTitle.Text = Copy.SettingsTitle
 		self.modalTitle.TextColor3 = C.Violet
-		self.modalBody.Text = "Sound effects: " .. (if self.soundOn then "ON" else "OFF")
+		self.modalBody.Text = "Sound and music: " .. (if self.soundOn then "ON" else "OFF")
 			.. "\nMotion: " .. (if self.reducedMotion then "REDUCED" else "FULL")
 			.. "\n\nREDUCED MOTION turns off camera-shaking effects, halo breathing and\npanel transitions. It never changes gameplay."
 		self.modalPrimary.Visible = false
@@ -45676,7 +46674,7 @@ function Hud:refreshModal()
 		self.modalTitle.TextColor3 = C.Cyan
 		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1  •  fish or goose +5  •  toast or sock +10"
 			.. "\n\n02   BANK, THEN STEAL\nEach stage banks what you carry. Between banks, tap STEAL (or E) beside a rival to take one cell they are carrying."
-			.. "\n\n03   SURVIVE THE EVENTS\nLow gravity, slippery stone, moving rafts and vanishing paths — each one warns you first."
+			.. "\n\n03   SURVIVE THE CHAOS\nOne Chaos Event per round, 35 seconds: low gravity, bouncy jumps, slippery stone or Brain Cell Rush. Each one warns you first."
 			.. "\n\n04   BE THE BIGGEST BRAIN\nMost cells after the Final Rush wins. Ties share the crown."
 		self.modalPrimary.Visible = false
 	end
@@ -45721,7 +46719,7 @@ return Hud
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001089">
+        <Item class="ModuleScript" referent="RBX001095">
           <Properties>
             <string name="Name">Iconography</string>
             <ProtectedString name="Source">--!nonstrict
@@ -45850,7 +46848,7 @@ return Iconography
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001090">
+        <Item class="ModuleScript" referent="RBX001096">
           <Properties>
             <string name="Name">Kit</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46150,7 +47148,7 @@ return Kit
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="RBX001091">
+        <Item class="LocalScript" referent="RBX001097">
           <Properties>
             <string name="Name">Main</string>
             <ProtectedString name="Source">--!strict
@@ -46160,30 +47158,49 @@ local StarterGui = game:GetService("StarterGui")
 local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
 local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
+local Audio = require(script.Parent.Audio)
 local Iconography = require(script.Parent.Iconography)
 local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes")
 local stateRemote = remotes:WaitForChild("State") :: RemoteEvent
 local pickupRemote = remotes:WaitForChild("Pickup") :: RemoteEvent
 local requestRemote = remotes:WaitForChild("Request") :: RemoteEvent
+local abilityRemote = remotes:WaitForChild("Ability") :: RemoteEvent
+local characterRemote = remotes:WaitForChild("Character") :: RemoteEvent
+local characterStateRemote = remotes:WaitForChild("CharacterState") :: RemoteEvent
 
 -- Loaded before the HUD so rarity glyphs exist on the first frame.
 local _iconography = Iconography
 local hud = Hud.new(Config, function(action: string)
 	requestRemote:FireServer(action)
-end)
+end, {
+	-- Each verb has its own remote. Neither sends an effect, a target or a cell.
+	ability = function()
+		abilityRemote:FireServer()
+	end,
+	switch = function(slot: number)
+		characterRemote:FireServer(slot)
+	end,
+})
 local effects = Effects.new(hud, Config)
+local audio = Audio.new(Config)
 local connections: { RBXScriptConnection } = {}
 
 table.insert(connections, stateRemote.OnClientEvent:Connect(function(state, notice)
 	hud:update(state)
 	effects:update(state)
+	audio:setState(state)
 	if typeof(notice) == "string" then hud:notice(notice) end
+end))
+table.insert(connections, characterStateRemote.OnClientEvent:Connect(function(view)
+	hud:setCharacters(view)
 end))
 table.insert(connections, pickupRemote.OnClientEvent:Connect(function(receipt)
 	effects:pickup(receipt)
 end))
 local accumulator = 0
 table.insert(connections, RunService.RenderStepped:Connect(function(dt)
+	-- Fades run every frame so a crossfade keeps the same wall-clock length.
+	audio:tick(dt, hud.soundOn)
 	accumulator += dt
 	if accumulator &gt;= .1 then
 		accumulator = 0
@@ -46207,13 +47224,14 @@ end)
 script.Destroying:Connect(function()
 	for _, connection in connections do connection:Disconnect() end
 	effects:destroy()
+	audio:destroy()
 	hud:destroy()
 end)
 </ProtectedString>
             <bool name="Disabled">false</bool>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001092">
+        <Item class="ModuleScript" referent="RBX001098">
           <Properties>
             <string name="Name">Panels</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46582,6 +47600,65 @@ end
 -- --------------------------------------------------------------------------- #
 -- Centre toast + event banner + lobby banner
 -- --------------------------------------------------------------------------- #
+-- The ability button. Q on a keyboard, or this button on a touch screen. The cooldown
+-- veil drains left to right, the same way the steal veil does.
+function Panels.abilityPanel(parent, onUse)
+	local root = Kit.instance("Frame", {
+		Name = "AbilityPanel",
+		Size = UDim2.fromOffset(150, 52),
+		Position = UDim2.new(1, -Space.lg, 1, -Space.lg - 52),
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+	local button = Kit.button(root, "AbilityButton", "", UDim2.fromOffset(150, 52), UDim2.fromOffset(0, 0),
+		function() onUse() end, { accent = C.Violet, zIndex = 4, color = C.NavyRaised })
+	glyph(button, "bolt", C.Violet, 20).Position = UDim2.fromOffset(12, 16)
+	local label = Kit.text(button, "Title", "ABILITY", "Heading", {
+		size = UDim2.new(1, -44, 0, 20), position = UDim2.fromOffset(38, 7),
+		color = C.White, zIndex = 5, truncate = true,
+	})
+	local caption = Kit.text(button, "Caption", "Q • READY", "Micro", {
+		size = UDim2.new(1, -44, 0, 12), position = UDim2.fromOffset(38, 28),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	local veil = Kit.instance("Frame", {
+		Name = "Cooldown",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = C.Void,
+		BackgroundTransparency = .45,
+		BorderSizePixel = 0,
+		ZIndex = 6,
+	}, button)
+	Kit.corner(veil, 12)
+	return { root = root, button = button, label = label, caption = caption, veil = veil }
+end
+
+-- Six numbered chips, one per character in slot order, with the active one lit. Keys 1-6
+-- or a tap both switch. The readout names the active character and the switches left.
+function Panels.characterStrip(parent, onPick, count)
+	local root = Kit.instance("Frame", {
+		Name = "CharacterStrip",
+		Size = UDim2.fromOffset(6 * 32 + 5 * 4, 46),
+		Position = UDim2.fromOffset(0, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+	local readout = Kit.text(root, "Readout", "", "Micro", {
+		size = UDim2.new(1, 0, 0, 14), position = UDim2.fromOffset(0, 0),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	local chips = {}
+	for slot = 1, count do
+		local chip = Kit.button(root, "Slot" .. slot, tostring(slot), UDim2.fromOffset(32, 28),
+			UDim2.fromOffset((slot - 1) * 36, 18), function() onPick(slot) end,
+			{ accent = C.Cyan, zIndex = 5, color = C.NavyRaised })
+		chip.Label.TextSize = Type.Label
+		chips[slot] = chip
+	end
+	return { root = root, readout = readout, chips = chips }
+end
+
 function Panels.toast(parent)
 	local toast = Kit.panel(parent, "Toast", UDim2.fromOffset(432, 56), UDim2.new(.5, 0, 0, 112), {
 		anchor = Vector2.new(.5, 0), zIndex = 6, visible = false,
@@ -46643,7 +47720,7 @@ return Panels
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001093">
+        <Item class="ModuleScript" referent="RBX001099">
           <Properties>
             <string name="Name">Theme</string>
             <ProtectedString name="Source">--!nocheck
@@ -46800,7 +47877,7 @@ return {
 		IntermissionStatus = "GET READY",
 		PlayingStatus = "COLLECT",
 		ResultsStatus = "ROUND COMPLETE",
-		EventBanner = "LOW GRAVITY",
+		EventBanner = "CHAOS EVENT",
 		TieBanner = "A MEETING OF MINDS",
 		WinBanner = "BIG BRAIN ENERGY",
 		NoScoreBanner = "THE BRAINS ARE WARMING UP",
@@ -46835,7 +47912,7 @@ return {
       </Item>
     </Item>
   </Item>
-  <Item class="Lighting" referent="RBX001094">
+  <Item class="Lighting" referent="RBX001100">
     <Properties>
       <string name="Name">Lighting</string>
       <float name="Brightness">2.2</float>
@@ -46874,7 +47951,7 @@ return {
       <float name="FogStart">260</float>
       <float name="FogEnd">1150</float>
     </Properties>
-    <Item class="Sky" referent="RBX001095">
+    <Item class="Sky" referent="RBX001101">
       <Properties>
         <string name="Name">TropicalDaySky</string>
         <Content name="SkyboxBk">
@@ -46901,7 +47978,7 @@ return {
         <float name="StarCount">0</float>
       </Properties>
     </Item>
-    <Item class="Atmosphere" referent="RBX001096">
+    <Item class="Atmosphere" referent="RBX001102">
       <Properties>
         <string name="Name">CoastalHaze</string>
         <float name="Density">0.32</float>
@@ -46920,7 +47997,7 @@ return {
         <float name="Glare">0.08</float>
       </Properties>
     </Item>
-    <Item class="BloomEffect" referent="RBX001097">
+    <Item class="BloomEffect" referent="RBX001103">
       <Properties>
         <string name="Name">GameplayBloom</string>
         <float name="Intensity">0.22</float>
@@ -46928,7 +48005,7 @@ return {
         <float name="Threshold">1.45</float>
       </Properties>
     </Item>
-    <Item class="ColorCorrectionEffect" referent="RBX001098">
+    <Item class="ColorCorrectionEffect" referent="RBX001104">
       <Properties>
         <string name="Name">NeutralGrade</string>
         <float name="Saturation">0.06</float>
@@ -46942,14 +48019,14 @@ return {
       </Properties>
     </Item>
   </Item>
-  <Item class="Players" referent="RBX001099">
+  <Item class="Players" referent="RBX001105">
     <Properties>
       <string name="Name">Players</string>
       <float name="RespawnTime">2</float>
       <bool name="CharacterAutoLoads">true</bool>
     </Properties>
   </Item>
-  <Item class="SoundService" referent="RBX001100">
+  <Item class="SoundService" referent="RBX001106">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>

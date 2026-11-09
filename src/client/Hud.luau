@@ -6,6 +6,8 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Species = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Creatures"))
 local Kit = require(script.Parent.Kit)
 local Theme = require(script.Parent.Theme)
 local Panels = require(script.Parent.Panels)
@@ -14,6 +16,12 @@ local Collection = require(script.Parent.Collection)
 local CreatureData = require(script.Parent.CreatureData)
 local Hud = {}
 Hud.__index = Hud
+
+-- Number keys 1-6 select the character in that slot.
+local KEY_SLOTS = {
+	[Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3,
+	[Enum.KeyCode.Four] = 4, [Enum.KeyCode.Five] = 5, [Enum.KeyCode.Six] = 6,
+}
 
 local C, Type, Space, Motion, Copy = Theme.Colors, Theme.Type, Theme.Space, Theme.Motion, Theme.Copy
 
@@ -33,14 +41,13 @@ local function phaseWord(phase, fastMode)
 	return Copy.WaitingStatus
 end
 
--- Server event kinds -> the words the player reads. Shared with the server's own
--- labels through Config-independent literals so a snapshot only needs the kind.
+-- Chaos Event kinds -> the words the player reads. Mirrors RoundMachine's LABEL, which
+-- the server also sends in the snapshot schedule.
 local EVENT_LABEL = {
 	LowGravity = "LOW GRAVITY",
-	Slippery = "SLIPPERY TERRAIN",
-	MovingPlatforms = "MOVING PLATFORMS",
-	CollectibleRush = "COLLECTIBLE RUSH",
-	VanishingPaths = "VANISHING PATHS",
+	BouncyWorld = "BOUNCY WORLD",
+	SlipperyChaos = "SLIPPERY CHAOS",
+	BrainCellRush = "BRAIN CELL RUSH",
 }
 
 local function eventLabel(kind)
@@ -50,7 +57,7 @@ local function eventLabel(kind)
 	return EVENT_LABEL[kind] or string.upper(kind)
 end
 
-function Hud.new(config, request)
+function Hud.new(config, request, actions)
 	local self = setmetatable({}, Hud)
 	self.config, self.request = config, request
 	self.soundOn, self.reducedMotion = true, false
@@ -100,6 +107,15 @@ function Hud.new(config, request)
 	-- The only offensive verb in the game. It sends a whitelisted request with no
 	-- arguments; the server decides who is in range and what (if anything) moves.
 	self.steal = Panels.stealPanel(self.root, function() self:requestSteal() end)
+
+	-- ---- characters: ability button and the six-slot strip ------------------
+	-- Each verb sends its own validated remote. The server owns every answer; the client
+	-- only shows the view it was last sent.
+	self.verbs = actions or {}
+	self.character = nil
+	self.ability = Panels.abilityPanel(self.root, function() self:requestAbility() end)
+	self.strip = Panels.characterStrip(self.root, function(slot) self:requestSwitch(slot) end,
+		#config.Characters.Order)
 
 	-- ---- stage chip (left, under the cells) --------------------------------
 	self.stageChip = Kit.panel(self.root, "StageChip", UDim2.fromOffset(196, 28), UDim2.fromOffset(Space.xl, 136), {
@@ -224,6 +240,10 @@ function Hud.new(config, request)
 			self:showModal("Shop")
 		elseif input.KeyCode == Enum.KeyCode.E then
 			self:requestSteal()
+		elseif input.KeyCode == Enum.KeyCode.Q then
+			self:requestAbility()
+		elseif KEY_SLOTS[input.KeyCode] then
+			self:requestSwitch(KEY_SLOTS[input.KeyCode])
 		end
 	end))
 	table.insert(self.connections, self.root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -381,6 +401,32 @@ function Hud:resize()
 	self.steal.caption.TextSize = Type.Micro
 	self.steal.carried.TextSize = if compact then Type.Micro else Type.Label
 	self.steal.banked.Visible = not compact
+
+	-- Ability button sits beside the steal button, on the side away from the screen edge
+	-- the steal button is not on. The strip sits above the steal readout.
+	local stealWidth = if compact then 150 else 186
+	local abilityWidth = if compact then 118 else 150
+	if short then
+		self.ability.root.AnchorPoint = Vector2.new(0, 0)
+		self.ability.root.Position = UDim2.fromOffset(Space.md + stealWidth + Space.sm, height - stealLift - 52)
+	else
+		self.ability.root.AnchorPoint = Vector2.new(1, 0)
+		self.ability.root.Position = UDim2.new(1, -Space.md - stealWidth - Space.sm, 1, -stealLift - 52)
+	end
+	self.ability.root.Size = UDim2.fromOffset(abilityWidth, 52)
+	self.ability.button.Size = self.ability.root.Size
+	self.ability.label.TextSize = if compact then 12 else Type.Heading
+	self.ability.caption.TextSize = Type.Micro
+
+	local stripTop = -stealLift - 52 - 74
+	self.strip.root.Size = UDim2.fromOffset(6 * 32 + 5 * 4, 46)
+	if short then
+		self.strip.root.AnchorPoint = Vector2.new(0, 0)
+		self.strip.root.Position = UDim2.fromOffset(Space.md, height + stripTop)
+	else
+		self.strip.root.AnchorPoint = Vector2.new(1, 0)
+		self.strip.root.Position = UDim2.new(1, -Space.md, 1, stripTop)
+	end
 
 	-- Stage chip: desktop only, under the cell counter and above the help chip. On
 	-- phones the stage is named by the clock header instead, which keeps the top of
@@ -639,6 +685,7 @@ function Hud:tick()
 	end
 	self.collection:step(now, self.reducedMotion)
 	self:refreshSteal()
+	self:refreshCharacters()
 end
 
 -- --------------------------------------------------------------------------- #
@@ -682,6 +729,77 @@ end
 
 -- The steal request carries no target, no distance and no value: the server
 -- resolves everything from its own state.
+-- Server view for this player's characters. A notice from the server is shown as a toast.
+function Hud:setCharacters(view)
+	self.character = view
+	if view.notice and view.notice ~= "" then
+		self:notice(view.notice, C.Cyan)
+	end
+	self:refreshCharacters()
+end
+
+function Hud:refreshCharacters()
+	local view = self.character
+	if not view or not self.config or not self.config.Characters then return end
+	local now = Workspace:GetServerTimeNow()
+	local active = view.active
+	local entry = self.config.Characters.Roster[active]
+	local ready = (view.readyAt and view.readyAt[active]) or 0
+	local remaining = math.max(0, ready - now)
+	local span = entry.Cooldown
+
+	local playing = self.state ~= nil and self.state.phase == "Playing"
+	self.ability.label.Text = entry.Title
+	if remaining > 0 then
+		self.ability.caption.Text = string.format("RECHARGING %ds", math.ceil(remaining))
+		self.ability.caption.TextColor3 = C.Muted
+	elseif playing then
+		self.ability.caption.Text = "Q • READY"
+		self.ability.caption.TextColor3 = C.Cyan
+	else
+		self.ability.caption.Text = "WAITING FOR PLAY"
+		self.ability.caption.TextColor3 = C.Muted
+	end
+	self.ability.veil.Size = UDim2.fromScale(math.clamp(remaining / span, 0, 1), 1)
+
+	local left = (view.normalLeft or 0) + (view.bonusLeft or 0)
+	self.strip.readout.Text = string.format("%s • %d SWITCH%s LEFT", Species.Characters[active].Label,
+		left, if left == 1 then "" else "ES")
+	for slot, chip in self.strip.chips do
+		local isActive = self.config.Characters.Order[slot] == active
+		chip.BackgroundColor3 = if isActive then C.Cyan else C.NavyRaised
+		chip.Label.TextColor3 = if isActive then C.Void else C.White
+	end
+end
+
+function Hud:requestAbility()
+	if self.modal.Visible or self.collection:isVisible() then return end
+	local view = self.character
+	if not self.state or self.state.phase ~= "Playing" then
+		self:notice("ABILITIES ARE LIVE DURING PLAY", C.Muted)
+		return
+	end
+	if view then
+		local ready = (view.readyAt and view.readyAt[view.active]) or 0
+		local remaining = ready - Workspace:GetServerTimeNow()
+		if remaining > 0 then
+			self:notice(string.format("RECHARGING %ds", math.ceil(remaining)), C.Muted)
+			return
+		end
+	end
+	if self.verbs.ability then self.verbs.ability() end
+end
+
+function Hud:requestSwitch(slot)
+	if self.modal.Visible or self.collection:isVisible() then return end
+	if not self.state or self.state.phase ~= "Playing" then
+		self:notice("CHARACTERS ARE LIVE DURING PLAY", C.Muted)
+		return
+	end
+	if self.character and self.config.Characters.Order[slot] == self.character.active then return end
+	if self.verbs.switch then self.verbs.switch(slot) end
+end
+
 function Hud:requestSteal()
 	if self.modal.Visible or self.collection:isVisible() then
 		return
@@ -766,7 +884,7 @@ function Hud:refreshModal()
 	elseif kind == "Settings" then
 		self.modalTitle.Text = Copy.SettingsTitle
 		self.modalTitle.TextColor3 = C.Violet
-		self.modalBody.Text = "Sound effects: " .. (if self.soundOn then "ON" else "OFF")
+		self.modalBody.Text = "Sound and music: " .. (if self.soundOn then "ON" else "OFF")
 			.. "\nMotion: " .. (if self.reducedMotion then "REDUCED" else "FULL")
 			.. "\n\nREDUCED MOTION turns off camera-shaking effects, halo breathing and\npanel transitions. It never changes gameplay."
 		self.modalPrimary.Visible = false
@@ -775,7 +893,7 @@ function Hud:refreshModal()
 		self.modalTitle.TextColor3 = C.Cyan
 		self.modalBody.Text = "01   COLLECT THE CAST\nBrain or frog +1  •  fish or goose +5  •  toast or sock +10"
 			.. "\n\n02   BANK, THEN STEAL\nEach stage banks what you carry. Between banks, tap STEAL (or E) beside a rival to take one cell they are carrying."
-			.. "\n\n03   SURVIVE THE EVENTS\nLow gravity, slippery stone, moving rafts and vanishing paths — each one warns you first."
+			.. "\n\n03   SURVIVE THE CHAOS\nOne Chaos Event per round, 35 seconds: low gravity, bouncy jumps, slippery stone or Brain Cell Rush. Each one warns you first."
 			.. "\n\n04   BE THE BIGGEST BRAIN\nMost cells after the Final Rush wins. Ties share the crown."
 		self.modalPrimary.Visible = false
 	end

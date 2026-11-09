@@ -74,9 +74,10 @@ return function(Mock, sources, schema)
 		eq(e.services.Workspace.BrainrotWorld,initial)
 		eq(#initial:GetChildren(),906)
 	end)
-	test("server creates only three whitelisted remotes",function()
+	test("server creates only whitelisted remotes: three base remotes plus the Ability, Character and CharacterState verbs",function()
 		local e=fixture(); local r=e.services.ReplicatedStorage.BrainrotRemotes
-		eq(#r:GetChildren(),3); assert(r.State and r.Pickup and r.Request)
+		eq(#r:GetChildren(),6)
+		assert(r.State and r.Pickup and r.Request and r.Ability and r.Character and r.CharacterState)
 		eq(r:FindFirstChild("AwardScore"),nil)
 	end)
 	test("intermission has no collectible replicas",function()
@@ -141,10 +142,57 @@ return function(Mock, sources, schema)
 		local e=fixture(); play(e); local p=e:addPlayer(-3,"Late"); e:step(.3)
 		eq(score(p),0); assert(p.Character.HumanoidRootPart.Position.Z<60); eq(#e:lastState().rows,3)
 	end)
-	test("low gravity activates and restores actual Workspace property",function()
+	test("the drawn Chaos Event activates for 35 seconds, then gravity and kind reset",function()
 		local e=fixture(); play(e); e:step(8.01)
-		eq(e:lastState().eventActive,true); near(e.services.Workspace.Gravity,62)
-		e:step(10.01); eq(e:lastState().eventActive,false); near(e.services.Workspace.Gravity,196.2)
+		local state=e:lastState()
+		eq(state.eventActive,true); eq(state.eventKind,"LowGravity")
+		near(e.services.Workspace.Gravity,62)
+		e:step(34.9); near(e.services.Workspace.Gravity,62)
+		-- Gravity is applied by the server immediately. The replicated snapshot is
+		-- throttled, so the client-visible state is checked after a short settle.
+		e:step(.5); near(e.services.Workspace.Gravity,196.2)
+		e:step(1); eq(e:lastState().eventActive,false)
+	end)
+	test("35-second lifecycle: the window lasts exactly 35 s and edges land on the first server step at or after 8 s and 43 s",function()
+		-- Authoritative timing, not the throttled snapshot. The Playing phase starts at the
+		-- server's own deadline minus the round length, so the reference point is exact.
+		local e=fixture({fast=true,studio=true,roll=.1}); play(e)
+		local Config=e:import("src/shared/Config.luau")
+		local ws=e.services.Workspace
+		local playStart=e:lastState().phaseEndsAt-Config.FastTiming.Round
+		local openedAt,closedAt
+		for _=1,6000 do
+			e:step(.01)
+			local elapsed=e.now-playStart
+			if openedAt==nil and ws.Gravity~=Config.NormalGravity then openedAt=elapsed end
+			if openedAt~=nil and closedAt==nil and ws.Gravity==Config.NormalGravity then closedAt=elapsed; break end
+		end
+		assert(openedAt~=nil and closedAt~=nil,"the event must open and close")
+		-- The server acts on ServerStep (0.1 s) boundaries, so each edge is applied on the first
+		-- step at or after its scheduled time. The window is therefore exact in length and
+		-- starts/ends within one server step of 8 s and 43 s.
+		local step=Config.ServerStep
+		assert(openedAt>=8-.001 and openedAt<=8+step+.001,"opens on the first server step at or after 8 s, measured "..tostring(openedAt))
+		assert(closedAt>=43-.001 and closedAt<=43+step+.001,"closes on the first server step at or after 43 s, measured "..tostring(closedAt))
+		-- The window length is exact to within one 10 ms test frame: no drift from the step cadence.
+		assert(math.abs((closedAt-openedAt)-35)<=.011,"lasts 35 s, measured "..tostring(closedAt-openedAt))
+		assert(closedAt<Config.FastTiming.Round,"it ends before the round")
+	end)
+	test("exactly one Chaos Event runs per round and it closes before the round ends",function()
+		local e=fixture(); play(e)
+		-- Count real open/close edges on the server's own state, step by step.
+		local opened,closed,was=0,0,false
+		local openedAt,closedAt
+		for _=1,600 do
+			e:step(.1)
+			local state=e:lastState()
+			if state.eventActive and not was then opened+=1 end
+			if was and not state.eventActive then closed+=1 end
+			was=state.eventActive
+			if state.phase~="Playing" then break end
+		end
+		eq(opened,1); eq(closed,1)
+		near(e.services.Workspace.Gravity,196.2)
 	end)
 	test("round end clears replicas, resets gravity, announces winner and pays coins",function()
 		local e,a=fixture(); play(e); collect(e,a,1); finish(e)
@@ -257,9 +305,9 @@ return function(Mock, sources, schema)
 		e:find("Collection").Panel.Close.Activated:Fire(); eq(e:find("Collection").Visible,false)
 		-- Settings toggles are local preferences, never gameplay requests.
 		e:find("Settings").Activated:Fire(); eq(e:find("Card").Title.Text,"SETTINGS")
-		assert(string.find(e:find("Card").Body.Text,"Sound effects: ON",1,true))
+		assert(string.find(e:find("Card").Body.Text,"Sound and music: ON",1,true))
 		e:find("ModalSound").Activated:Fire()
-		assert(string.find(e:find("Card").Body.Text,"Sound effects: OFF",1,true))
+		assert(string.find(e:find("Card").Body.Text,"Sound and music: OFF",1,true))
 	end)
 	test("shop purchase succeeds once the wallet has coins",function()
 		local e,a=fixture({fast=true,studio=true,roll=.97},true); play(e)
@@ -301,13 +349,76 @@ return function(Mock, sources, schema)
 	end)
 	test("chaos event drives a live banner and clears it",function()
 		local e=fixture(nil,true)
-		-- Fast timings: the event opens 8s into a 30s round and runs for 10s.
+		-- Fast timings: the event opens 8s into a 50s round and runs for 35s.
 		play(e); e:step(8.01)
 		local banner=e:find("EventBanner")
 		eq(banner.Visible,true)
 		assert(string.find(banner.Label.Text,"LOW GRAVITY",1,true))
 		assert(string.find(banner.Label.Text,"%d%d:%d%d"),"banner shows a live countdown: "..banner.Label.Text)
-		e:step(10.01); eq(banner.Visible,false)
+		e:step(35.01); eq(banner.Visible,false)
+	end)
+	test("bouncy world: every character jumps higher during the window, then normally again",function()
+		-- roll=.4 draws the second pool entry, BouncyWorld.
+		local e,a=fixture({fast=true,studio=true,roll=.4},true); play(e)
+		local normal=a.Character.Humanoid.JumpPower
+		near(normal,50)
+		e:step(8.5)
+		near(a.Character.Humanoid.JumpPower,50*1.8) -- authoritative, applied immediately
+		e:step(1)
+		eq(e:lastState().eventKind,"BouncyWorld") -- replicated snapshot is throttled
+		e:step(40); near(a.Character.Humanoid.JumpPower,50)
+	end)
+	test("bouncy world: a respawned character inherits the live jump power",function()
+		local e,a=fixture({fast=true,studio=true,roll=.4},true); play(e); e:step(8.01)
+		e:spawn(a); e:step(.5)
+		near(a.Character.Humanoid.JumpPower,50*1.8)
+	end)
+	test("slippery chaos: floor friction changes live and is restored when the window closes",function()
+		-- roll=.6 draws the third pool entry, SlipperyChaos.
+		local e,a=fixture({fast=true,studio=true,roll=.6},true); play(e)
+		local Config=e:import("src/shared/Config.luau")
+		-- Any authored map surface will do: the rule applies to every surface.
+		local floor=nil
+		for _,part in e.services.Workspace:GetDescendants() do
+			if floor==nil and part:IsA("BasePart") and part.Name~="BrainCell" and part.CanCollide~=false then floor=part end
+		end
+		assert(floor,"the world must contain a collidable surface")
+		e:step(8.01); near(floor.CustomPhysicalProperties.Friction,Config.SlipperyFriction)
+		e:step(36); eq(floor.CustomPhysicalProperties,nil)
+	end)
+	test("slippery chaos, live server: respawned and late-joining characters slide, and all friction is removed afterwards",function()
+		-- Real Main.server flow: no director stubs. roll=.6 draws SlipperyChaos.
+		local e,a=fixture({fast=true,studio=true,roll=.6},true); play(e)
+		local Config=e:import("src/shared/Config.luau")
+		local function frictionOf(character)
+			local values={}
+			for _,part in character:GetDescendants() do
+				if part:IsA("BasePart") and part.Name~="BrainCell" then table.insert(values,part.CustomPhysicalProperties or false) end
+			end
+			return values
+		end
+		local function allSlippery(character)
+			local values=frictionOf(character)
+			assert(#values>0,"the character must have parts")
+			for _,props in values do assert(props~=false and math.abs(props.Friction-Config.SlipperyFriction)<1e-9,"every part must be slippery") end
+		end
+		e:step(8.01); eq(e:lastState().eventKind,"SlipperyChaos")
+		allSlippery(a.Character)
+		-- A respawn during the window: the new character must be slippery at once.
+		e:spawn(a); e:step(.5)
+		allSlippery(a.Character)
+		-- A player who joins during the window.
+		local late=e:addPlayer(-3,"Late Brain"); e:step(.5)
+		assert(late.Character~=nil,"the late joiner must have a character")
+		allSlippery(late.Character)
+		-- The window closes at 43 s. Everything must be back to its authored state.
+		e:step(36)
+		for _,props in frictionOf(a.Character) do eq(props,false) end
+		for _,props in frictionOf(late.Character) do eq(props,false) end
+		-- And a character spawned after the window is never touched.
+		e:spawn(a); e:step(.5)
+		for _,props in frictionOf(a.Character) do eq(props,false) end
+		eq(e:lastState().eventActive,false)
 	end)
 	test("respawn during a round rejoins the arena and keeps the score",function()
 		local e,a=fixture(nil,true); play(e); collect(e,a,1)
@@ -641,109 +752,95 @@ return function(Mock, sources, schema)
 
 
 	-- ------------------------------------------------------------------------ #
-	-- Event director (spec §3C): the baked geometry must actually move, and must
-	-- always come back. These run against the real world builder, not a stub.
+	-- Chaos director: the physical side of an event (gravity and friction) must be\
+	-- applied exactly and always removed. Runs against the real modules.
 	-- ------------------------------------------------------------------------ #
 	local function directorFixture()
-		-- One Mock per fixture: a module's `workspace` is *that* mock's Workspace, so
-		-- the world and the director must be imported from the same environment.
+		-- One Mock per fixture: a module's `workspace` is *that* mock's Workspace.
 		local e=Mock.new(sources,schema,{fast=true})
 		local EventDirector=e:import("src/server/EventDirector.luau")
+		local ChaosRules=e:import("src/server/core/ChaosRules.luau")
 		local World=e:import("src/server/WorldService.luau")
 		local Config=e:import("src/shared/Config.luau")
-		local root=World.new().root
-		-- The DataModel is the Model's own root object in this engine mock.
 		e.services.Workspace.Gravity=Config.NormalGravity
-		local director=EventDirector.new(root,Config.NormalGravity,Config.LowGravity,.7,Config.SlipperyFriction)
-		return e,root,director,Config
+		local root=World.new().root
+		local director=EventDirector.new(Config.NormalGravity)
+		return e,root,director,ChaosRules,Config
 	end
 	local function find(root,name) return root:FindFirstChild(name,true) end
-	local function snapshotRafts(root)
-		local poses={}
-		for _,suffix in {"A","B","C"} do
-			local deck=find(root,"EventRaft_"..suffix.."_Deck")
-			poses[suffix]=deck.CFrame.Position
+	local function surfaces(e)
+		local parts={}
+		for _,part in e.services.Workspace:GetDescendants() do
+			if part:IsA("BasePart") and part.Name~="BrainCell" then table.insert(parts,part) end
 		end
-		return poses
+		return parts
 	end
 
-	test("director: finds every baked event part in the real world",function()
-		local e,root,director=directorFixture()
-		local rafts,spans=director:counts()
-		eq(rafts,3)
-		eq(spans,12)
-		-- and the rest poses were captured from the geometry, not invented
-		for _,suffix in {"A","B","C"} do
-			assert(director.rest.raftPose[suffix]~=nil,"no rest pose for raft "..suffix)
-		end
-	end)
-	test("director: moving platforms actually orbit, then park exactly",function()
-		local e,root,director=directorFixture()
-		local parked=snapshotRafts(root)
-		director:start("MovingPlatforms",10,18)
-		director:step(15,5)
-		local moved=snapshotRafts(root)
-		local travelled=0
-		for _,suffix in {"A","B","C"} do
-			travelled+= (moved[suffix]-parked[suffix]).Magnitude
-		end
-		assert(travelled>1,"the rafts must actually move during the event")
-		director:stop()
-		local after=snapshotRafts(root)
-		for _,suffix in {"A","B","C"} do
-			assert((after[suffix]-parked[suffix]).Magnitude<0.01,"raft "..suffix.." did not return to its parked pose")
-		end
-	end)
-	test("director: low gravity owns gravity and gives it back",function()
-		local e,root,director,Config=directorFixture()
-		director:start("LowGravity",0,25)
-		eq(e.services.Workspace.Gravity,Config.LowGravity)
-		director:step(24.9,24.9)
-		eq(e.services.Workspace.Gravity,Config.LowGravity)
-		director:step(25.1,25.1)
+	test("director: a Chaos window sets gravity and the neutral set restores it",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		director:apply(ChaosRules.modifiers("LowGravity",Config))
+		eq(e.services.Workspace.Gravity,Config.Chaos.LowGravity)
+		director:apply(ChaosRules.modifiers("LowGravity",Config))
+		eq(e.services.Workspace.Gravity,Config.Chaos.LowGravity)
+		director:apply(ChaosRules.modifiers("",Config))
 		eq(e.services.Workspace.Gravity,Config.NormalGravity)
-		eq(director.active,"")
 	end)
-	test("director: slipping is a friction change that is always reverted",function()
-		local e,root,director,Config=directorFixture()
-		local floor=find(root,"ArenaFloor") or root:GetChildren()[1]
-		director:start("Slippery",0,18)
-		assert(floor.CustomPhysicalProperties~=nil,"friction must be authored, not implied")
-		near(floor.CustomPhysicalProperties.Friction,Config.SlipperyFriction)
-		director:stop()
-		near(floor.CustomPhysicalProperties.Friction,.7)
+	test("director: Slippery Chaos changes friction on every surface and restores each one exactly",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local parts=surfaces(e)
+		assert(#parts>0,"the world must contain surfaces")
+		-- Author one surface with its own physical properties, to prove restoration is exact.
+		local authored={_type="PhysicalProperties",Friction=.25,Density=1.5}
+		parts[1].CustomPhysicalProperties=authored
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		for _,part in parts do near(part.CustomPhysicalProperties.Friction,Config.SlipperyFriction) end
+		director:apply(ChaosRules.modifiers("",Config))
+		assert(parts[1].CustomPhysicalProperties==authored,"the authored surface must be restored to its own properties")
+		for index=2,#parts do eq(parts[index].CustomPhysicalProperties,nil) end
 	end)
-	test("director: vanishing paths become solid only while the event runs",function()
-		local e,root,director=directorFixture()
-		local span=find(root,"EventPath_0_Span_0")
-		local glow=find(root,"EventPath_0_Glow_0")
-		local restY=span.CFrame.Position.Y
-		eq(span.CanCollide,false)
-		eq(span.Transparency,1)
-		director:start("VanishingPaths",0,18)
-		eq(span.CanCollide,true)
-		eq(span.Transparency,0)
-		assert(span.CFrame.Position.Y>restY+.5,"a solid span must lift to the floor height")
-		assert(glow.CFrame.Position.Y>restY,"the glow strip must ride with its span")
-		director:stop()
-		eq(span.CanCollide,false)
-		eq(span.Transparency,1)
-		near(span.CFrame.Position.Y,restY)
-		near(glow.CFrame.Position.Y,restY+.2)
-	end)
-	test("director: an unrelated event never leaves another event's state behind",function()
-		local e,root,director,Config=directorFixture()
-		local span=find(root,"EventPath_1_Span_0")
-		director:start("LowGravity",0,25)
-		eq(e.services.Workspace.Gravity,Config.LowGravity)
-		-- A second event supersedes the first without needing a stop in between.
-		director:start("Slippery",1,18)
-		eq(e.services.Workspace.Gravity,Config.NormalGravity)
-		eq(span.CanCollide,false)
+	test("director: reset clears gravity and friction even in the middle of an event",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local parts=surfaces(e)
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		director:apply(ChaosRules.modifiers("LowGravity",Config))
 		director:reset()
-		eq(director.active,"")
 		eq(e.services.Workspace.Gravity,Config.NormalGravity)
+		for _,part in parts do eq(part.CustomPhysicalProperties,nil) end
 	end)
+	test("director: switching kinds never leaves the previous kind's effect behind",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local parts=surfaces(e)
+		director:apply(ChaosRules.modifiers("LowGravity",Config))
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		eq(e.services.Workspace.Gravity,Config.NormalGravity)
+		near(parts[1].CustomPhysicalProperties.Friction,Config.SlipperyFriction)
+		director:apply(ChaosRules.modifiers("BouncyWorld",Config))
+		eq(e.services.Workspace.Gravity,Config.NormalGravity)
+		for _,part in parts do eq(part.CustomPhysicalProperties,nil) end
+	end)
+	test("director: a surface destroyed during an event is skipped on restore",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local parts=surfaces(e)
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		parts[1].Parent=nil
+		director:apply(ChaosRules.modifiers("",Config))
+		for index=2,#parts do eq(parts[index].CustomPhysicalProperties,nil) end
+	end)
+	test("director: retired map geometry stays parked and never moves during any event",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local deck=find(root,"EventRaft_A_Deck")
+		local span=find(root,"EventPath_0_Span_0")
+		assert(deck and span,"the baked geometry is kept in the map")
+		local deckPose,spanPose=deck.CFrame,span.CFrame
+		for _,kind in Config.Chaos.Kinds do
+			director:apply(ChaosRules.modifiers(kind,Config))
+			director:apply(ChaosRules.modifiers("",Config))
+		end
+		eq(deck.CanCollide,false); eq(span.CanCollide,false)
+		assert((deck.CFrame.Position-deckPose.Position).Magnitude<.001,"a retired raft must not move")
+		assert((span.CFrame.Position-spanPose.Position).Magnitude<.001,"a retired span must not move")
+	end)
+
 	-- ------------------------------------------------------------------------ #
 	-- Persistence (spec §8): secure, schema-checked, failure-tolerant saves.
 	-- The mock DataStore is in-memory and deterministic.
@@ -859,6 +956,327 @@ return function(Mock, sources, schema)
 		eq(store.profiles[-9].Coins,5)
 		assert(store.errors>0,"the failure must be counted, not hidden")
 	end)
+	test("director: a character that spawns during Slippery Chaos gets the same friction, and nothing is left behind",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local ws=e.services.Workspace
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		local model=e.new("Model"); model.Name="LateJoiner"
+		local torso=e.new("Part"); torso.Name="Torso"; torso.Parent=model
+		model.Parent=ws
+		near(torso.CustomPhysicalProperties.Friction,Config.SlipperyFriction)
+		-- A respawn is a new model: the old one is gone, the new one must get friction too.
+		model:Destroy()
+		local again=e.new("Model"); again.Name="Respawn"
+		local torso2=e.new("Part"); torso2.Name="Torso"; torso2.Parent=again
+		again.Parent=ws
+		near(torso2.CustomPhysicalProperties.Friction,Config.SlipperyFriction)
+		director:apply(ChaosRules.modifiers("",Config))
+		eq(torso2.CustomPhysicalProperties,nil)
+		eq(director.frictionOn,false)
+		eq(ws.Gravity,Config.NormalGravity)
+	end)
+	test("director: the friction watcher is disconnected at the window's end, so later spawns are untouched",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		local ws=e.services.Workspace
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		director:apply(ChaosRules.modifiers("",Config))
+		local late=e.new("Part"); late.Name="AfterTheEvent"; late.Parent=ws
+		eq(late.CustomPhysicalProperties,nil)
+		eq(director.watcher,nil)
+	end)
+	test("director: repeated Slippery ticks write friction once, not every tick",function()
+		local e,root,director,ChaosRules,Config=directorFixture()
+		director:apply(ChaosRules.modifiers("SlipperyChaos",Config))
+		local writes=0
+		local probe=e.new("Part"); probe.Name="Probe"; probe.Parent=e.services.Workspace
+		local first=probe.CustomPhysicalProperties
+		for _=1,50 do director:apply(ChaosRules.modifiers("SlipperyChaos",Config)) end
+		eq(probe.CustomPhysicalProperties,first)
+		eq(director.frictionValue,Config.SlipperyFriction)
+		director:reset()
+		eq(probe.CustomPhysicalProperties,nil)
+	end)
+	-- ---- dynamic audio (client controller on the mock SoundService) ----------
+	local function audioFixture(trackId,cueId)
+		local e=Mock.new(sources,schema,{fast=true})
+		local Config=e:import("src/shared/Config.luau")
+		local config=table.clone(Config); config.Audio=table.clone(Config.Audio)
+		config.Audio.Tracks=table.clone(Config.Audio.Tracks); config.Audio.Cues=table.clone(Config.Audio.Cues)
+		if trackId then config.Audio.Tracks.Chaos=trackId end
+		if cueId then config.Audio.Cues.Steal=cueId end
+		local Audio=e:import("src/client/Audio.luau")
+		return e,config,Audio,Audio.new(config)
+	end
+	test("audio: the Chaos track crossfades in during an event and back out afterwards",function()
+		local e,config,Audio,a=audioFixture("rbxassetid://111")
+		local chaos=a.folder:FindFirstChild("Music_Chaos")
+		assert(chaos,"a configured track gets a Sound")
+		eq(chaos.SoundId,"rbxassetid://111")
+		eq(a.folder:FindFirstChild("Music_Arena"),nil) -- unconfigured tracks create no Sound
+		a:setState({phase="Playing",eventActive=false,eventKind=""}); a:tick(.1,true)
+		a:setState({phase="Playing",eventActive=true,eventKind="BrainCellRush"})
+		for _=1,10 do a:tick(.1,true) end
+		assert(chaos.Volume>0,"the Chaos track is audible during the event")
+		assert(chaos.Volume<=config.Audio.MusicVolume+1e-9,"never louder than configured")
+		for _=1,100 do a:tick(.1,true) end
+		near(chaos.Volume,config.Audio.MusicVolume)
+		a:setState({phase="Playing",eventActive=false,eventKind=""})
+		for _=1,30 do a:tick(.1,true) end
+		near(chaos.Volume,0)
+	end)
+	test("audio: the Sound setting mutes music and cues, and destroy removes everything it made",function()
+		local e,config,Audio,a=audioFixture("rbxassetid://111","rbxassetid://222")
+		a:setState({phase="Playing",eventActive=true,eventKind="LowGravity"})
+		for _=1,60 do a:tick(.1,false) end
+		near(a.folder:FindFirstChild("Music_Chaos").Volume,0)
+		eq(a:cue("Steal"),false)
+		a:tick(.1,true)
+		eq(a:cue("Steal"),true)
+		a:destroy()
+		eq(a.folder.Parent,nil)
+	end)
+	test("audio: cues play only when configured, and an unknown cue name is an error",function()
+		local e,config,Audio,a=audioFixture(nil,nil)
+		eq(a:cue("Ability"),false)              -- the reserved ability slot is empty by default
+		assert(not pcall(function() a:cue("Ability.Dash") end),"an unknown cue must be an error")
+		a:destroy()
+	end)
+	test("audio: joining mid-event plays no stinger; the next real edge does",function()
+		local e,config,Audio,a=audioFixture("rbxassetid://111")
+		config.Audio.Cues.ChaosStart="rbxassetid://333"; config.Audio.Cues.ChaosEnd="rbxassetid://334"
+		a:setState({phase="Playing",eventActive=true,eventKind="SlipperyChaos"}) -- first snapshot: no stinger
+		eq(#a.folder:GetChildren(),1)                                           -- only the Chaos music Sound
+		a:setState({phase="Playing",eventActive=false,eventKind=""})            -- a real edge: ChaosEnd plays
+		eq(#a.folder:GetChildren(),2)
+		a:destroy()
+	end)
+	-- ---- characters and abilities (live server, mock boundary) ----------------
+	local function remotesOf(e) return e.services.ReplicatedStorage.BrainrotRemotes end
+	local function viewsFor(e,p)
+		local views={}
+		for _,log in e.logs do
+			if log.name=="CharacterState" and log.player==p.UserId then table.insert(views,log.args[1]) end
+		end
+		return views
+	end
+	local function lastView(e,p)
+		local views=viewsFor(e,p)
+		return views[#views]
+	end
+	local function switchTo(e,p,slot)
+		e:step(.3); remotesOf(e).Character.OnServerEvent:Fire(p,slot)
+		return lastView(e,p)
+	end
+	local function useAbility(e,p)
+		e:step(.3); remotesOf(e).Ability.OnServerEvent:Fire(p)
+		return lastView(e,p)
+	end
+	local function serverConfig(e) return e:import("src/shared/Config.luau") end
+	local function setPosition(p,target) p.Character:PivotTo(target) end
+	-- The movement guard treats a jump as a teleport and pulls it back, exactly as it would
+	-- in a live server. So the helper walks a player to the target at 15 studs a second,
+	-- under the 22 stud walk speed, one simulated second per step.
+	local function walkTo(e,p,x,z)
+		for _=1,20 do
+			local root=p.Character.HumanoidRootPart
+			local cur=root.Position
+			local dx,dz=x-cur.X,z-cur.Z
+			local d=math.sqrt(dx*dx+dz*dz)
+			if d<.05 then break end
+			local s=math.min(d,15)
+			local to=e.CFrame.new(cur.X+dx/d*s,cur.Y,cur.Z+dz/d*s)
+			root.CFrame=to
+			p.Character.Head.CFrame=e.CFrame.new(to.Position.X,cur.Y+3,to.Position.Z)
+			e:step(1)
+		end
+	end
+	local function nearCaster(e,a,b,offset)
+		local at=a.Character.HumanoidRootPart.Position
+		walkTo(e,b,at.X+offset,at.Z)
+	end
+	local function speedOf(p) return p.Character.Humanoid.WalkSpeed end
+	local function groundedVelocity(p) return p.Character.HumanoidRootPart.AssemblyLinearVelocity end
+	local function horizontal(v) return math.sqrt(v.X*v.X+v.Z*v.Z) end
+
+	test("abilities: the Ability remote rejects any argument, and Character rejects bad slots with a reason",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local before=#viewsFor(e,a)
+		remotesOf(e).Ability.OnServerEvent:Fire(a,"Mind Trick"); e:step(.3)
+		eq(#viewsFor(e,a),before)                                      -- silently refused, nothing started
+		remotesOf(e).Character.OnServerEvent:Fire(a,2,3); e:step(.3)
+		eq(#viewsFor(e,a),before)                                      -- two arguments: refused
+		local bad=switchTo(e,a,9)
+		eq(bad.notice,"NO SUCH CHARACTER")
+		eq(switchTo(e,a,"2").notice,"NO SUCH CHARACTER")
+		eq(switchTo(e,a,1.5).notice,"NO SUCH CHARACTER")
+		eq(lastView(e,a).normalLeft,3)                                 -- no quota was spent
+	end)
+
+	test("switching: three normal switches per round; the bonus switch is refused outside Chaos and allowed during it",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		eq(lastView(e,a).active,"brain")
+		eq(switchTo(e,a,2).active,"frog"); eq(switchTo(e,a,3).active,"fish"); eq(switchTo(e,a,4).active,"goose")
+		local v=lastView(e,a); eq(v.normalLeft,0); eq(v.active,"goose")
+		eq(switchTo(e,a,5).notice,"BONUS SWITCH: CHAOS EVENT ONLY")    -- no bonus before Chaos
+		e:step(8.01)                                                  -- the Chaos Event opens at 8 s
+		eq(lastView(e,a).bonusLeft,1)
+		eq(switchTo(e,a,5).active,"toast")                             -- the one bonus switch
+		eq(switchTo(e,a,6).notice,"NO SWITCHES LEFT THIS ROUND")      -- four in total, never a fifth
+	end)
+
+	test("cooldowns: independent per character, persist across switches, and are refused while cooling",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,2)                                                -- frog: Belly Bounce
+		local first=useAbility(e,a)
+		assert(first.notice:find("BELLY BOUNCE"),"the frog ability ran: "..first.notice)
+		local readyFrog=first.readyAt.frog
+		near(readyFrog-e.now,Config.Characters.Roster.frog.Cooldown,.3)
+		switchTo(e,a,3)                                                -- fish is ready at once: its cooldown is its own
+		local fishView=useAbility(e,a)
+		assert(fishView.notice:find("BUBBLE DASH"),"fish ability is independent: "..fishView.notice)
+		switchTo(e,a,2)                                                -- back to frog: still cooling
+		local refused=useAbility(e,a)
+		eq(refused.notice,"ABILITY RECHARGING")
+		eq(math.abs(lastView(e,a).readyAt.frog-readyFrog)<.001,true)  -- switching changed no cooldown
+	end)
+
+	test("knockback: Belly Bounce pushes opponents in range, never the caster, and spares those out of range",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		local c=e:addPlayer(-3,"Far Brain"); e:step(.3)
+		switchTo(e,a,2)
+		nearCaster(e,a,b,5)                                            -- inside Radius 10
+		walkTo(e,c,a.Character.HumanoidRootPart.Position.X-20,a.Character.HumanoidRootPart.Position.Z)  -- 20 studs away: out of range
+		local aBefore=groundedVelocity(a)
+		local view=useAbility(e,a)
+		assert(view.notice:find("1 HIT"),"one opponent hit: "..view.notice)
+		local push=groundedVelocity(b)
+		near(horizontal(push),Config.Characters.Roster.frog.Push,.001)
+		near(push.Y,Config.Characters.Roster.frog.Lift,.001)
+		eq(groundedVelocity(a).X,aBefore.X)                            -- the caster was not moved
+		eq(groundedVelocity(a).Z,aBefore.Z)
+		eq(horizontal(groundedVelocity(c)),0)                          -- out of range: untouched
+	end)
+
+	test("bubble dash: the caster moves along its facing for the duration, then stops",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,3)
+		useAbility(e,a); e:step(.1)
+		near(horizontal(groundedVelocity(a)),Config.Characters.Roster.fish.Speed,.001)
+		e:step(Config.Characters.Roster.fish.Duration+.3)
+		a.Character.HumanoidRootPart.AssemblyLinearVelocity=e.Vector3.new(0,0,0)
+		e:step(.3)
+		eq(horizontal(groundedVelocity(a)),0)                          -- not re-applied after the dash
+	end)
+
+	test("slows: Honk Wave slows opponents in range for its duration, the caster is untouched, and the speed comes back",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,4)
+		nearCaster(e,a,b,6)
+		useAbility(e,a); e:step(.2)
+		near(speedOf(b),Config.WalkSpeed*Config.Characters.Roster.goose.SlowFactor,.001)
+		eq(speedOf(a),Config.WalkSpeed)
+		e:step(Config.Characters.Roster.goose.Duration+.2)
+		near(speedOf(b),Config.WalkSpeed,.001)
+	end)
+
+	test("slows: Sock Snare slows a rival to its factor, and the caster keeps full speed (merge rules are in core)",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,6)
+		nearCaster(e,a,b,4)
+		useAbility(e,a); e:step(.2)
+		near(speedOf(b),Config.WalkSpeed*Config.Characters.Roster.sock.SlowFactor,.001)
+		eq(speedOf(a),Config.WalkSpeed)
+	end)
+
+	test("launch: Toast Launch lifts opponents straight up with no sideways part",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,5)
+		nearCaster(e,a,b,4)
+		useAbility(e,a)
+		local v=groundedVelocity(b)
+		near(v.Y,Config.Characters.Roster.toast.Lift,.001)
+		near(horizontal(v),0,.001)
+	end)
+
+	test("decoy: Mind Trick shows a non-colliding copy of the caster that is removed when the round ends",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local view=useAbility(e,a)
+		assert(view.notice:find("DECOY LIVE"),"decoy started: "..view.notice)
+		local decoy=e.services.Workspace:FindFirstChild("MindTrick_"..tostring(a.UserId))
+		assert(decoy~=nil,"the decoy model exists while the round runs")
+		local parts=0
+		for _,part in decoy:GetDescendants() do
+			if part:IsA("BasePart") then
+				parts+=1
+				eq(part.CanCollide,false); eq(part.Anchored,true)
+			end
+		end
+		assert(parts>0,"the decoy has visible parts")
+		e:step(60)                                                     -- past the end of the round
+		eq(e.services.Workspace:FindFirstChild("MindTrick_"..tostring(a.UserId)),nil)
+	end)
+
+	test("abilities never change Brain Cells: every character's ability leaves every score exactly as it was",function()
+		local rolls={.1,.4,.6,.9}
+		for index,slot in {2,3,4,5,6,1} do
+			local e,a,b=fixture({fast=true,studio=true,roll=rolls[(index-1)%4+1]},true); play(e)
+			nearCaster(e,a,b,4)
+			if slot~=1 then switchTo(e,a,slot) end
+			local aBefore,bBefore=score(a),score(b)
+			useAbility(e,a)
+			eq(score(a),aBefore); eq(score(b),bBefore)
+		end
+	end)
+
+	test("names: the name tag shows the active character and follows a switch",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local tag=a.Character.Head:FindFirstChild("CharacterTag")
+		assert(tag~=nil,"a tag is attached to the head")
+		eq(tag:FindFirstChild("Label").Text,"BRAINY")
+		switchTo(e,a,2); e:step(.1)
+		eq(a.Character.Head:FindFirstChild("CharacterTag"):FindFirstChild("Label").Text,"BLORBO")
+	end)
+
+	test("respawn: a respawn clears slows and dashes, but keeps the cooldown",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,4); nearCaster(e,a,b,6)
+		useAbility(e,a); e:step(.2)
+		near(speedOf(b),Config.WalkSpeed*Config.Characters.Roster.goose.SlowFactor,.001)
+		e:spawn(b); e:step(.5)
+		near(speedOf(b),Config.WalkSpeed,.001)                         -- the new character is not slowed
+		local ready=lastView(e,a).readyAt.goose
+		assert(ready>e.now,"the caster's cooldown is still running")
+	end)
+
+	test("hud: the ability button, Q, the number keys and the strip all send the right verbs",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		e:find("AbilityButton").Activated:Fire()
+		e:step(.3)
+		assert(lastView(e,a).notice:find("DECOY LIVE"),"button fires the ability: "..lastView(e,a).notice)
+		e:step(.3); e:press("Two"); e:step(.1)
+		eq(lastView(e,a).active,"frog")
+		e:step(.3); e:find("Slot3").Activated:Fire(); e:step(.1)
+		eq(lastView(e,a).active,"fish")
+		e:step(.3); e:press("Q")
+		assert(lastView(e,a).notice:find("BUBBLE DASH"),"Q fires the active ability: "..lastView(e,a).notice)
+	end)
+
+	test("hud: the strip names the active character and the switches left",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		e:step(.1)
+		assert(e:find("Readout").Text:find("BRAINY"),"readout: "..e:find("Readout").Text)
+		switchTo(e,a,2); e:step(.1)
+		assert(e:find("Readout").Text:find("BLORBO"),"readout follows the switch")
+		assert(e:find("Readout").Text:find("2 SWITCHES LEFT"),"readout counts switches: "..e:find("Readout").Text)
+	end)
+
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")
 end

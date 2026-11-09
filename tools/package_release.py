@@ -13,13 +13,16 @@ SOURCE_FILES = (
     "src/client/Effects.luau", "src/client/Hud.luau", "src/client/Iconography.luau",
     "src/client/Creatures.luau", "src/client/CreatureData.luau",
     "src/client/Kit.luau", "src/client/Panels.luau", "src/client/Theme.luau",
-    "src/client/Collection.luau", "src/client/Main.client.luau",
+    "src/client/Collection.luau", "src/client/Audio.luau", "src/client/Main.client.luau",
     "src/server/ArtService.luau", "src/server/Main.server.luau", "src/server/WorldData.luau",
     "src/server/WorldService.luau", "src/server/EventDirector.luau",
-    "src/server/Persistence.luau",
+    "src/server/Persistence.luau", "src/server/AbilityService.luau",
     "src/server/core/ArenaRoute.luau", "src/server/core/MovementGuard.luau",
     "src/server/core/PickupLedger.luau", "src/server/core/RoundMachine.luau",
-    "src/shared/ArtDirection.luau", "src/shared/Config.luau", "src/shared/Creatures.luau",
+    "src/server/core/ChaosRules.luau", "src/server/core/CharacterRules.luau",
+    "src/server/core/AbilityRules.luau",
+    "src/shared/ArtDirection.luau", "src/shared/AudioRules.luau", "src/shared/Config.luau",
+    "src/shared/Creatures.luau",
 )
 PLACE_FILES = ("places/BrainrotArena.rbxlx", "places/BrainrotArena-QuickTest.rbxlx")
 
@@ -43,6 +46,7 @@ def main():
         "docs/UI_IMPLEMENTATION_PHASE3.md", "docs/PHASE3_GAMEPLAY_FIXES.md",
         "docs/CHARACTERS_PHASE4.md", "docs/PHASE5_STEAL_AND_EVENTS.md",
         "docs/TEST_REPORT_PHASE5.md", "docs/KNOWN_LIMITATIONS.md",
+        "docs/CHAOS_EVENTS.md", "docs/AUDIO.md", "docs/PHASE_CHARACTERS_ABILITIES.md",
         "docs/previews/cast.jpg", "docs/previews/collection.jpg",
         "docs/previews/ui-collection.jpg", "docs/previews/ui-collection-full.jpg",
         "docs/previews/ui-phone-collection.jpg",

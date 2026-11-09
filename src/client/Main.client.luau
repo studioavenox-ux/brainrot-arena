@@ -5,30 +5,49 @@ local StarterGui = game:GetService("StarterGui")
 local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
 local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
+local Audio = require(script.Parent.Audio)
 local Iconography = require(script.Parent.Iconography)
 local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes")
 local stateRemote = remotes:WaitForChild("State") :: RemoteEvent
 local pickupRemote = remotes:WaitForChild("Pickup") :: RemoteEvent
 local requestRemote = remotes:WaitForChild("Request") :: RemoteEvent
+local abilityRemote = remotes:WaitForChild("Ability") :: RemoteEvent
+local characterRemote = remotes:WaitForChild("Character") :: RemoteEvent
+local characterStateRemote = remotes:WaitForChild("CharacterState") :: RemoteEvent
 
 -- Loaded before the HUD so rarity glyphs exist on the first frame.
 local _iconography = Iconography
 local hud = Hud.new(Config, function(action: string)
 	requestRemote:FireServer(action)
-end)
+end, {
+	-- Each verb has its own remote. Neither sends an effect, a target or a cell.
+	ability = function()
+		abilityRemote:FireServer()
+	end,
+	switch = function(slot: number)
+		characterRemote:FireServer(slot)
+	end,
+})
 local effects = Effects.new(hud, Config)
+local audio = Audio.new(Config)
 local connections: { RBXScriptConnection } = {}
 
 table.insert(connections, stateRemote.OnClientEvent:Connect(function(state, notice)
 	hud:update(state)
 	effects:update(state)
+	audio:setState(state)
 	if typeof(notice) == "string" then hud:notice(notice) end
+end))
+table.insert(connections, characterStateRemote.OnClientEvent:Connect(function(view)
+	hud:setCharacters(view)
 end))
 table.insert(connections, pickupRemote.OnClientEvent:Connect(function(receipt)
 	effects:pickup(receipt)
 end))
 local accumulator = 0
 table.insert(connections, RunService.RenderStepped:Connect(function(dt)
+	-- Fades run every frame so a crossfade keeps the same wall-clock length.
+	audio:tick(dt, hud.soundOn)
 	accumulator += dt
 	if accumulator >= .1 then
 		accumulator = 0
@@ -52,5 +71,6 @@ end)
 script.Destroying:Connect(function()
 	for _, connection in connections do connection:Disconnect() end
 	effects:destroy()
+	audio:destroy()
 	hud:destroy()
 end)

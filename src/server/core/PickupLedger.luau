@@ -19,6 +19,7 @@ export type Receipt = {
 type Fields = {
 	slots: { Slot }, kinds: { Kind }, radius: number, respawn: number,
 	roundId: number, running: boolean, choose: () -> number, species: (number, number) -> string,
+	rareScale: number,
 }
 export type Ledger = typeof(setmetatable({} :: Fields, PickupLedger))
 
@@ -57,18 +58,30 @@ function PickupLedger.new(
 	end
 	return setmetatable({
 		slots = slots, kinds = kinds, radius = radius, respawn = respawn,
-		roundId = 0, running = false, choose = choose, species = speciesOf,
+		roundId = 0, running = false, choose = choose, species = speciesOf, rareScale = 1,
 	}, PickupLedger)
+end
+
+-- Weight of one kind for the next roll. Only denominations above +1 are scaled, so
+-- Brain Cell Rush raises the odds of Rare and Prismatic cells and nothing else.
+local function weightOf(self: Ledger, kind: Kind): number
+	return if kind.Value > 1 then kind.Weight * self.rareScale else kind.Weight
+end
+
+-- The server sets this from the live Chaos Event each tick (1 = normal odds).
+function PickupLedger.setRareScale(self: Ledger, scale: number)
+	assert(scale == scale and scale >= 0 and scale < math.huge, "Rarity scale must be finite and non-negative")
+	self.rareScale = scale
 end
 
 function PickupLedger.rollKind(self: Ledger): number
 	local total = 0
 	for _, kind in self.kinds do
-		total += kind.Weight
+		total += weightOf(self, kind)
 	end
 	local roll = math.clamp(self.choose(), 0, 0.999999) * total
 	for index, kind in self.kinds do
-		roll -= kind.Weight
+		roll -= weightOf(self, kind)
 		if roll < 0 then
 			return index
 		end

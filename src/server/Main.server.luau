@@ -13,16 +13,23 @@ local PickupLedger = require(script.Parent.core.PickupLedger)
 local MovementGuard = require(script.Parent.core.MovementGuard)
 local ArenaRoute = require(script.Parent.core.ArenaRoute)
 local EventDirector = require(script.Parent.EventDirector)
+local ChaosRules = require(script.Parent.core.ChaosRules)
 local Persistence = require(script.Parent.Persistence)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
+local CharacterRules = require(script.Parent.core.CharacterRules)
+local AbilityService = require(script.Parent.AbilityService)
 
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
 settings.Timing = if fast then Config.FastTiming else Config.Timing
-local machine = RoundMachine.new(settings)
 local random = Random.new()
+-- Chaos draws are server-side and uniform over the configured pool. Clamped so a
+-- rounding edge can never index past the end of the list.
+local machine = RoundMachine.new(settings, function(n: number): number
+	return math.min(n, math.floor(random:NextNumber() * n) + 1)
+end)
 -- Species is rolled here, on the server, from the ledger's own slot id and rarity, so
 -- the receipt a client animates names the character that player really collected.
 local ledger = PickupLedger.new(WorldData.PickupPositions, Config.Kinds, Config.PickupRadius, Config.PickupRespawn, function()
@@ -31,6 +38,10 @@ end, function(slotId: number, value: number): string
 	return CharacterManifest.SpeciesOf(slotId, value)
 end)
 local movement = MovementGuard.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
+-- Character state (switch quotas, per-character cooldowns) and ability effects. Both are
+-- reset at round start; cooldowns never survive into the next round.
+local characters = CharacterRules.new(Config.Characters)
+local abilities = AbilityService.new(movement)
 -- Arena access. Every rail trip goes through this router: it asserts a destination
 -- and keeps asserting it until the character is measurably there.
 local route = ArenaRoute.new()
@@ -40,8 +51,11 @@ ArtService.apply()
 local world = WorldService.new()
 -- Animates the baked event geometry by name. Owns gravity/friction *inside* an
 -- event window only; the round machine owns when a window opens.
-local director = EventDirector.new(workspace:FindFirstChild("BrainrotWorld") :: Model, Config.NormalGravity,
-	Config.LowGravity, .7, Config.SlipperyFriction)
+local director = EventDirector.new(Config.NormalGravity)
+-- The live Chaos modifiers. Only syncChaos() writes this, so every consumer (jump,
+-- respawn, rarity, gravity, friction) agrees on the same snapshot of the event.
+local appliedChaos = ""
+local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
 local profiles = Persistence.new({})
@@ -60,6 +74,18 @@ pickupRemote.Parent = remotes
 local requestRemote = Instance.new("RemoteEvent")
 requestRemote.Name = "Request"
 requestRemote.Parent = remotes
+-- Character verbs have their own remotes. Each one is validated on its own terms:
+-- Ability takes no arguments; Character takes exactly one integer slot.
+local abilityRemote = Instance.new("RemoteEvent")
+abilityRemote.Name = "Ability"
+abilityRemote.Parent = remotes
+local characterRemote = Instance.new("RemoteEvent")
+characterRemote.Name = "Character"
+characterRemote.Parent = remotes
+-- Server to one player only: their character view and the result of their last verb.
+local characterStateRemote = Instance.new("RemoteEvent")
+characterStateRemote.Name = "CharacterState"
+characterStateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 local pickupFolder = Instance.new("Folder")
@@ -106,6 +132,63 @@ local function snapshot()
 		rows = state.rows, results = state.results,
 		fastMode = fast, version = Config.Version,
 	}
+end
+
+-- ---- characters: views, messages and the name tag -----------------------------
+-- Player-facing wording for each refusal reason from CharacterRules.
+local REFUSAL_NOTICES: { [string]: string } = {
+	["phase"] = "CHARACTERS ARE LIVE DURING PLAY",
+	["not-participating"] = "JOIN THE ROUND FIRST",
+	["bad-slot"] = "NO SUCH CHARACTER",
+	["same-character"] = "ALREADY YOUR CHARACTER",
+	["no-switches"] = "NO SWITCHES LEFT THIS ROUND",
+	["bonus-during-chaos-only"] = "BONUS SWITCH: CHAOS EVENT ONLY",
+	["cooling"] = "ABILITY RECHARGING",
+}
+
+local function characterView(player: Player, notice: string?): { [string]: any }
+	local view = CharacterRules.view(characters, player.UserId, machine.eventActive == true)
+	view.notice = notice or ""
+	view.phase = machine.phase
+	view.now = Workspace:GetServerTimeNow()
+	return view
+end
+
+local function sendCharacter(player: Player, notice: string?)
+	characterStateRemote:FireClient(player, characterView(player, notice))
+end
+
+-- The name tag shows the active character. It is rebuilt on every switch and respawn.
+local function applyCharacterTag(player: Player)
+	local character = player.Character
+	local head = if character then character:FindFirstChild("Head") else nil
+	if not head or not head:IsA("BasePart") then
+		return
+	end
+	local active = CharacterRules.ensure(characters, player.UserId).active
+	local species = CharacterManifest.Characters[active]
+	local gui = head:FindFirstChild("CharacterTag")
+	if gui == nil then
+		gui = Instance.new("BillboardGui")
+		gui.Name = "CharacterTag"
+		gui.Size = UDim2.fromOffset(150, 22)
+		gui.StudsOffset = Vector3.new(0, 2.4, 0)
+		gui.MaxDistance = 80
+		gui.Parent = head
+		local label = Instance.new("TextLabel")
+		label.Name = "Label"
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBlack
+		label.TextScaled = true
+		label.TextColor3 = Color3.fromRGB(238, 243, 255)
+		label.TextStrokeTransparency = .5
+		label.Parent = gui
+	end
+	local label = gui:FindFirstChild("Label")
+	if label and label:IsA("TextLabel") then
+		label.Text = species.Label
+	end
 end
 
 local function applyHalo(player: Player)
@@ -184,9 +267,9 @@ local function movePlayer(player: Player, arena: boolean, now: number, escalate:
 	end
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
-	humanoid.WalkSpeed = Config.WalkSpeed
+	humanoid.WalkSpeed = AbilityService.walkSpeed(abilities, player.UserId, now)
 	humanoid.UseJumpPower = true
-	humanoid.JumpPower = Config.JumpPower
+	humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
 	movement:teleport(player.UserId, position(target.Position), now)
 	route:attempt(player.UserId, if arena then "arena" else "lobby", now)
 
@@ -338,20 +421,15 @@ local function resolveSteal(thief: Player, now: number): (string, number, Player
 	return outcome, value, bestVictim
 end
 
-local function setGravity(active: boolean)
-	Workspace.Gravity = if active then Config.LowGravity else Config.NormalGravity
-	world:setLowGravity(active)
-end
-
 local function checkInvariants()
 	if not RunService:IsStudio() then
 		return
 	end
 	assert(ledger.running == (machine.phase == "Playing"), "Pickup lifecycle diverged")
-	-- Gravity is normal unless the *low gravity* window is the live one. Other
-	-- wildcards leave it alone, so the assertion names the only cause.
+	-- Gravity is normal unless the *low gravity* Chaos Event is the live one. Other
+	-- kinds leave it alone, so the assertion names the only cause.
 	local low = machine.eventActive and machine.eventKind == "LowGravity"
-	assert(math.abs(Workspace.Gravity - (if low then Config.LowGravity else Config.NormalGravity)) < 0.01, "Gravity failed to reset")
+	assert(math.abs(Workspace.Gravity - (if low then Config.Chaos.LowGravity else Config.NormalGravity)) < 0.01, "Gravity failed to reset")
 	-- Nothing can be negative, and carried values always sum to the round score.
 	for _, player in machine.players do
 		assert(player.carriedValue >= 0, "Negative carried value")
@@ -370,19 +448,33 @@ local function checkInvariants()
 	end
 end
 
+-- Make the world match the live Chaos Event. Runs every step, so a missed effect can
+-- never leave gravity, friction, jump power or rarity stuck after the window closes.
+local function syncChaos()
+	local kind = if machine.eventActive then machine.eventKind else ""
+	if kind == appliedChaos then
+		return
+	end
+	appliedChaos = kind
+	chaos = ChaosRules.modifiers(kind, Config)
+	director:apply(chaos)
+	world:setLowGravity(kind == "LowGravity")
+	ledger:setRareScale(chaos.RareScale)
+	-- The bonus switch depends on the Chaos Event, so every player is told at once.
+	for _, player in Players:GetPlayers() do
+		sendCharacter(player)
+	end
+end
+
 local function handleEffects(effects, now: number)
 	for _, effect in effects do
 		dirty = true
 		if effect.kind == "event" then
+			-- The world itself is changed by syncChaos(), which reconciles on every step.
 			if effect.active then
-				local duration = math.max(0, (machine.eventEndsAt or now) - now)
-				director:start(effect.event or "", now, duration)
-				world:setLowGravity(effect.event == "LowGravity")
-				print(string.format("[Brainrot] event ON • %s", tostring(effect.event)))
+				print(string.format("[Brainrot] chaos ON • %s", tostring(effect.event)))
 			else
-				director:stop()
-				world:setLowGravity(false)
-				print("[Brainrot] event OFF")
+				print("[Brainrot] chaos OFF")
 			end
 		elseif effect.kind == "warning" then
 			print(string.format("[Brainrot] event warning • %s in %.0fs", tostring(effect.event),
@@ -412,6 +504,13 @@ local function handleEffects(effects, now: number)
 			end
 			if machine.phase == "Playing" then
 				ledger:beginRound(machine.roundId)
+				-- Fresh quotas and cooldowns for every player, once per round.
+				local ids: { number } = {}
+				for _, player in Players:GetPlayers() do
+					table.insert(ids, player.UserId)
+				end
+				CharacterRules.beginRound(characters, ids)
+				AbilityService.reset(abilities)
 				spawnPickups()
 				-- Route every player (including a player whose character is still
 				-- loading: routePlayer re-asserts on the next sweep and on
@@ -424,18 +523,19 @@ local function handleEffects(effects, now: number)
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
 				director:reset()
-				world:setLowGravity(false)
+				AbilityService.reset(abilities)
 				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
 						routePlayer(player, now, true)
 					end
 				end
 			end
+			for _, player in Players:GetPlayers() do
+				applyCharacterTag(player)
+				sendCharacter(player)
+			end
 			print(string.format("[Brainrot] %s • round %d", machine.phase, machine.roundId))
 		end
-	end
-	if #effects > 0 then
-		checkInvariants()
 	end
 end
 
@@ -455,6 +555,9 @@ local function characterAdded(player: Player, character: Model)
 		machine:spawnProtect(player.UserId, now)
 		routePlayer(player, now, true)
 		applyHalo(player)
+		AbilityService.forget(abilities, player.UserId)
+		applyCharacterTag(player)
+		sendCharacter(player)
 	end)
 end
 
@@ -518,6 +621,8 @@ Players.PlayerRemoving:Connect(function(player)
 	movement:remove(player.UserId)
 	route:remove(player.UserId)
 	machine:removePlayer(player.UserId)
+	CharacterRules.clear(characters, player.UserId)
+	AbilityService.forget(abilities, player.UserId)
 	dirty = true
 end)
 for _, player in Players:GetPlayers() do
@@ -583,7 +688,106 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 		stateRemote:FireClient(player, snapshot(), message)
 	else
 		stateRemote:FireClient(player, snapshot())
+		sendCharacter(player)
 	end
+end)
+
+-- ---- character verbs ------------------------------------------------------------
+-- Separate, strictly validated remotes. Neither carries an effect, a target or a cell.
+abilityRemote.OnServerEvent:Connect(function(player: Player, ...: any)
+	if select("#", ...) ~= 0 then
+		return
+	end
+	local record = records[player.UserId]
+	if not record then
+		return
+	end
+	local now = Workspace:GetServerTimeNow()
+	if now - (record.requests.Ability or -math.huge) < .25 then
+		return
+	end
+	record.requests.Ability = now
+	local character, humanoid, root = characterReady(player)
+	if not character or not humanoid or not root then
+		sendCharacter(player, "ABILITY NEEDS A LIVE CHARACTER")
+		return
+	end
+	local uid = player.UserId
+	local active = CharacterRules.ensure(characters, uid).active
+	local entry = Config.Characters.Roster[active]
+	local ok, reason = CharacterRules.ability(characters, uid, now, {
+		phase = machine.phase, participating = machine:isParticipating(uid),
+	})
+	if not ok then
+		sendCharacter(player, REFUSAL_NOTICES[reason] or "ABILITY REFUSED")
+		return
+	end
+	-- Every live participant is a candidate. The caster is excluded inside AbilityRules.
+	local candidates: { { player: Player, root: BasePart, humanoid: Humanoid } } = {}
+	for _, other in Players:GetPlayers() do
+		local _, otherHumanoid, otherRoot = characterReady(other)
+		if otherRoot and otherHumanoid and machine:isParticipating(other.UserId) then
+			table.insert(candidates, { player = other, root = otherRoot, humanoid = otherHumanoid })
+		end
+	end
+	local affected = AbilityService.perform(abilities, player, character, root, entry, candidates, now)
+	for _, victim in affected do
+		if victim ~= player then
+			sendCharacter(victim, string.format("%s HIT YOU", entry.Title))
+		end
+	end
+	local message
+	if entry.Ability == "MindTrick" then
+		message = string.format("%s • DECOY LIVE", entry.Title)
+	elseif entry.Ability == "BubbleDash" then
+		message = entry.Title
+	elseif #affected > 0 then
+		message = string.format("%s • %d HIT", entry.Title, #affected)
+	else
+		message = string.format("%s • NOTHING IN RANGE", entry.Title)
+	end
+	sendCharacter(player, message)
+end)
+
+characterRemote.OnServerEvent:Connect(function(player: Player, ...: any)
+	if select("#", ...) ~= 1 then
+		return
+	end
+	local slot = ...
+	local record = records[player.UserId]
+	if not record then
+		return
+	end
+	local now = Workspace:GetServerTimeNow()
+	if now - (record.requests.Character or -math.huge) < .25 then
+		return
+	end
+	record.requests.Character = now
+	local ok, reason = CharacterRules.switch(characters, player.UserId, slot, {
+		phase = machine.phase,
+		participating = machine:isParticipating(player.UserId),
+		chaos = machine.eventActive == true,
+	})
+	if ok then
+		applyCharacterTag(player)
+		local name = Config.Characters.Roster[CharacterRules.ensure(characters, player.UserId).active].Title
+		sendCharacter(player, "NOW: " .. name)
+	else
+		sendCharacter(player, REFUSAL_NOTICES[reason] or "SWITCH REFUSED")
+	end
+end)
+
+-- Every frame: keeps dashes moving for their duration and walk speeds equal to the live value.
+RunService.Heartbeat:Connect(function()
+	local now = Workspace:GetServerTimeNow()
+	local list: { { player: Player, root: BasePart, humanoid: Humanoid } } = {}
+	for _, player in Players:GetPlayers() do
+		local _, humanoid, root = characterReady(player)
+		if humanoid and root then
+			table.insert(list, { player = player, root = root, humanoid = humanoid })
+		end
+	end
+	AbilityService.drive(abilities, now, list)
 end)
 
 local accumulator = 0
@@ -592,26 +796,38 @@ RunService.Heartbeat:Connect(function(dt: number)
 	if accumulator < Config.ServerStep then
 		return
 	end
-	accumulator = 0
+	-- Carry the remainder forward so the authority step keeps its 0.1 s cadence and does not
+	-- drift with frame timing. The carry is capped at one step, so a long stall cannot cause a
+	-- burst of catch-up steps.
+	accumulator = math.min(accumulator - Config.ServerStep, Config.ServerStep)
 	local now = Workspace:GetServerTimeNow()
-	handleEffects(machine:step(now), now)
+	local effects = machine:step(now)
+	handleEffects(effects, now)
+	syncChaos()
+	AbilityService.prune(abilities, now)
+	if #effects > 0 then
+		-- Checked after the world has been reconciled, so the invariant sees the result.
+		checkInvariants()
+	end
 
 	if machine.phase == "Playing" then
 		for _, id in ledger:step(now) do
 			updatePickup(id)
 		end
-		ledger.respawn = if machine.eventKind == "CollectibleRush" then Config.RushRespawn
+		ledger.respawn = if chaos.Respawn then chaos.Respawn
 			elseif machine.stage == "Final" then Config.FinalRespawn
 			else Config.PickupRespawn
 	else
 		ledger.respawn = Config.PickupRespawn
 	end
-	-- The director animates rafts and blinking paths between event edges.
-	director:step(now, machine.phaseStartedAt > 0 and (now - machine.phaseStartedAt) or 0)
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
 		local root = if character then character:FindFirstChild("HumanoidRootPart") else nil
+		-- Bouncy World: the jump scale follows the live event. Written only on change.
+		if humanoid and humanoid.JumpPower ~= Config.JumpPower * chaos.JumpScale then
+			humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
+		end
 		if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health <= 0 then
 			continue
 		end

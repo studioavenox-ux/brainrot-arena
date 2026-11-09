@@ -11,21 +11,23 @@ local Config = {
 		Intermission = 12,
 		Round = 180,
 		Results = 9,
-		-- Kept for the first (low gravity) window, so older reads stay correct.
-		EventStart = 60,
-		EventDuration = 25,
+		-- The single Chaos Event of a round: one window, exactly ChaosDuration long,
+		-- starting inside the Chaos stage (105 s - 150 s). See Chaos below.
+		ChaosStart = 105,
+		ChaosDuration = 35,
 		Warning = 6,
 	},
 	FastTiming = {
 		Intermission = 4,
-		Round = 30,
+		-- Studio QuickTest. The round is longer than the 35 s event so the event is
+		-- exercised exactly as in production, and it still fits with time to spare.
+		Round = 50,
 		Results = 5,
-		EventStart = 8,
-		EventDuration = 10,
+		ChaosStart = 8,
+		ChaosDuration = 35,
 		Warning = 3,
 	},
 	NormalGravity = 196.2,
-	LowGravity = 62,
 	WalkSpeed = 22,
 	JumpPower = 50,
 	ServerStep = 0.1,
@@ -61,19 +63,71 @@ local Config = {
 	},
 
 	-- ------------------------------------------------------------------ #
-	-- Survival events. One window at a time; `Wildcard` resolves to one of
-	-- the four wildcards below, rotated deterministically by round number so
-	-- consecutive rounds are different but every client agrees.
+	-- Chaos Event. Exactly ONE per round, drawn uniformly by the server from
+	-- `Kinds` when the round starts. The window never overlaps another event.
+	-- Per-kind effects are defined in src/server/core/ChaosRules.luau.
 	-- ------------------------------------------------------------------ #
-	Events = {
-		{ Kind = "LowGravity", At = 60, Duration = 25 },
-		{ Kind = "Wildcard", At = 108, Duration = 18 },
+	Chaos = {
+		Kinds = { "LowGravity", "BouncyWorld", "SlipperyChaos", "BrainCellRush" },
+		LowGravity = 62,         -- studs/s^2 (normal is 196.2)
+		BouncyJumpScale = 1.8,   -- jump power multiplier while Bouncy World runs
+		RushRarityScale = 3,     -- weight multiplier for Rare and Prismatic cells
 	},
-	FastEvents = {
-		{ Kind = "LowGravity", At = 8, Duration = 10 },
-		{ Kind = "Wildcard", At = 22, Duration = 6 },
+
+	-- ------------------------------------------------------------------ #
+	-- Audio. Every sound ID is configured HERE. An empty string means "no sound":
+	-- nothing is invented, and no uploaded or third-party asset is required to run.
+	-- To enable a slot, paste an rbxassetid URL (the scheme, a colon, two slashes, then
+	-- the number) for an audio asset you own or are licensed to use.
+	-- docs/AUDIO.md lists every slot and its behaviour.
+	-- ------------------------------------------------------------------ #
+	Audio = {
+		CrossfadeSeconds = 1.5,  -- time to fade one music track out and the next in
+		MusicVolume = .35,       -- loudest level for a music track
+		CueVolume = .6,          -- level for one-shot cues
+		Tracks = {
+			Lobby = "",          -- Waiting / Intermission / Results
+			Arena = "",          -- Playing, no Chaos Event
+			Chaos = "",          -- Playing, a Chaos Event is active
+		},
+		-- One-shot cues. Ability cues are added here, one key per ability, when the
+		-- abilities exist (for example "Ability.Dash"). Playing an unlisted cue is an
+		-- error, so a typo cannot fail silently.
+		Cues = {
+			RoundStart = "",
+			RoundEnd = "",
+			ChaosStart = "",
+			ChaosEnd = "",
+			Steal = "",
+			Ability = "",
+		},
 	},
-	Wildcards = { "Slippery", "MovingPlatforms", "CollectibleRush", "VanishingPaths" },
+
+	-- ------------------------------------------------------------------ #
+	-- Characters. Six playable characters, all free, one active at a time. Every
+	-- character has one ability, and each ability has its own cooldown. Cooldowns are
+	-- per player and per character, persist across switches within a round, and reset
+	-- at the next round. Abilities never award, steal or move Brain Cells.
+	-- Roster keys are the cell species keys in Creatures.luau.
+	-- ------------------------------------------------------------------ #
+	Characters = {
+		-- Slot 1..6 is the order the client shows and the order the server accepts.
+		Order = { "brain", "frog", "fish", "goose", "toast", "sock" },
+		SwitchesNormal = 3,   -- switches usable at any time during Playing
+		SwitchesBonus = 1,    -- one extra switch, usable only during the Chaos Event
+		Roster = {
+			brain = { Ability = "MindTrick", Title = "MIND TRICK", Cooldown = 20, Duration = 6, Offset = 6 },
+			frog = { Ability = "BellyBounce", Title = "BELLY BOUNCE", Cooldown = 15, Radius = 10, Push = 55, Lift = 18 },
+			fish = { Ability = "BubbleDash", Title = "BUBBLE DASH", Cooldown = 12, Speed = 70, Duration = .35 },
+			goose = { Ability = "HonkWave", Title = "HONK WAVE", Cooldown = 18, Radius = 14, SlowFactor = .5, Duration = 2.5 },
+			toast = { Ability = "ToastLaunch", Title = "TOAST LAUNCH", Cooldown = 16, Radius = 8, Lift = 60 },
+			sock = { Ability = "SockSnare", Title = "SOCK SNARE", Cooldown = 14, Radius = 12, SlowFactor = .4, Duration = 4 },
+		},
+		-- Ability-driven movement gets a temporary speed allowance from MovementGuard.
+		-- Margin is added on top of the expected speed, so ordinary rounding never trips it.
+		MovementMargin = 8,
+		GrantSeconds = .8,
+	},
 
 	-- ------------------------------------------------------------------ #
 	-- Stealing. A short-range tag that moves ONE carried cell from the victim
@@ -87,9 +141,9 @@ local Config = {
 		RepeatWindow = 12,   -- no re-tagging the same victim inside this window
 	},
 
-	-- Sticky floor while the Slippery wildcard runs.
+	-- Sticky floor while Slippery Chaos runs.
 	SlipperyFriction = 0.06,
-	-- Respawn seconds while CollectibleRush runs, and during the Final Rush.
+	-- Respawn seconds during Brain Cell Rush, and during the Final Rush.
 	RushRespawn = 1.5,
 	FinalRespawn = 2,
 

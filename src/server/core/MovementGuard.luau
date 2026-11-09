@@ -5,7 +5,7 @@ local MovementGuard = {}
 MovementGuard.__index = MovementGuard
 
 export type Position = { x: number, y: number, z: number }
-type Track = { position: Position, at: number, unlockAt: number }
+type Track = { position: Position, at: number, unlockAt: number, grantSpeed: number, grantUntil: number }
 type Fields = { tracks: { [number]: Track }, speed: number, slack: number, protection: number }
 export type Guard = typeof(setmetatable({} :: Fields, MovementGuard))
 
@@ -19,7 +19,22 @@ function MovementGuard.new(speed: number, slack: number, protection: number): Gu
 end
 
 function MovementGuard.teleport(self: Guard, id: number, position: Position, now: number)
-	self.tracks[id] = { position = position, at = now, unlockAt = now + self.protection }
+	self.tracks[id] = { position = position, at = now, unlockAt = now + self.protection, grantSpeed = 0, grantUntil = 0 }
+end
+
+-- A temporary allowance for movement the server itself caused (an ability push or dash).
+-- It adds `speed` to the horizontal limit until `untilAt`, and nothing more. Without a
+-- grant the check is exactly as strict as before.
+function MovementGuard.grant(self: Guard, id: number, speed: number, untilAt: number, now: number)
+	assert(speed >= 0, "grant speed cannot be negative")
+	local track = self.tracks[id]
+	if track == nil then
+		-- No known position yet: nothing to relax. The caller grants after observing.
+		return false
+	end
+	track.grantSpeed = math.max(if now < track.grantUntil then track.grantSpeed else 0, speed)
+	track.grantUntil = math.max(if now < track.grantUntil then track.grantUntil else 0, untilAt)
+	return true
 end
 
 function MovementGuard.remove(self: Guard, id: number)
@@ -38,7 +53,8 @@ function MovementGuard.observe(self: Guard, id: number, position: Position, now:
 	local dt = math.clamp(now - track.at, 0, 1)
 	local dx = position.x - track.position.x
 	local dz = position.z - track.position.z
-	local limit = self.speed * dt + self.slack
+	local bonus = if now < track.grantUntil then track.grantSpeed else 0
+	local limit = (self.speed + bonus) * dt + self.slack
 	if dx * dx + dz * dz > limit * limit then
 		track.at = now
 		track.unlockAt = now + self.protection

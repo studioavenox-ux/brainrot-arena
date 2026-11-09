@@ -3,8 +3,8 @@
 **Not yet performed:** this development environment is Linux without Roblox Studio or a Roblox control connector.
 The full Phase 5 matrix (20 rows: stealing, protection, stages, all five events, persistence,
 UI scaling) lives in [TEST_REPORT_PHASE5.md](TEST_REPORT_PHASE5.md). Automated checks are
-kept strictly separate from that matrix: 248 assertions pass, and none of them is a
-substitute for a Studio run. The included Luau logic, adapter contracts, generated map and place structure were checked locally; only Roblox Studio can verify real character physics, rendering, audio and client/server replication.
+kept strictly separate from that matrix: 319 automated tests pass in the current gate (the live count is in the [build report](BUILD_REPORT.md)), and none of them is a
+substitute for a Studio run. The matrix's "five events" rows describe the superseded schedule; the current event rules are in [CHAOS_EVENTS.md](CHAOS_EVENTS.md). The included Luau logic, adapter contracts, generated map and place structure were checked locally; only Roblox Studio can verify real character physics, rendering, audio and client/server replication.
 
 ## Fastest beginner test
 
@@ -15,10 +15,8 @@ substitute for a Studio run. The included Luau logic, adapter contracts, generat
 | Stage | Standard place | QuickTest (Studio only) |
 |---|---:|---:|
 | Intermission | 12 seconds | 4 seconds |
-| Active round | **180 seconds** | 30 seconds |
-| Low-gravity start | 60 seconds after round starts | 8 seconds after round starts |
-| Low-gravity duration | 25 seconds | 10 seconds |
-| Wildcard start / duration | 108 s / 18 s | 22 s / 6 s |
+| Active round | **180 seconds** | 50 seconds |
+| Chaos Event start / duration | 105 s / 35 s (one random kind) | 8 s / 35 s (one random kind) |
 | Stage boundaries | Collect 0 / Compete 45 / Chaos 105 / Final 150 | 0 / 8 / 18 / 24 |
 | Results | 9 seconds | 5 seconds |
 
@@ -80,11 +78,13 @@ Routing is server-authoritative (`src/server/core/ArenaRoute.luau` + the mover i
 - [ ] Both players spawn in the lobby, see the same phase/countdown and automatically arrive at different arena spawn pads.
 - [ ] Collecting pink/gold/prismatic cells adds exactly **1/5/10**, respectively. Both clients' leaderboards update.
 - [ ] Walk both players into the **same** cell: only one receives that generation's reward. It returns about five seconds later.
-- [ ] At eight seconds into QuickTest, the low-gravity banner appears on both clients and jumps become floaty. Ten seconds later, normal gravity returns.
+- [ ] In QuickTest, the **INCOMING** banner appears at 5 seconds and the **CHAOS EVENT** banner at 8 seconds, on both clients. The countdown reaches zero at 43 seconds. Repeat until you have seen each kind once: LOW GRAVITY (floaty jumps), BOUNCY WORLD (higher jumps), SLIPPERY CHAOS (sliding), BRAIN CELL RUSH (more Rare and Prismatic cells). Normal play must return with no leftover effect.
+- [ ] During SLIPPERY CHAOS, respawn a player (Reset Character) and have them walk on the floor. They should slide like everyone else.
 - [ ] Use Roblox's **Reset Character** during play. After respawn, the player is back in the arena and retains the round score. Jump/fall off an island and confirm rescue also preserves points.
 - [ ] At the deadline, cells disappear, both players return to the lobby, the correct winner/tie/no-score card appears, and coins are paid once. The following round resets scores and respawns all cells.
 - [ ] In Studio's **Device Emulator**, check a small phone in portrait and landscape: timer, RANKS toggle, help and the action bar remain readable; joystick/jump remain usable.
 - [ ] Check Studio **Output** for red errors. Confirm the bundled pickup chime plays, the SFX toggle mutes it, and reduced motion stops cell bobbing/spinning/sparks. Sound availability can vary with Roblox's installed bundle.
+- [ ] Music: `Config.Audio` ships with **no sound IDs**, so the game is silent by default. Expect silence until you configure IDs as described in [AUDIO.md](AUDIO.md). Once configured, check that the lobby, arena and Chaos tracks crossfade, that the round and Chaos stingers play on their edges and not on join, and that the Settings **Sound and music** toggle silences everything.
 
 ### Visual acceptance (added with the art-direction redesign)
 
@@ -104,14 +104,14 @@ Each round pays `10 + 2 × score`, plus `30` to every winner with a positive sco
 ## What was already run here
 
 - Official Luau compilation of all production scripts and test files.
-- Strict analysis of the three pure server authority modules and shared configuration.
-- **82 core tests**, including 100 logical 12-player rounds, tie payouts, generation/replay protection, invalid inputs, empty-server recovery, movement sanity and the routing policy (zones, transit neutrality, backoff, escalation, give-up).
-- **52 adapter tests** executing the actual server/client/HUD/effect scripts against **mocked** Roblox services, with API/enum names checked against a pinned Roblox API fixture — including 13 live routing scenarios (seated refusal, mid-round join, fall rescue, respawn, no-loop, player leave), the whole interface (responsiveness at six viewports, live leaderboard ordering, shop/inventory/settings acting on real state, keyboard shortcuts, event banner, results card) plus lighting, materials and the cell-visual part budget.
-- **30 export tests** checking embedded source/hierarchy, supported property names, spawn/floor geometry, materials, shadows, point lights, sign fonts, part budget, bridge continuity and both place variants.
-- **34 art-direction tests** covering palette ceilings, hierarchy order, purple/cyan restriction, lighting values, post-processing limits, cell-vs-floor contrast, signage contrast, the frozen walkable geometry, and the HUD design system (WCAG pairs incl. panels composited over sunlit sand, accent hue separation, no hardcoded colours or raw buttons, generated theme in sync). Plus `docs/previews/` renders from `tools/preview.py` (world) and `tools/uidraw.py` (interface) — software renders, not engine screenshots.
+- Strict analysis of the pure server authority modules, `ChaosRules`, `AudioRules` and shared configuration.
+- **145 core tests**, including the character rules (switch quota, Chaos-only bonus, per-character cooldowns that survive switching, round reset), ability geometry and slow statuses, grants to the movement guard, and the QuickTest and normal event timing, the Chaos pool, audio rules (track choice, fade timing, ID validation, cue lookup, no invented IDs), and 100 logical 12-player rounds, tie payouts, generation/replay protection, invalid inputs, empty-server recovery, movement sanity and the routing policy (zones, transit neutrality, backoff, escalation, give-up).
+- **103 adapter tests** executing the actual server/client/HUD/effect scripts against **mocked** Roblox services, with API/enum names checked against a pinned Roblox API fixture — including the Chaos director (gravity, friction restore, friction on spawned and respawned characters, watcher cleanup, write-once friction), a live-server Slippery test for respawns and late joins, a 35-second lifecycle measurement, Bouncy World and Slippery floor wiring, the audio controller (crossfade, mute, cleanup, no stinger on join), 13 live routing scenarios (seated refusal, mid-round join, fall rescue, respawn, no-loop, player leave), the whole interface (responsiveness at six viewports, live leaderboard ordering, shop/inventory/settings acting on real state, keyboard shortcuts, event banner, results card) plus lighting, materials and the cell-visual part budget. The character and ability tests cover: remote argument validation; switch quotas and the Chaos-only bonus end to end; every ability's effect (knockback, dash, launch, slows, decoy) and its exact targeting; server cooldown refusal and persistence across switches; no Brain Cell change; the name tag; and the Q key, digit keys and button wiring; respawn clearing slows.
+- **36 export tests** checking embedded source/hierarchy, supported property names, spawn/floor geometry, materials, shadows, point lights, sign fonts, part budget, bridge continuity and both place variants.
+- **35 art-direction tests** covering palette ceilings, hierarchy order, purple/cyan restriction, lighting values, post-processing limits, cell-vs-floor contrast, signage contrast, the frozen walkable geometry, and the HUD design system (WCAG pairs incl. panels composited over sunlit sand, accent hue separation, no hardcoded colours or raw buttons, generated theme in sync). Plus `docs/previews/` renders from `tools/preview.py` (world) and `tools/uidraw.py` (interface) — software renders, not engine screenshots.
 - Deterministic rebuild and whitespace checks.
 
-These tests do **not** prove Studio import, physics/collision behaviour, real network replication, rendered text fit, rendered lighting/materials, audio availability or real-device touch behaviour. See the current [build report](BUILD_REPORT.md) for exact execution status.
+These tests do **not** prove Studio import, physics/collision behaviour, real network replication, rendered text fit, rendered lighting/materials, audible music or cue playback, or real-device touch behaviour. See the current [build report](BUILD_REPORT.md) for exact execution status.
 
 ## If something fails
 
