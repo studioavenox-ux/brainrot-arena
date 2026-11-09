@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-09T10:13:03+00:00**.
+Verified: **2026-11-09T10:21:20+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -60,7 +60,7 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
 | Check | Result |
 |---|---:|
 | Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 123 passed |
-| Real server/client scripts against mocked Roblox services (+ steal and persistence) | 87 passed |
+| Real server/client scripts against mocked Roblox services (+ steal and persistence) | 89 passed |
 | XML/API/geometry export tests | 36 passed |
 | Art-direction gate (palette, hierarchy, legibility, lighting) | 35 passed |
 | Official Luau compilation | 29 files passed |
@@ -98,9 +98,58 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 - Movement checks are a basic sanity layer, not a complete exploit-prevention system.
 - Bundled pickup tone availability, music and cue playback (no sound IDs are configured yet) and exact visual polish still need the Studio/device pass.
 
+## Feature status (final verification pass)
+
+**Completed and covered by automated tests**
+
+- Chaos Events: exactly one 35 s event per round, drawn server-side from Low Gravity, Bouncy World,
+  Slippery Chaos and Brain Cell Rush; never overlapping; the window is cleared at 35 s.
+  Event timing: production 180 s round, event at 105 s, 6 s warning; QuickTest 50 s round, event at 8 s,
+  3 s warning. Both are asserted explicitly.
+- Event lifecycle: the server applies each edge on the first 0.1 s authority step at or after its
+  scheduled time, so the window lasts exactly 35 s. Gravity, friction, jump power and rarity all
+  return to normal at the end. An adapter test measures this in 10 ms steps.
+- Slippery Chaos reaches newly spawned, respawned and late-joining characters through the live server flow.
+  Friction is removed from every part when the window closes. A mutation check disabling the watcher
+  fails these tests.
+- Dynamic audio logic: track choice, crossfade timing, stingers on edges only, mute, cleanup, and
+  validation of configured IDs. Every sound ID ships empty, so the game is silent until IDs are set.
+- Server authority, stealing, stages, persistence, routing, UI logic, and export integrity (see above).
+
+**Incomplete (not started)**
+
+- Six playable characters with abilities, cooldowns and character selection (next phase; design in
+  [PHASE_CHARACTERS_ABILITIES.md](PHASE_CHARACTERS_ABILITIES.md)).
+- Pets (60-pet collection, active slots, inventory), eggs and hatch timers, Spin the Wheel.
+- Robux-only secret characters and pets, MarketplaceService purchases and receipt validation.
+- Ability sound cues: the cue API exists, but there are no abilities yet and no ability IDs.
+- Steal sound cue: configured but not wired to the steal path.
+- Music and sound asset IDs: none configured.
+- Third-person camera and animations, the expanded HUD and settings for the later phases.
+
+**Unverified (automated checks only; no Roblox run)**
+
+- Roblox Studio import and the real engine's physics (Chaos feel: gravity, bounce, slipperiness).
+- Real network replication and a multi-client session. The mock simulates two players only.
+- Audible music, cues, and crossfades.
+- Touch input, layout, and text on real phones. Android frame rate against the 60 FPS target.
+- DataStore behaviour on the live service. Published-server behaviour.
+- Renders in `docs/previews/` are software renders, not engine captures.
+
+## Remaining Studio testing requirements
+
+1. Open `places/BrainrotArena-QuickTest.rbxlx`, start 2 clients, and confirm no red Output errors.
+2. Watch the event sequence in QuickTest: INCOMING at 5 s, CHAOS EVENT at 8 s, end at 43 s. Check that each
+   kind shows its effect, and that normal play returns afterwards with no leftover effect.
+3. During Slippery Chaos, reset a character and join a third client: they must slide like everyone else.
+4. Confirm the full round (both clients): collect, steal, stage banks, results, and next round.
+5. Confirm the Sound and music toggle mutes everything, and that stingers do not fire on join.
+6. Check touch controls, text fit and frame rate in Device Emulator and on an Android device (not run).
+7. Only after the above passes: publish to a private server and run the same checks there.
+
 ## Export integrity
 
-Source SHA-256: `078e09988857329bf543401e6574e830932e444e39ed298edf4abecc689db0bc`
+Source SHA-256: `bb5b8fa4bad7b4d124401736a903629b52e18f4a7937bbe1228032a39d62dbc5`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,797,965 bytes; SHA-256 `dedbd70161740f4a9f69f1ed135fce345cc5c16b0d1605c638e0aa0dc8044b85`
-- `BrainrotArena.rbxlx` — 1,797,966 bytes; SHA-256 `5f92034903b8ccae17e9ae33138bca1a6a90e4bd8f5ddc9a718b3a3ae909abde`
+- `BrainrotArena-QuickTest.rbxlx` — 1,798,237 bytes; SHA-256 `7a2d9d59665358edb1d062b076e8061801be14e8e2769236579191cc4a0c8ccb`
+- `BrainrotArena.rbxlx` — 1,798,238 bytes; SHA-256 `ac304ee6d5fc694bdf4a7f8ae2bfc58a2792a2d7bf1c869daecd8889b2f3ad15`

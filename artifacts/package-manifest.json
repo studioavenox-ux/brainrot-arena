@@ -21,7 +21,7 @@
     {
       "path": "artifacts/verification.json",
       "bytes": 1907,
-      "sha256": "34c289cd2c7ae1850b7598ca51d253458bfca43a6cfc68a47d5780248bc7ec78"
+      "sha256": "1b1701b9ecedcf26fb84146428112eba9e281f60a8495787e42225b15ec94128"
     },
     {
       "path": "assets/README.md",
@@ -40,8 +40,8 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 15795,
-      "sha256": "5b32a69045815c391166016f2428c23ce9288dd8ebebaa9b4cc9d5194c079bfa"
+      "bytes": 15839,
+      "sha256": "3b61d1536f5de36b44dfff4097377ea0e91d5ce477df09e88003a74fc3655b58"
     },
     {
       "path": "docs/AUDIO.md",
@@ -50,13 +50,13 @@
     },
     {
       "path": "docs/BUILD_REPORT.md",
-      "bytes": 7258,
-      "sha256": "366b1e0decfe05f01aeaf964013dfe16b6c603915d4948c4e3d4e8ab82e47c11"
+      "bytes": 10523,
+      "sha256": "ae1691a63445293fb05612511d8ab35e329fabebd6f24fda6616a37cb66fa592"
     },
     {
       "path": "docs/CHAOS_EVENTS.md",
-      "bytes": 4937,
-      "sha256": "b2d561a91de7da6645b7222ca4b5f8395cc4570c923c542cec4235ba1c85a1cc"
+      "bytes": 5893,
+      "sha256": "a57a2c3f4a12fcf9df8920815029280ca405b3b80af5bccc00b4beaab68f8aff"
     },
     {
       "path": "docs/CHARACTERS_PHASE4.md",
@@ -84,9 +84,14 @@
       "sha256": "af62994ffbe186375a9628bc820424addbce8abdb6068b350b760041ef62bea0"
     },
     {
+      "path": "docs/PHASE_CHARACTERS_ABILITIES.md",
+      "bytes": 6171,
+      "sha256": "9a3e5c57a0771252dd004a3f54f88874889e130d21d3fc4d8b826e50c6dc712d"
+    },
+    {
       "path": "docs/TESTING.md",
-      "bytes": 12689,
-      "sha256": "0a4e5292a58a824a2e9c92ad4a8b6d65fd852f62fdd5adbee3be7c4886416e33"
+      "bytes": 12781,
+      "sha256": "763192c518746810be3336a45e004c8320d138d87ff25bc6aad281abc93e8f95"
     },
     {
       "path": "docs/TEST_REPORT_PHASE5.md",
@@ -240,13 +245,13 @@
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1797965,
-      "sha256": "dedbd70161740f4a9f69f1ed135fce345cc5c16b0d1605c638e0aa0dc8044b85"
+      "bytes": 1798237,
+      "sha256": "7a2d9d59665358edb1d062b076e8061801be14e8e2769236579191cc4a0c8ccb"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1797966,
-      "sha256": "5f92034903b8ccae17e9ae33138bca1a6a90e4bd8f5ddc9a718b3a3ae909abde"
+      "bytes": 1798238,
+      "sha256": "ac304ee6d5fc694bdf4a7f8ae2bfc58a2792a2d7bf1c869daecd8889b2f3ad15"
     },
     {
       "path": "src/client/Audio.luau",
@@ -315,8 +320,8 @@
     },
     {
       "path": "src/server/Main.server.luau",
-      "bytes": 27045,
-      "sha256": "a559df3b5347938d78bb577ecba3796b5047ff59e2123f07f2032acf3b08b1d7"
+      "bytes": 27317,
+      "sha256": "55e92c4b935c4de9364b8514a205dd51cca07d5a74dc32cdc020468790a50dda"
     },
     {
       "path": "src/server/Persistence.luau",
@@ -380,8 +385,8 @@
     },
     {
       "path": "tests/adapters.spec.luau",
-      "bytes": 47537,
-      "sha256": "59cb82b62d15a8704292458bf7766a3bf65aaa97c2052424e3a0844c60632ae5"
+      "bytes": 50922,
+      "sha256": "bdc629178e9380002336ff088f2c7240949684a81724b29b1dc57e579490f28d"
     },
     {
       "path": "tests/core.spec.luau",
@@ -420,8 +425,8 @@
     },
     {
       "path": "tools/check.py",
-      "bytes": 13791,
-      "sha256": "ab198c9448e4a140be6a3dc581016c76534eb20197945693a0992e10fef9ab74"
+      "bytes": 17531,
+      "sha256": "8abcb43e94afb8381f4141c13dcc07d1649a5472b0150c0bca335ff63bcb8834"
     },
     {
       "path": "tools/creatures.py",
@@ -440,8 +445,8 @@
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 9374,
-      "sha256": "213d2a2c091a826cfc2472d37b8de805f874e243123481be0e27f6bf1725ed93"
+      "bytes": 9412,
+      "sha256": "136265ad507d25e7f84a82586d2c487d08de85ccd3f880e9286019050203e5a7"
     },
     {
       "path": "tools/preview.py",
@@ -484,12 +489,12 @@
       "sha256": "c6427b28e8f9a7d41d293b81576b3bfe697497b81b5af6e2ae433bae5d088bda"
     }
   ],
-  "file_count_excluding_manifest": 96,
+  "file_count_excluding_manifest": 97,
   "production_script_count": 26,
   "place_count": 2,
-  "source_sha256": "078e09988857329bf543401e6574e830932e444e39ed298edf4abecc689db0bc",
-  "prior_verification_timestamp_utc": "2026-11-09T10:13:03+00:00",
-  "prior_automated_tests_passed": 281,
+  "source_sha256": "bb5b8fa4bad7b4d124401736a903629b52e18f4a7937bbe1228032a39d62dbc5",
+  "prior_verification_timestamp_utc": "2026-11-09T10:21:20+00:00",
+  "prior_automated_tests_passed": 283,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",

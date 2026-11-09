@@ -23,6 +23,13 @@ starts, uniformly from four kinds, and runs for **35 seconds**. Events never ove
 The window always fits inside its round; a configuration that does not is rejected when
 the round machine is created.
 
+**Lifecycle precision.** The server's authority step runs every `Config.ServerStep` (0.1 s). Each
+edge is applied on the first step at or after its scheduled time, so the window starts within one
+step of 8 s (or 105 s) and ends within one step of its end. Its length is exactly 35 s. An earlier
+version reset the step accumulator to zero, which made the step period drift with frame timing and
+shortened the window to about 34.98 s. The accumulator now carries the remainder forward, capped at
+one step.
+
 ## Server authority
 
 * **Selection** happens in `RoundMachine.drawChaos` through an injected chooser. The live
@@ -77,6 +84,11 @@ superseded schedule. They are kept as historical records.
   banner shows the name and a countdown; the director restores gravity and friction exactly.
   Characters that spawn or respawn during Slippery Chaos get the friction, and the watcher is
   removed afterwards. Friction is written once, not on every tick.
+* A **live-server** test runs the real `Main.server` flow (no director stubs): a respawned
+  character and a late joiner are slippery during the window, and every part is restored after it.
+  A mutation check that disables the watcher makes these tests fail.
+* A **lifecycle** test steps the server in 10 ms increments and measures the server's own gravity
+  edges: the window lasts 35 s and its edges fall on the first step at or after 8 s and 43 s.
 
 Studio is not available in this environment. Physics feel, the banner's look, and the
 behaviour of jump and friction in the real engine have not been observed. They belong in the

@@ -79,7 +79,7 @@ answer. Banked score is never touched.
 - **Stages** (`Config.Stages`): Collect 0 s, Compete 45 s, Chaos 105 s, Final 150 s of a
   180 s round. Each boundary banks every player's carried cells. `RoundMachine.bank` is the
   only way a carried cell becomes permanent, and `score` is always banked + carried.
-- **Chaos Event** (`Config.Chaos`, `Config.Timing.ChaosStart/ChaosDuration`, `Config.FastTiming` for QuickTest): exactly one 35 s
+- **Chaos Event** (applied on each `Config.ServerStep`, 0.1 s; `Config.Chaos`, `Config.Timing.ChaosStart/ChaosDuration`, `Config.FastTiming` for QuickTest): exactly one 35 s
   window per round at 105 s, drawn uniformly over Low Gravity / Bouncy World / Slippery Chaos /
   Brain Cell Rush when the round starts. `RoundMachine.drawChaos` uses an injected chooser, and
   `buildSchedule` returns a single entry that carries a `WarningAt` six seconds ahead. Per-kind

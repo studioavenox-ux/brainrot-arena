@@ -152,6 +152,31 @@ return function(Mock, sources, schema)
 		e:step(.5); near(e.services.Workspace.Gravity,196.2)
 		e:step(1); eq(e:lastState().eventActive,false)
 	end)
+	test("35-second lifecycle: the window lasts exactly 35 s and edges land on the first server step at or after 8 s and 43 s",function()
+		-- Authoritative timing, not the throttled snapshot. The Playing phase starts at the
+		-- server's own deadline minus the round length, so the reference point is exact.
+		local e=fixture({fast=true,studio=true,roll=.1}); play(e)
+		local Config=e:import("src/shared/Config.luau")
+		local ws=e.services.Workspace
+		local playStart=e:lastState().phaseEndsAt-Config.FastTiming.Round
+		local openedAt,closedAt
+		for _=1,6000 do
+			e:step(.01)
+			local elapsed=e.now-playStart
+			if openedAt==nil and ws.Gravity~=Config.NormalGravity then openedAt=elapsed end
+			if openedAt~=nil and closedAt==nil and ws.Gravity==Config.NormalGravity then closedAt=elapsed; break end
+		end
+		assert(openedAt~=nil and closedAt~=nil,"the event must open and close")
+		-- The server acts on ServerStep (0.1 s) boundaries, so each edge is applied on the first
+		-- step at or after its scheduled time. The window is therefore exact in length and
+		-- starts/ends within one server step of 8 s and 43 s.
+		local step=Config.ServerStep
+		assert(openedAt>=8-.001 and openedAt<=8+step+.001,"opens on the first server step at or after 8 s, measured "..tostring(openedAt))
+		assert(closedAt>=43-.001 and closedAt<=43+step+.001,"closes on the first server step at or after 43 s, measured "..tostring(closedAt))
+		-- The window length is exact to within one 10 ms test frame: no drift from the step cadence.
+		assert(math.abs((closedAt-openedAt)-35)<=.011,"lasts 35 s, measured "..tostring(closedAt-openedAt))
+		assert(closedAt<Config.FastTiming.Round,"it ends before the round")
+	end)
 	test("exactly one Chaos Event runs per round and it closes before the round ends",function()
 		local e=fixture(); play(e)
 		-- Count real open/close edges on the server's own state, step by step.
@@ -359,6 +384,40 @@ return function(Mock, sources, schema)
 		assert(floor,"the world must contain a collidable surface")
 		e:step(8.01); near(floor.CustomPhysicalProperties.Friction,Config.SlipperyFriction)
 		e:step(36); eq(floor.CustomPhysicalProperties,nil)
+	end)
+	test("slippery chaos, live server: respawned and late-joining characters slide, and all friction is removed afterwards",function()
+		-- Real Main.server flow: no director stubs. roll=.6 draws SlipperyChaos.
+		local e,a=fixture({fast=true,studio=true,roll=.6},true); play(e)
+		local Config=e:import("src/shared/Config.luau")
+		local function frictionOf(character)
+			local values={}
+			for _,part in character:GetDescendants() do
+				if part:IsA("BasePart") and part.Name~="BrainCell" then table.insert(values,part.CustomPhysicalProperties or false) end
+			end
+			return values
+		end
+		local function allSlippery(character)
+			local values=frictionOf(character)
+			assert(#values>0,"the character must have parts")
+			for _,props in values do assert(props~=false and math.abs(props.Friction-Config.SlipperyFriction)<1e-9,"every part must be slippery") end
+		end
+		e:step(8.01); eq(e:lastState().eventKind,"SlipperyChaos")
+		allSlippery(a.Character)
+		-- A respawn during the window: the new character must be slippery at once.
+		e:spawn(a); e:step(.5)
+		allSlippery(a.Character)
+		-- A player who joins during the window.
+		local late=e:addPlayer(-3,"Late Brain"); e:step(.5)
+		assert(late.Character~=nil,"the late joiner must have a character")
+		allSlippery(late.Character)
+		-- The window closes at 43 s. Everything must be back to its authored state.
+		e:step(36)
+		for _,props in frictionOf(a.Character) do eq(props,false) end
+		for _,props in frictionOf(late.Character) do eq(props,false) end
+		-- And a character spawned after the window is never touched.
+		e:spawn(a); e:step(.5)
+		for _,props in frictionOf(a.Character) do eq(props,false) end
+		eq(e:lastState().eventActive,false)
 	end)
 	test("respawn during a round rejoins the arena and keeps the score",function()
 		local e,a=fixture(nil,true); play(e); collect(e,a,1)

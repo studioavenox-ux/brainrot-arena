@@ -45,7 +45,7 @@ def main():
         "docs/UI_IMPLEMENTATION_PHASE3.md", "docs/PHASE3_GAMEPLAY_FIXES.md",
         "docs/CHARACTERS_PHASE4.md", "docs/PHASE5_STEAL_AND_EVENTS.md",
         "docs/TEST_REPORT_PHASE5.md", "docs/KNOWN_LIMITATIONS.md",
-        "docs/CHAOS_EVENTS.md", "docs/AUDIO.md",
+        "docs/CHAOS_EVENTS.md", "docs/AUDIO.md", "docs/PHASE_CHARACTERS_ABILITIES.md",
         "docs/previews/cast.jpg", "docs/previews/collection.jpg",
         "docs/previews/ui-collection.jpg", "docs/previews/ui-collection-full.jpg",
         "docs/previews/ui-phone-collection.jpg",

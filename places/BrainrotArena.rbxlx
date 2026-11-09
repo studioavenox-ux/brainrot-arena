@@ -40889,7 +40889,10 @@ RunService.Heartbeat:Connect(function(dt: number)
 	if accumulator &lt; Config.ServerStep then
 		return
 	end
-	accumulator = 0
+	-- Carry the remainder forward so the authority step keeps its 0.1 s cadence and does not
+	-- drift with frame timing. The carry is capped at one step, so a long stall cannot cause a
+	-- burst of catch-up steps.
+	accumulator = math.min(accumulator - Config.ServerStep, Config.ServerStep)
 	local now = Workspace:GetServerTimeNow()
 	local effects = machine:step(now)
 	handleEffects(effects, now)
