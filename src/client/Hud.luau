@@ -67,14 +67,19 @@ function Hud.new(config, request, actions)
 	self.modalKind = nil
 	self.userId = Players.LocalPlayer.UserId
 
-	self.screen = Kit.instance("ScreenGui", {
+	-- ScreenInsets is missing from older Studio builds. Without it the HUD still builds;
+	-- it only loses the core-UI safe-area inset.
+	local screenProperties = {
 		Name = "BrainrotHUD",
 		ResetOnSpawn = false,
 		IgnoreGuiInset = false,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 		DisplayOrder = 10,
-		ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets,
-	}, Players.LocalPlayer:WaitForChild("PlayerGui"))
+	}
+	if Enum.ScreenInsets then
+		screenProperties.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
+	end
+	self.screen = Kit.instance("ScreenGui", screenProperties, Players.LocalPlayer:WaitForChild("PlayerGui"))
 	self.root = Kit.instance("Frame", {
 		Name = "SafeArea", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
 	}, self.screen)

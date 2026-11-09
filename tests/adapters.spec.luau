@@ -1277,6 +1277,22 @@ return function(Mock, sources, schema)
 		assert(e:find("Readout").Text:find("2 SWITCHES LEFT"),"readout counts switches: "..e:find("Readout").Text)
 	end)
 
+	test("startup: a missing server remote shows a visible startup error instead of a silent hang",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},false)
+		e.services.ReplicatedStorage:FindFirstChild("BrainrotRemotes"):Destroy()
+		e:startClient(a)
+		local gui=a.PlayerGui:FindFirstChild("BrainrotStartupError")
+		assert(gui~=nil,"the player sees a startup error panel")
+		assert(gui:FindFirstChild("TextLabel",true).Text:find("BrainrotRemotes",1,true),"the panel names the missing piece")
+		eq(a.PlayerGui:FindFirstChild("BrainrotHUD"),nil)
+	end)
+
+	test("startup: a healthy server builds the HUD and no startup error",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true)
+		assert(a.PlayerGui:FindFirstChild("BrainrotHUD")~=nil,"HUD is built")
+		eq(a.PlayerGui:FindFirstChild("BrainrotStartupError"),nil)
+	end)
+
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")
 end
