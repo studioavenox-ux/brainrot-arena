@@ -42,6 +42,8 @@ local CF = {}
 local cfmt
 cfmt = { __index = function(self,key)
 	if key=="Position" then return self.p end
+	if key=="LookVector" then return V.new(-self.r[3],-self.r[6],-self.r[9]) end
+	if key=="RightVector" then return V.new(self.r[1],self.r[4],self.r[7]) end
 	if key=="Rotation" then return setmetatable({p=V.zero,r=self.r,_type="CFrame"},cfmt) end
 	return CF[key]
 end }
@@ -212,7 +214,7 @@ function Mock.new(sources, schema, options)
 		if class=="Players" then obj._signals.PlayerAdded=signal(); obj._signals.PlayerRemoving=signal() end
 		if class=="RunService" then obj._signals.Heartbeat=signal(); obj._signals.RenderStepped=signal() end
 		if class=="UserInputService" then obj._signals.InputBegan=signal(); obj._signals.InputEnded=signal() end
-		if obj:IsA("BasePart") then obj._props.CFrame=CF.new(); obj._props.Color=Color.new(1,1,1) end
+		if obj:IsA("BasePart") then obj._props.CFrame=CF.new(); obj._props.Color=Color.new(1,1,1); obj._props.Transparency=0 end
 		if obj:IsA("GuiObject") then obj._props.Visible=true; obj._props.Size=UDim2.fromOffset(0,0); obj._props.Position=UDim2.fromOffset(0,0) end
 		if class=="Humanoid" then obj._props.Health=100 end
 		if class=="IntValue" then obj._props.Value=0 end

@@ -74,9 +74,10 @@ return function(Mock, sources, schema)
 		eq(e.services.Workspace.BrainrotWorld,initial)
 		eq(#initial:GetChildren(),906)
 	end)
-	test("server creates only three whitelisted remotes",function()
+	test("server creates only whitelisted remotes: three base remotes plus the Ability, Character and CharacterState verbs",function()
 		local e=fixture(); local r=e.services.ReplicatedStorage.BrainrotRemotes
-		eq(#r:GetChildren(),3); assert(r.State and r.Pickup and r.Request)
+		eq(#r:GetChildren(),6)
+		assert(r.State and r.Pickup and r.Request and r.Ability and r.Character and r.CharacterState)
 		eq(r:FindFirstChild("AwardScore"),nil)
 	end)
 	test("intermission has no collectible replicas",function()
@@ -1049,6 +1050,233 @@ return function(Mock, sources, schema)
 		eq(#a.folder:GetChildren(),2)
 		a:destroy()
 	end)
+	-- ---- characters and abilities (live server, mock boundary) ----------------
+	local function remotesOf(e) return e.services.ReplicatedStorage.BrainrotRemotes end
+	local function viewsFor(e,p)
+		local views={}
+		for _,log in e.logs do
+			if log.name=="CharacterState" and log.player==p.UserId then table.insert(views,log.args[1]) end
+		end
+		return views
+	end
+	local function lastView(e,p)
+		local views=viewsFor(e,p)
+		return views[#views]
+	end
+	local function switchTo(e,p,slot)
+		e:step(.3); remotesOf(e).Character.OnServerEvent:Fire(p,slot)
+		return lastView(e,p)
+	end
+	local function useAbility(e,p)
+		e:step(.3); remotesOf(e).Ability.OnServerEvent:Fire(p)
+		return lastView(e,p)
+	end
+	local function serverConfig(e) return e:import("src/shared/Config.luau") end
+	local function setPosition(p,target) p.Character:PivotTo(target) end
+	-- The movement guard treats a jump as a teleport and pulls it back, exactly as it would
+	-- in a live server. So the helper walks a player to the target at 15 studs a second,
+	-- under the 22 stud walk speed, one simulated second per step.
+	local function walkTo(e,p,x,z)
+		for _=1,20 do
+			local root=p.Character.HumanoidRootPart
+			local cur=root.Position
+			local dx,dz=x-cur.X,z-cur.Z
+			local d=math.sqrt(dx*dx+dz*dz)
+			if d<.05 then break end
+			local s=math.min(d,15)
+			local to=e.CFrame.new(cur.X+dx/d*s,cur.Y,cur.Z+dz/d*s)
+			root.CFrame=to
+			p.Character.Head.CFrame=e.CFrame.new(to.Position.X,cur.Y+3,to.Position.Z)
+			e:step(1)
+		end
+	end
+	local function nearCaster(e,a,b,offset)
+		local at=a.Character.HumanoidRootPart.Position
+		walkTo(e,b,at.X+offset,at.Z)
+	end
+	local function speedOf(p) return p.Character.Humanoid.WalkSpeed end
+	local function groundedVelocity(p) return p.Character.HumanoidRootPart.AssemblyLinearVelocity end
+	local function horizontal(v) return math.sqrt(v.X*v.X+v.Z*v.Z) end
+
+	test("abilities: the Ability remote rejects any argument, and Character rejects bad slots with a reason",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local before=#viewsFor(e,a)
+		remotesOf(e).Ability.OnServerEvent:Fire(a,"Mind Trick"); e:step(.3)
+		eq(#viewsFor(e,a),before)                                      -- silently refused, nothing started
+		remotesOf(e).Character.OnServerEvent:Fire(a,2,3); e:step(.3)
+		eq(#viewsFor(e,a),before)                                      -- two arguments: refused
+		local bad=switchTo(e,a,9)
+		eq(bad.notice,"NO SUCH CHARACTER")
+		eq(switchTo(e,a,"2").notice,"NO SUCH CHARACTER")
+		eq(switchTo(e,a,1.5).notice,"NO SUCH CHARACTER")
+		eq(lastView(e,a).normalLeft,3)                                 -- no quota was spent
+	end)
+
+	test("switching: three normal switches per round; the bonus switch is refused outside Chaos and allowed during it",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		eq(lastView(e,a).active,"brain")
+		eq(switchTo(e,a,2).active,"frog"); eq(switchTo(e,a,3).active,"fish"); eq(switchTo(e,a,4).active,"goose")
+		local v=lastView(e,a); eq(v.normalLeft,0); eq(v.active,"goose")
+		eq(switchTo(e,a,5).notice,"BONUS SWITCH: CHAOS EVENT ONLY")    -- no bonus before Chaos
+		e:step(8.01)                                                  -- the Chaos Event opens at 8 s
+		eq(lastView(e,a).bonusLeft,1)
+		eq(switchTo(e,a,5).active,"toast")                             -- the one bonus switch
+		eq(switchTo(e,a,6).notice,"NO SWITCHES LEFT THIS ROUND")      -- four in total, never a fifth
+	end)
+
+	test("cooldowns: independent per character, persist across switches, and are refused while cooling",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,2)                                                -- frog: Belly Bounce
+		local first=useAbility(e,a)
+		assert(first.notice:find("BELLY BOUNCE"),"the frog ability ran: "..first.notice)
+		local readyFrog=first.readyAt.frog
+		near(readyFrog-e.now,Config.Characters.Roster.frog.Cooldown,.3)
+		switchTo(e,a,3)                                                -- fish is ready at once: its cooldown is its own
+		local fishView=useAbility(e,a)
+		assert(fishView.notice:find("BUBBLE DASH"),"fish ability is independent: "..fishView.notice)
+		switchTo(e,a,2)                                                -- back to frog: still cooling
+		local refused=useAbility(e,a)
+		eq(refused.notice,"ABILITY RECHARGING")
+		eq(math.abs(lastView(e,a).readyAt.frog-readyFrog)<.001,true)  -- switching changed no cooldown
+	end)
+
+	test("knockback: Belly Bounce pushes opponents in range, never the caster, and spares those out of range",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		local c=e:addPlayer(-3,"Far Brain"); e:step(.3)
+		switchTo(e,a,2)
+		nearCaster(e,a,b,5)                                            -- inside Radius 10
+		walkTo(e,c,a.Character.HumanoidRootPart.Position.X-20,a.Character.HumanoidRootPart.Position.Z)  -- 20 studs away: out of range
+		local aBefore=groundedVelocity(a)
+		local view=useAbility(e,a)
+		assert(view.notice:find("1 HIT"),"one opponent hit: "..view.notice)
+		local push=groundedVelocity(b)
+		near(horizontal(push),Config.Characters.Roster.frog.Push,.001)
+		near(push.Y,Config.Characters.Roster.frog.Lift,.001)
+		eq(groundedVelocity(a).X,aBefore.X)                            -- the caster was not moved
+		eq(groundedVelocity(a).Z,aBefore.Z)
+		eq(horizontal(groundedVelocity(c)),0)                          -- out of range: untouched
+	end)
+
+	test("bubble dash: the caster moves along its facing for the duration, then stops",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,3)
+		useAbility(e,a); e:step(.1)
+		near(horizontal(groundedVelocity(a)),Config.Characters.Roster.fish.Speed,.001)
+		e:step(Config.Characters.Roster.fish.Duration+.3)
+		a.Character.HumanoidRootPart.AssemblyLinearVelocity=e.Vector3.new(0,0,0)
+		e:step(.3)
+		eq(horizontal(groundedVelocity(a)),0)                          -- not re-applied after the dash
+	end)
+
+	test("slows: Honk Wave slows opponents in range for its duration, the caster is untouched, and the speed comes back",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,4)
+		nearCaster(e,a,b,6)
+		useAbility(e,a); e:step(.2)
+		near(speedOf(b),Config.WalkSpeed*Config.Characters.Roster.goose.SlowFactor,.001)
+		eq(speedOf(a),Config.WalkSpeed)
+		e:step(Config.Characters.Roster.goose.Duration+.2)
+		near(speedOf(b),Config.WalkSpeed,.001)
+	end)
+
+	test("slows: Sock Snare slows a rival to its factor, and the caster keeps full speed (merge rules are in core)",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,6)
+		nearCaster(e,a,b,4)
+		useAbility(e,a); e:step(.2)
+		near(speedOf(b),Config.WalkSpeed*Config.Characters.Roster.sock.SlowFactor,.001)
+		eq(speedOf(a),Config.WalkSpeed)
+	end)
+
+	test("launch: Toast Launch lifts opponents straight up with no sideways part",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,5)
+		nearCaster(e,a,b,4)
+		useAbility(e,a)
+		local v=groundedVelocity(b)
+		near(v.Y,Config.Characters.Roster.toast.Lift,.001)
+		near(horizontal(v),0,.001)
+	end)
+
+	test("decoy: Mind Trick shows a non-colliding copy of the caster that is removed when the round ends",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local view=useAbility(e,a)
+		assert(view.notice:find("DECOY LIVE"),"decoy started: "..view.notice)
+		local decoy=e.services.Workspace:FindFirstChild("MindTrick_"..tostring(a.UserId))
+		assert(decoy~=nil,"the decoy model exists while the round runs")
+		local parts=0
+		for _,part in decoy:GetDescendants() do
+			if part:IsA("BasePart") then
+				parts+=1
+				eq(part.CanCollide,false); eq(part.Anchored,true)
+			end
+		end
+		assert(parts>0,"the decoy has visible parts")
+		e:step(60)                                                     -- past the end of the round
+		eq(e.services.Workspace:FindFirstChild("MindTrick_"..tostring(a.UserId)),nil)
+	end)
+
+	test("abilities never change Brain Cells: every character's ability leaves every score exactly as it was",function()
+		local rolls={.1,.4,.6,.9}
+		for index,slot in {2,3,4,5,6,1} do
+			local e,a,b=fixture({fast=true,studio=true,roll=rolls[(index-1)%4+1]},true); play(e)
+			nearCaster(e,a,b,4)
+			if slot~=1 then switchTo(e,a,slot) end
+			local aBefore,bBefore=score(a),score(b)
+			useAbility(e,a)
+			eq(score(a),aBefore); eq(score(b),bBefore)
+		end
+	end)
+
+	test("names: the name tag shows the active character and follows a switch",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local tag=a.Character.Head:FindFirstChild("CharacterTag")
+		assert(tag~=nil,"a tag is attached to the head")
+		eq(tag:FindFirstChild("Label").Text,"BRAINY")
+		switchTo(e,a,2); e:step(.1)
+		eq(a.Character.Head:FindFirstChild("CharacterTag"):FindFirstChild("Label").Text,"BLORBO")
+	end)
+
+	test("respawn: a respawn clears slows and dashes, but keeps the cooldown",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		local Config=serverConfig(e)
+		switchTo(e,a,4); nearCaster(e,a,b,6)
+		useAbility(e,a); e:step(.2)
+		near(speedOf(b),Config.WalkSpeed*Config.Characters.Roster.goose.SlowFactor,.001)
+		e:spawn(b); e:step(.5)
+		near(speedOf(b),Config.WalkSpeed,.001)                         -- the new character is not slowed
+		local ready=lastView(e,a).readyAt.goose
+		assert(ready>e.now,"the caster's cooldown is still running")
+	end)
+
+	test("hud: the ability button, Q, the number keys and the strip all send the right verbs",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		e:find("AbilityButton").Activated:Fire()
+		e:step(.3)
+		assert(lastView(e,a).notice:find("DECOY LIVE"),"button fires the ability: "..lastView(e,a).notice)
+		e:step(.3); e:press("Two"); e:step(.1)
+		eq(lastView(e,a).active,"frog")
+		e:step(.3); e:find("Slot3").Activated:Fire(); e:step(.1)
+		eq(lastView(e,a).active,"fish")
+		e:step(.3); e:press("Q")
+		assert(lastView(e,a).notice:find("BUBBLE DASH"),"Q fires the active ability: "..lastView(e,a).notice)
+	end)
+
+	test("hud: the strip names the active character and the switches left",function()
+		local e,a=fixture({fast=true,studio=true,roll=.1},true); play(e)
+		e:step(.1)
+		assert(e:find("Readout").Text:find("BRAINY"),"readout: "..e:find("Readout").Text)
+		switchTo(e,a,2); e:step(.1)
+		assert(e:find("Readout").Text:find("BLORBO"),"readout follows the switch")
+		assert(e:find("Readout").Text:find("2 SWITCHES LEFT"),"readout counts switches: "..e:find("Readout").Text)
+	end)
+
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")
 end

@@ -364,6 +364,65 @@ end
 -- --------------------------------------------------------------------------- #
 -- Centre toast + event banner + lobby banner
 -- --------------------------------------------------------------------------- #
+-- The ability button. Q on a keyboard, or this button on a touch screen. The cooldown
+-- veil drains left to right, the same way the steal veil does.
+function Panels.abilityPanel(parent, onUse)
+	local root = Kit.instance("Frame", {
+		Name = "AbilityPanel",
+		Size = UDim2.fromOffset(150, 52),
+		Position = UDim2.new(1, -Space.lg, 1, -Space.lg - 52),
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+	local button = Kit.button(root, "AbilityButton", "", UDim2.fromOffset(150, 52), UDim2.fromOffset(0, 0),
+		function() onUse() end, { accent = C.Violet, zIndex = 4, color = C.NavyRaised })
+	glyph(button, "bolt", C.Violet, 20).Position = UDim2.fromOffset(12, 16)
+	local label = Kit.text(button, "Title", "ABILITY", "Heading", {
+		size = UDim2.new(1, -44, 0, 20), position = UDim2.fromOffset(38, 7),
+		color = C.White, zIndex = 5, truncate = true,
+	})
+	local caption = Kit.text(button, "Caption", "Q • READY", "Micro", {
+		size = UDim2.new(1, -44, 0, 12), position = UDim2.fromOffset(38, 28),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	local veil = Kit.instance("Frame", {
+		Name = "Cooldown",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = C.Void,
+		BackgroundTransparency = .45,
+		BorderSizePixel = 0,
+		ZIndex = 6,
+	}, button)
+	Kit.corner(veil, 12)
+	return { root = root, button = button, label = label, caption = caption, veil = veil }
+end
+
+-- Six numbered chips, one per character in slot order, with the active one lit. Keys 1-6
+-- or a tap both switch. The readout names the active character and the switches left.
+function Panels.characterStrip(parent, onPick, count)
+	local root = Kit.instance("Frame", {
+		Name = "CharacterStrip",
+		Size = UDim2.fromOffset(6 * 32 + 5 * 4, 46),
+		Position = UDim2.fromOffset(0, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+	local readout = Kit.text(root, "Readout", "", "Micro", {
+		size = UDim2.new(1, 0, 0, 14), position = UDim2.fromOffset(0, 0),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	local chips = {}
+	for slot = 1, count do
+		local chip = Kit.button(root, "Slot" .. slot, tostring(slot), UDim2.fromOffset(32, 28),
+			UDim2.fromOffset((slot - 1) * 36, 18), function() onPick(slot) end,
+			{ accent = C.Cyan, zIndex = 5, color = C.NavyRaised })
+		chip.Label.TextSize = Type.Label
+		chips[slot] = chip
+	end
+	return { root = root, readout = readout, chips = chips }
+end
+
 function Panels.toast(parent)
 	local toast = Kit.panel(parent, "Toast", UDim2.fromOffset(432, 56), UDim2.new(.5, 0, 0, 112), {
 		anchor = Vector2.new(.5, 0), zIndex = 6, visible = false,

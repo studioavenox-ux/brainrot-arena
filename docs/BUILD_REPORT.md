@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-09T10:21:20+00:00**.
+Verified: **2026-11-09T10:40:08+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -51,6 +51,14 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
   Per-character idle and collect animation, pickup burst, and a collection screen of six
   live viewports. Server owns the species roll and the reward. See
   [CHARACTERS_PHASE4.md](CHARACTERS_PHASE4.md) and `docs/previews/cast.jpg`.
+- **Character selection and abilities:** the six characters are free and playable. One is active at a
+  time. Each player gets 3 normal switches per round, plus 1 bonus switch during the Chaos Event (four
+  at most). Each character has its own server-side cooldown that survives switching and resets at the
+  next round. Abilities are BRAINY Mind Trick (decoy), BLORBO Belly Bounce (knockback), GLORP Bubble Dash
+  (burst), HJONK HONK Wave (slow area), CRUSTY Toast Launch (upward launch) and WHIFFERS Sock Snare (slow).
+  The Ability and Character remotes are separate and validated on the server. Abilities never award,
+  steal or move Brain Cells. Mobile button and PC key Q, with 1–6 for switching. See
+  [PHASE_CHARACTERS_ABILITIES.md](PHASE_CHARACTERS_ABILITIES.md).
 - Event-only raft and path geometry from earlier builds stays in the export, inert at rest
   (non-colliding), and is no longer scheduled. Rendered previews: `docs/previews/events.jpg`
   (three orbit rafts and four vanishing spans, drawn at rest, non-colliding).
@@ -59,12 +67,12 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
 
 | Check | Result |
 |---|---:|
-| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 123 passed |
-| Real server/client scripts against mocked Roblox services (+ steal and persistence) | 89 passed |
+| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 145 passed |
+| Real server/client scripts against mocked Roblox services (+ steal, persistence, characters and abilities) | 103 passed |
 | XML/API/geometry export tests | 36 passed |
 | Art-direction gate (palette, hierarchy, legibility, lighting) | 35 passed |
-| Official Luau compilation | 29 files passed |
-| Strict analysis | authority modules, ChaosRules, AudioRules and Config passed |
+| Official Luau compilation | 32 files passed |
+| Strict analysis | authority modules (incl. CharacterRules and AbilityRules), ChaosRules, AudioRules and Config passed |
 | Repeat build | Byte-for-byte deterministic |
 | Git whitespace check | Passed |
 
@@ -79,6 +87,9 @@ Confirm both players are pulled into the arena (including from a seated characte
 jumping during low gravity, the winner card, the Shop purchase, and the next round on both clients.
 Then walk the lobby exhibit (all six characters should be visible, named and animating), press
 **C** to open the specimen log, catch one of each species, and confirm the log fills to 6 / 6
+
+Characters: switch with the buttons and keys 1–6, fire each ability (Q or the button) with two clients,
+confirm the knockback, dash, launch, slow and decoy look right, and confirm a Chaos switch works once.
 
 Phase 5 adds a hands-on pass that cannot be automated: stand two clients within 13 studs and
 tap **STEAL** (one carried cell should change hands and both clients should be told), press it
@@ -118,11 +129,9 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 **Incomplete (not started)**
 
-- Six playable characters with abilities, cooldowns and character selection (next phase; design in
-  [PHASE_CHARACTERS_ABILITIES.md](PHASE_CHARACTERS_ABILITIES.md)).
 - Pets (60-pet collection, active slots, inventory), eggs and hatch timers, Spin the Wheel.
 - Robux-only secret characters and pets, MarketplaceService purchases and receipt validation.
-- Ability sound cues: the cue API exists, but there are no abilities yet and no ability IDs.
+- Ability sound cues: the cue API exists and abilities are wired to it, but no ability sound IDs are set.
 - Steal sound cue: configured but not wired to the steal path.
 - Music and sound asset IDs: none configured.
 - Third-person camera and animations, the expanded HUD and settings for the later phases.
@@ -149,7 +158,7 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 ## Export integrity
 
-Source SHA-256: `bb5b8fa4bad7b4d124401736a903629b52e18f4a7937bbe1228032a39d62dbc5`
+Source SHA-256: `ac0f0647d4dbb3dd52e4cbe68db9b019f5459a8fa959022175c91d8ab65e5ef8`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,798,237 bytes; SHA-256 `7a2d9d59665358edb1d062b076e8061801be14e8e2769236579191cc4a0c8ccb`
-- `BrainrotArena.rbxlx` — 1,798,238 bytes; SHA-256 `ac304ee6d5fc694bdf4a7f8ae2bfc58a2792a2d7bf1c869daecd8889b2f3ad15`
+- `BrainrotArena-QuickTest.rbxlx` — 1,833,278 bytes; SHA-256 `e7b0001eb5157e7684d71a8acbf25bd0b93457316439f942b6530fe03012b5bc`
+- `BrainrotArena.rbxlx` — 1,833,279 bytes; SHA-256 `fe818bcc969760b8a34a34cf9660980348562d363170232994838648bded4814`

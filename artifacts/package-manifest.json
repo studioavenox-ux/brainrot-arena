@@ -20,8 +20,8 @@
     },
     {
       "path": "artifacts/verification.json",
-      "bytes": 1907,
-      "sha256": "1b1701b9ecedcf26fb84146428112eba9e281f60a8495787e42225b15ec94128"
+      "bytes": 1908,
+      "sha256": "8ba3adbdfb33f8f547426c9c1364a5860b9e81c86d35d9bfab5faf424537f68c"
     },
     {
       "path": "assets/README.md",
@@ -40,8 +40,8 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 15839,
-      "sha256": "3b61d1536f5de36b44dfff4097377ea0e91d5ce477df09e88003a74fc3655b58"
+      "bytes": 16918,
+      "sha256": "1cce5af06badd8aeec20c45594d95235e8500c2ac8502e9f4c53cfc86904eb8b"
     },
     {
       "path": "docs/AUDIO.md",
@@ -50,8 +50,8 @@
     },
     {
       "path": "docs/BUILD_REPORT.md",
-      "bytes": 10523,
-      "sha256": "ae1691a63445293fb05612511d8ab35e329fabebd6f24fda6616a37cb66fa592"
+      "bytes": 11419,
+      "sha256": "ca54fc8f3a6dd243a55fdc12337987d4aa59bd8b712d39fe68fd0dc382230c98"
     },
     {
       "path": "docs/CHAOS_EVENTS.md",
@@ -85,13 +85,13 @@
     },
     {
       "path": "docs/PHASE_CHARACTERS_ABILITIES.md",
-      "bytes": 6171,
-      "sha256": "9a3e5c57a0771252dd004a3f54f88874889e130d21d3fc4d8b826e50c6dc712d"
+      "bytes": 5650,
+      "sha256": "753156e27ff5eec5ad35f6b4800fc79aa283868eacd7ebd1faac43537dfa7fd2"
     },
     {
       "path": "docs/TESTING.md",
-      "bytes": 12781,
-      "sha256": "763192c518746810be3336a45e004c8320d138d87ff25bc6aad281abc93e8f95"
+      "bytes": 13335,
+      "sha256": "e735a314881ed62712f92aea62e12c1e40ec703396c5b9acdf46f3b39e76a78b"
     },
     {
       "path": "docs/TEST_REPORT_PHASE5.md",
@@ -245,13 +245,13 @@
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1798237,
-      "sha256": "7a2d9d59665358edb1d062b076e8061801be14e8e2769236579191cc4a0c8ccb"
+      "bytes": 1833278,
+      "sha256": "e7b0001eb5157e7684d71a8acbf25bd0b93457316439f942b6530fe03012b5bc"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1798238,
-      "sha256": "ac304ee6d5fc694bdf4a7f8ae2bfc58a2792a2d7bf1c869daecd8889b2f3ad15"
+      "bytes": 1833279,
+      "sha256": "fe818bcc969760b8a34a34cf9660980348562d363170232994838648bded4814"
     },
     {
       "path": "src/client/Audio.luau",
@@ -280,8 +280,8 @@
     },
     {
       "path": "src/client/Hud.luau",
-      "bytes": 36731,
-      "sha256": "80ea2043239622c4e3fb33ba793c99c23e3cd2a45fd8c6e3a13269a680bd706c"
+      "bytes": 41590,
+      "sha256": "191612092bd7b262080ce0b11dec83f7ebb30fa8bcc4772ae98242aab4bf17e1"
     },
     {
       "path": "src/client/Iconography.luau",
@@ -295,18 +295,23 @@
     },
     {
       "path": "src/client/Main.client.luau",
-      "bytes": 2189,
-      "sha256": "2916f1acb88135ebc79de9a9ea3d085f997c680bdb7bafe667155669f1e47d05"
+      "bytes": 2744,
+      "sha256": "999a1c1850ccba7a29846f45ef62f4dd32dc0aabca36e1fedae0e5756a39ef37"
     },
     {
       "path": "src/client/Panels.luau",
-      "bytes": 17570,
-      "sha256": "c3ea800bf941ba0072606ba6e1ccece53e69cd5fe100cb653ad38f214e29282b"
+      "bytes": 19971,
+      "sha256": "85472be74fa4cc874f879a6dfd2eab5113acfaabc8aa416b525a5854322cebda"
     },
     {
       "path": "src/client/Theme.luau",
       "bytes": 4416,
       "sha256": "4f567e8db31606d003d1472164b70d6cfa201a5488842abcf34445778ead8a11"
+    },
+    {
+      "path": "src/server/AbilityService.luau",
+      "bytes": 7183,
+      "sha256": "1b06363088716fd727e966820ee20fe200114e956e70b2be5fb887347734d1d4"
     },
     {
       "path": "src/server/ArtService.luau",
@@ -320,8 +325,8 @@
     },
     {
       "path": "src/server/Main.server.luau",
-      "bytes": 27317,
-      "sha256": "55e92c4b935c4de9364b8514a205dd51cca07d5a74dc32cdc020468790a50dda"
+      "bytes": 34780,
+      "sha256": "5a397fb555f87b74a79895967625c694db68106e9539e7ad3c8ff152e10f8d2c"
     },
     {
       "path": "src/server/Persistence.luau",
@@ -339,6 +344,11 @@
       "sha256": "7776cdb171a5af67f09f6357f42742b6f6f472f7518b83a25a7a7bb6cc3262d9"
     },
     {
+      "path": "src/server/core/AbilityRules.luau",
+      "bytes": 3742,
+      "sha256": "2c20a7294b2965930a717cb9c5739485ba5ae167fb1c96dd6e10a09bbadb000f"
+    },
+    {
       "path": "src/server/core/ArenaRoute.luau",
       "bytes": 8337,
       "sha256": "feaeae7f5f7cbdfe5c238e2ab838e8a689c8d4a3e051061caa5199435e84af37"
@@ -349,9 +359,14 @@
       "sha256": "448aa15398e2689b5a9f71006d406e192b94fecdbceebad8de8aa89798771afe"
     },
     {
+      "path": "src/server/core/CharacterRules.luau",
+      "bytes": 5420,
+      "sha256": "19b4f52bf1c79322fb446c7a8cafd292888be7d6bf198d010600043080acbd42"
+    },
+    {
       "path": "src/server/core/MovementGuard.luau",
-      "bytes": 1904,
-      "sha256": "0443fd77bc9f18bb74a2cd1528192e924c1d5c2c74531c973f5308455f1ec36f"
+      "bytes": 2796,
+      "sha256": "70100f0760de6094b96b5bfb0154b653589edf8b3692e4df90a64406aa435355"
     },
     {
       "path": "src/server/core/PickupLedger.luau",
@@ -375,8 +390,8 @@
     },
     {
       "path": "src/shared/Config.luau",
-      "bytes": 5000,
-      "sha256": "18084e1b7d90312eaad8bb28c4effc99addb9e3dbc6d143a60f523c11bb8778c"
+      "bytes": 6730,
+      "sha256": "be3a6ee1bd6916a1b2a23a095054cfe490e1ac45ce4ee65dc92664cb9660e54c"
     },
     {
       "path": "src/shared/Creatures.luau",
@@ -385,13 +400,13 @@
     },
     {
       "path": "tests/adapters.spec.luau",
-      "bytes": 50922,
-      "sha256": "bdc629178e9380002336ff088f2c7240949684a81724b29b1dc57e579490f28d"
+      "bytes": 61840,
+      "sha256": "49af58f91b68e3a27947951b1a7440f93576bd27349d59d5e56728ebb6aaddb7"
     },
     {
       "path": "tests/core.spec.luau",
-      "bytes": 43002,
-      "sha256": "7b3abfcd62b177beba17e91b78f8fb7d072e7dcb546670005edfeadaf2384676"
+      "bytes": 54471,
+      "sha256": "d3f7cb296b7bc8f752023678704e4c44fc1c4e75d6cc4e8fb3bdf112427c331b"
     },
     {
       "path": "tests/fixtures/roblox-api.json",
@@ -405,8 +420,8 @@
     },
     {
       "path": "tests/roblox_mock.luau",
-      "bytes": 21287,
-      "sha256": "9ed5d230306f26c60702fae820cfe681dc1588d4dbc840a7cb8509a2bfa0da31"
+      "bytes": 21468,
+      "sha256": "59b4056b77ce1f72b6d9a92919a561b162dbcfe59cd988079610612cce0dfca0"
     },
     {
       "path": "tools/artcheck.py",
@@ -425,8 +440,8 @@
     },
     {
       "path": "tools/check.py",
-      "bytes": 17531,
-      "sha256": "8abcb43e94afb8381f4141c13dcc07d1649a5472b0150c0bca335ff63bcb8834"
+      "bytes": 18525,
+      "sha256": "ab91448b3d7082cd289a110e07313f39287b026ea16fef7cea2b12ac31e16b71"
     },
     {
       "path": "tools/creatures.py",
@@ -445,8 +460,8 @@
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 9412,
-      "sha256": "136265ad507d25e7f84a82586d2c487d08de85ccd3f880e9286019050203e5a7"
+      "bytes": 9526,
+      "sha256": "9573ea03fa435e2258f7118b8cb2b724908d457aeed39ad36399b0deb96a9fab"
     },
     {
       "path": "tools/preview.py",
@@ -489,12 +504,12 @@
       "sha256": "c6427b28e8f9a7d41d293b81576b3bfe697497b81b5af6e2ae433bae5d088bda"
     }
   ],
-  "file_count_excluding_manifest": 97,
-  "production_script_count": 26,
+  "file_count_excluding_manifest": 100,
+  "production_script_count": 29,
   "place_count": 2,
-  "source_sha256": "bb5b8fa4bad7b4d124401736a903629b52e18f4a7937bbe1228032a39d62dbc5",
-  "prior_verification_timestamp_utc": "2026-11-09T10:21:20+00:00",
-  "prior_automated_tests_passed": 283,
+  "source_sha256": "ac0f0647d4dbb3dd52e4cbe68db9b019f5459a8fa959022175c91d8ab65e5ef8",
+  "prior_verification_timestamp_utc": "2026-11-09T10:40:08+00:00",
+  "prior_automated_tests_passed": 319,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",

@@ -104,6 +104,32 @@ local Config = {
 	},
 
 	-- ------------------------------------------------------------------ #
+	-- Characters. Six playable characters, all free, one active at a time. Every
+	-- character has one ability, and each ability has its own cooldown. Cooldowns are
+	-- per player and per character, persist across switches within a round, and reset
+	-- at the next round. Abilities never award, steal or move Brain Cells.
+	-- Roster keys are the cell species keys in Creatures.luau.
+	-- ------------------------------------------------------------------ #
+	Characters = {
+		-- Slot 1..6 is the order the client shows and the order the server accepts.
+		Order = { "brain", "frog", "fish", "goose", "toast", "sock" },
+		SwitchesNormal = 3,   -- switches usable at any time during Playing
+		SwitchesBonus = 1,    -- one extra switch, usable only during the Chaos Event
+		Roster = {
+			brain = { Ability = "MindTrick", Title = "MIND TRICK", Cooldown = 20, Duration = 6, Offset = 6 },
+			frog = { Ability = "BellyBounce", Title = "BELLY BOUNCE", Cooldown = 15, Radius = 10, Push = 55, Lift = 18 },
+			fish = { Ability = "BubbleDash", Title = "BUBBLE DASH", Cooldown = 12, Speed = 70, Duration = .35 },
+			goose = { Ability = "HonkWave", Title = "HONK WAVE", Cooldown = 18, Radius = 14, SlowFactor = .5, Duration = 2.5 },
+			toast = { Ability = "ToastLaunch", Title = "TOAST LAUNCH", Cooldown = 16, Radius = 8, Lift = 60 },
+			sock = { Ability = "SockSnare", Title = "SOCK SNARE", Cooldown = 14, Radius = 12, SlowFactor = .4, Duration = 4 },
+		},
+		-- Ability-driven movement gets a temporary speed allowance from MovementGuard.
+		-- Margin is added on top of the expected speed, so ordinary rounding never trips it.
+		MovementMargin = 8,
+		GrantSeconds = .8,
+	},
+
+	-- ------------------------------------------------------------------ #
 	-- Stealing. A short-range tag that moves ONE carried cell from the victim
 	-- to the thief. Banked cells are never at risk, and nothing leaves the round.
 	-- ------------------------------------------------------------------ #

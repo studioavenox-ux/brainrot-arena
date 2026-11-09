@@ -16,10 +16,11 @@ SOURCE_FILES = (
     "src/client/Collection.luau", "src/client/Audio.luau", "src/client/Main.client.luau",
     "src/server/ArtService.luau", "src/server/Main.server.luau", "src/server/WorldData.luau",
     "src/server/WorldService.luau", "src/server/EventDirector.luau",
-    "src/server/Persistence.luau",
+    "src/server/Persistence.luau", "src/server/AbilityService.luau",
     "src/server/core/ArenaRoute.luau", "src/server/core/MovementGuard.luau",
     "src/server/core/PickupLedger.luau", "src/server/core/RoundMachine.luau",
-    "src/server/core/ChaosRules.luau",
+    "src/server/core/ChaosRules.luau", "src/server/core/CharacterRules.luau",
+    "src/server/core/AbilityRules.luau",
     "src/shared/ArtDirection.luau", "src/shared/AudioRules.luau", "src/shared/Config.luau",
     "src/shared/Creatures.luau",
 )

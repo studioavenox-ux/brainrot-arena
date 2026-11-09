@@ -39979,6 +39979,32 @@ local Config = {
 	},
 
 	-- ------------------------------------------------------------------ #
+	-- Characters. Six playable characters, all free, one active at a time. Every
+	-- character has one ability, and each ability has its own cooldown. Cooldowns are
+	-- per player and per character, persist across switches within a round, and reset
+	-- at the next round. Abilities never award, steal or move Brain Cells.
+	-- Roster keys are the cell species keys in Creatures.luau.
+	-- ------------------------------------------------------------------ #
+	Characters = {
+		-- Slot 1..6 is the order the client shows and the order the server accepts.
+		Order = { "brain", "frog", "fish", "goose", "toast", "sock" },
+		SwitchesNormal = 3,   -- switches usable at any time during Playing
+		SwitchesBonus = 1,    -- one extra switch, usable only during the Chaos Event
+		Roster = {
+			brain = { Ability = "MindTrick", Title = "MIND TRICK", Cooldown = 20, Duration = 6, Offset = 6 },
+			frog = { Ability = "BellyBounce", Title = "BELLY BOUNCE", Cooldown = 15, Radius = 10, Push = 55, Lift = 18 },
+			fish = { Ability = "BubbleDash", Title = "BUBBLE DASH", Cooldown = 12, Speed = 70, Duration = .35 },
+			goose = { Ability = "HonkWave", Title = "HONK WAVE", Cooldown = 18, Radius = 14, SlowFactor = .5, Duration = 2.5 },
+			toast = { Ability = "ToastLaunch", Title = "TOAST LAUNCH", Cooldown = 16, Radius = 8, Lift = 60 },
+			sock = { Ability = "SockSnare", Title = "SOCK SNARE", Cooldown = 14, Radius = 12, SlowFactor = .4, Duration = 4 },
+		},
+		-- Ability-driven movement gets a temporary speed allowance from MovementGuard.
+		-- Margin is added on top of the expected speed, so ordinary rounding never trips it.
+		MovementMargin = 8,
+		GrantSeconds = .8,
+	},
+
+	-- ------------------------------------------------------------------ #
 	-- Stealing. A short-range tag that moves ONE carried cell from the victim
 	-- to the thief. Banked cells are never at risk, and nothing leaves the round.
 	-- ------------------------------------------------------------------ #
@@ -40076,6 +40102,201 @@ return table.freeze(Creatures)
       </Properties>
       <Item class="ModuleScript" referent="RBX001071">
         <Properties>
+          <string name="Name">AbilityService</string>
+          <ProtectedString name="Source">--!strict
+-- Roblox adapter for character abilities. Every decision comes from the pure modules
+-- (AbilityRules for geometry and statuses, CharacterRules for cooldowns and switching).
+-- This module only turns those decisions into parts, velocities and walk speeds.
+--
+-- Hard rules, all enforced here or by the caller:
+--   * Nothing in this module touches Brain Cells, scores, coins or the round machine.
+--   * The caster is never a target of their own ability.
+--   * Ability-driven movement is granted to MovementGuard for its exact duration only.
+--   * Every effect is removed on round end (reset) and when a player leaves (forget).
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local Config = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Config"))
+local AbilityRules = require(script.Parent.core.AbilityRules)
+local MovementGuard = require(script.Parent.core.MovementGuard)
+
+local AbilityService = {}
+AbilityService.__index = AbilityService
+
+export type Candidate = { player: Player, root: BasePart, humanoid: Humanoid }
+export type Service = typeof(setmetatable({} :: {
+	movement: MovementGuard.Guard,
+	statuses: AbilityRules.Statuses,
+	decoys: { [number]: { model: Model, untilAt: number } },
+	dashes: { [number]: { x: number, z: number, untilAt: number } },
+}, AbilityService))
+
+function AbilityService.new(movement: MovementGuard.Guard): Service
+	return setmetatable({
+		movement = movement,
+		statuses = {},
+		decoys = {},
+		dashes = {},
+	}, AbilityService) :: any
+end
+
+local function planar(position: Vector3): AbilityRules.Vec
+	return { x = position.X, y = position.Y, z = position.Z }
+end
+
+local function toVector3(v: AbilityRules.Vec): Vector3
+	return Vector3.new(v.x, v.y, v.z)
+end
+
+local function removeDecoy(self: Service, userId: number)
+	local decoy = self.decoys[userId]
+	if decoy then
+		decoy.model:Destroy()
+		self.decoys[userId] = nil
+	end
+end
+
+-- A visual decoy: anchored, non-colliding copies of the caster's visible parts, shown a
+-- few studs to the side. It is not a character, has no Humanoid, and is never targeted.
+local function spawnDecoy(self: Service, caster: Player, character: Model, root: BasePart, entry: any, now: number)
+	removeDecoy(self, caster.UserId)
+	local model = Instance.new("Model")
+	model.Name = "MindTrick_" .. tostring(caster.UserId)
+	for _, part in character:GetDescendants() do
+		if part:IsA("BasePart") then
+			local copy = part:Clone()
+			copy.Anchored = true
+			copy.CanCollide = false
+			copy.CanTouch = false
+			copy.CanQuery = false
+			copy.Transparency = math.max(copy.Transparency, .35)
+			copy.Parent = model
+		end
+	end
+	model.Parent = Workspace
+	model:PivotTo(root.CFrame * CFrame.new(entry.Offset, 0, 0))
+	self.decoys[caster.UserId] = { model = model, untilAt = now + entry.Duration }
+end
+
+-- Performs one ability for `caster`. `candidates` lists every participating player with a
+-- live root (the caster may be among them; they are always excluded). Returns the players
+-- who were actually affected, nearest first, so the caller can notify them.
+function AbilityService.perform(self: Service, caster: Player, character: Model, root: BasePart,
+	entry: any, candidates: { Candidate }, now: number): { Player }
+	local casterPos = planar(root.Position)
+	local look = planar(root.CFrame.LookVector)
+	local lookFallback = { x = look.x, y = 0, z = look.z }
+	local pool: { AbilityRules.Candidate } = {}
+	local byId: { [number]: Candidate } = {}
+	for _, candidate in candidates do
+		table.insert(pool, { userId = candidate.player.UserId, position = planar(candidate.root.Position) })
+		byId[candidate.player.UserId] = candidate
+	end
+
+	local affected: { Player } = {}
+	local ability = entry.Ability
+	if ability == "MindTrick" then
+		spawnDecoy(self, caster, character, root, entry, now)
+		return affected
+	end
+
+	if ability == "BubbleDash" then
+		local velocity = AbilityRules.dashVelocity(look, entry.Speed)
+		self.dashes[caster.UserId] = { x = velocity.x, z = velocity.z, untilAt = now + entry.Duration }
+		self.movement:grant(caster.UserId, entry.Speed + Config.Characters.MovementMargin,
+			now + entry.Duration + Config.Characters.GrantSeconds, now)
+		table.insert(affected, caster)
+		return affected
+	end
+
+	local hits = AbilityRules.targetsIn(casterPos, pool, entry.Radius, caster.UserId)
+	for _, hit in hits do
+		local victim = byId[hit.userId]
+		if victim then
+			local victimPos = planar(victim.root.Position)
+			if ability == "BellyBounce" then
+				local direction = AbilityRules.horizontalDirection(casterPos, victimPos, lookFallback)
+				local velocity = AbilityRules.knockbackVelocity(direction, entry.Push, entry.Lift)
+				victim.root.AssemblyLinearVelocity = toVector3(velocity)
+				self.movement:grant(victim.player.UserId, entry.Push + Config.Characters.MovementMargin,
+					now + Config.Characters.GrantSeconds, now)
+			elseif ability == "ToastLaunch" then
+				victim.root.AssemblyLinearVelocity = toVector3(AbilityRules.launchVelocity(entry.Lift))
+			elseif ability == "HonkWave" or ability == "SockSnare" then
+				AbilityRules.applySlow(self.statuses, victim.player.UserId, entry.SlowFactor, now + entry.Duration)
+			end
+			table.insert(affected, victim.player)
+		end
+	end
+	return affected
+end
+
+-- Walk speed for a player right now: the base speed, scaled by any active slow.
+function AbilityService.walkSpeed(self: Service, userId: number, now: number): number
+	return Config.WalkSpeed * AbilityRules.speedFactor(self.statuses, userId, now)
+end
+
+-- Runs every frame: keeps dash velocity applied for its duration and keeps each walk speed
+-- equal to the live value. Writes happen only on change.
+function AbilityService.drive(self: Service, now: number, players: { Candidate })
+	for _, candidate in players do
+		local humanoid = candidate.humanoid
+		local wanted = AbilityService.walkSpeed(self, candidate.player.UserId, now)
+		if humanoid.WalkSpeed ~= wanted then
+			humanoid.WalkSpeed = wanted
+		end
+		local dash = self.dashes[candidate.player.UserId]
+		if dash and now &lt; dash.untilAt then
+			local vy = candidate.root.AssemblyLinearVelocity.Y
+			candidate.root.AssemblyLinearVelocity = Vector3.new(dash.x, vy, dash.z)
+		end
+	end
+end
+
+-- Ends expired effects. Called from the authority step.
+function AbilityService.prune(self: Service, now: number)
+	AbilityRules.prune(self.statuses, now)
+	for userId, decoy in self.decoys do
+		if now &gt;= decoy.untilAt then
+			removeDecoy(self, userId)
+		end
+	end
+	for userId, dash in self.dashes do
+		if now &gt;= dash.untilAt then
+			self.dashes[userId] = nil
+		end
+	end
+end
+
+-- Removes every effect at once. Called at the end of each round.
+function AbilityService.reset(self: Service)
+	for userId in self.decoys do
+		removeDecoy(self, userId)
+	end
+	table.clear(self.statuses)
+	table.clear(self.dashes)
+end
+
+-- Removes one player's effects. Called when they leave.
+function AbilityService.forget(self: Service, userId: number)
+	removeDecoy(self, userId)
+	self.statuses[userId] = nil
+	self.dashes[userId] = nil
+end
+
+function AbilityService.decoyCount(self: Service): number
+	local count = 0
+	for _ in self.decoys do
+		count += 1
+	end
+	return count
+end
+
+return AbilityService
+</ProtectedString>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="RBX001072">
+        <Properties>
           <string name="Name">ArtService</string>
           <ProtectedString name="Source">--!nonstrict
 -- Applies the art-direction lighting rig at runtime (Rojo workflow, or if the
@@ -40146,7 +40367,7 @@ return ArtService
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001072">
+      <Item class="ModuleScript" referent="RBX001073">
         <Properties>
           <string name="Name">EventDirector</string>
           <ProtectedString name="Source">-- Applies the physical side of the Chaos Event to the live world: gravity and
@@ -40283,7 +40504,7 @@ return EventDirector
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="Script" referent="RBX001073">
+      <Item class="Script" referent="RBX001074">
         <Properties>
           <string name="Name">Main</string>
           <ProtectedString name="Source">--!strict
@@ -40306,6 +40527,8 @@ local Persistence = require(script.Parent.Persistence)
 local WorldService = require(script.Parent.WorldService)
 local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
+local CharacterRules = require(script.Parent.core.CharacterRules)
+local AbilityService = require(script.Parent.AbilityService)
 
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
@@ -40324,6 +40547,10 @@ end, function(slotId: number, value: number): string
 	return CharacterManifest.SpeciesOf(slotId, value)
 end)
 local movement = MovementGuard.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
+-- Character state (switch quotas, per-character cooldowns) and ability effects. Both are
+-- reset at round start; cooldowns never survive into the next round.
+local characters = CharacterRules.new(Config.Characters)
+local abilities = AbilityService.new(movement)
 -- Arena access. Every rail trip goes through this router: it asserts a destination
 -- and keeps asserting it until the character is measurably there.
 local route = ArenaRoute.new()
@@ -40356,6 +40583,18 @@ pickupRemote.Parent = remotes
 local requestRemote = Instance.new("RemoteEvent")
 requestRemote.Name = "Request"
 requestRemote.Parent = remotes
+-- Character verbs have their own remotes. Each one is validated on its own terms:
+-- Ability takes no arguments; Character takes exactly one integer slot.
+local abilityRemote = Instance.new("RemoteEvent")
+abilityRemote.Name = "Ability"
+abilityRemote.Parent = remotes
+local characterRemote = Instance.new("RemoteEvent")
+characterRemote.Name = "Character"
+characterRemote.Parent = remotes
+-- Server to one player only: their character view and the result of their last verb.
+local characterStateRemote = Instance.new("RemoteEvent")
+characterStateRemote.Name = "CharacterState"
+characterStateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 local pickupFolder = Instance.new("Folder")
@@ -40402,6 +40641,63 @@ local function snapshot()
 		rows = state.rows, results = state.results,
 		fastMode = fast, version = Config.Version,
 	}
+end
+
+-- ---- characters: views, messages and the name tag -----------------------------
+-- Player-facing wording for each refusal reason from CharacterRules.
+local REFUSAL_NOTICES: { [string]: string } = {
+	["phase"] = "CHARACTERS ARE LIVE DURING PLAY",
+	["not-participating"] = "JOIN THE ROUND FIRST",
+	["bad-slot"] = "NO SUCH CHARACTER",
+	["same-character"] = "ALREADY YOUR CHARACTER",
+	["no-switches"] = "NO SWITCHES LEFT THIS ROUND",
+	["bonus-during-chaos-only"] = "BONUS SWITCH: CHAOS EVENT ONLY",
+	["cooling"] = "ABILITY RECHARGING",
+}
+
+local function characterView(player: Player, notice: string?): { [string]: any }
+	local view = CharacterRules.view(characters, player.UserId, machine.eventActive == true)
+	view.notice = notice or ""
+	view.phase = machine.phase
+	view.now = Workspace:GetServerTimeNow()
+	return view
+end
+
+local function sendCharacter(player: Player, notice: string?)
+	characterStateRemote:FireClient(player, characterView(player, notice))
+end
+
+-- The name tag shows the active character. It is rebuilt on every switch and respawn.
+local function applyCharacterTag(player: Player)
+	local character = player.Character
+	local head = if character then character:FindFirstChild("Head") else nil
+	if not head or not head:IsA("BasePart") then
+		return
+	end
+	local active = CharacterRules.ensure(characters, player.UserId).active
+	local species = CharacterManifest.Characters[active]
+	local gui = head:FindFirstChild("CharacterTag")
+	if gui == nil then
+		gui = Instance.new("BillboardGui")
+		gui.Name = "CharacterTag"
+		gui.Size = UDim2.fromOffset(150, 22)
+		gui.StudsOffset = Vector3.new(0, 2.4, 0)
+		gui.MaxDistance = 80
+		gui.Parent = head
+		local label = Instance.new("TextLabel")
+		label.Name = "Label"
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBlack
+		label.TextScaled = true
+		label.TextColor3 = Color3.fromRGB(238, 243, 255)
+		label.TextStrokeTransparency = .5
+		label.Parent = gui
+	end
+	local label = gui:FindFirstChild("Label")
+	if label and label:IsA("TextLabel") then
+		label.Text = species.Label
+	end
 end
 
 local function applyHalo(player: Player)
@@ -40480,7 +40776,7 @@ local function movePlayer(player: Player, arena: boolean, now: number, escalate:
 	end
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
-	humanoid.WalkSpeed = Config.WalkSpeed
+	humanoid.WalkSpeed = AbilityService.walkSpeed(abilities, player.UserId, now)
 	humanoid.UseJumpPower = true
 	humanoid.JumpPower = Config.JumpPower * chaos.JumpScale
 	movement:teleport(player.UserId, position(target.Position), now)
@@ -40673,6 +40969,10 @@ local function syncChaos()
 	director:apply(chaos)
 	world:setLowGravity(kind == "LowGravity")
 	ledger:setRareScale(chaos.RareScale)
+	-- The bonus switch depends on the Chaos Event, so every player is told at once.
+	for _, player in Players:GetPlayers() do
+		sendCharacter(player)
+	end
 end
 
 local function handleEffects(effects, now: number)
@@ -40713,6 +41013,13 @@ local function handleEffects(effects, now: number)
 			end
 			if machine.phase == "Playing" then
 				ledger:beginRound(machine.roundId)
+				-- Fresh quotas and cooldowns for every player, once per round.
+				local ids: { number } = {}
+				for _, player in Players:GetPlayers() do
+					table.insert(ids, player.UserId)
+				end
+				CharacterRules.beginRound(characters, ids)
+				AbilityService.reset(abilities)
 				spawnPickups()
 				-- Route every player (including a player whose character is still
 				-- loading: routePlayer re-asserts on the next sweep and on
@@ -40725,11 +41032,16 @@ local function handleEffects(effects, now: number)
 				pickupFolder:ClearAllChildren()
 				table.clear(pickupParts)
 				director:reset()
+				AbilityService.reset(abilities)
 				if machine.phase == "Intermission" or machine.phase == "Results" or machine.phase == "Waiting" then
 					for _, player in Players:GetPlayers() do
 						routePlayer(player, now, true)
 					end
 				end
+			end
+			for _, player in Players:GetPlayers() do
+				applyCharacterTag(player)
+				sendCharacter(player)
 			end
 			print(string.format("[Brainrot] %s • round %d", machine.phase, machine.roundId))
 		end
@@ -40752,6 +41064,9 @@ local function characterAdded(player: Player, character: Model)
 		machine:spawnProtect(player.UserId, now)
 		routePlayer(player, now, true)
 		applyHalo(player)
+		AbilityService.forget(abilities, player.UserId)
+		applyCharacterTag(player)
+		sendCharacter(player)
 	end)
 end
 
@@ -40815,6 +41130,8 @@ Players.PlayerRemoving:Connect(function(player)
 	movement:remove(player.UserId)
 	route:remove(player.UserId)
 	machine:removePlayer(player.UserId)
+	CharacterRules.clear(characters, player.UserId)
+	AbilityService.forget(abilities, player.UserId)
 	dirty = true
 end)
 for _, player in Players:GetPlayers() do
@@ -40880,7 +41197,106 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 		stateRemote:FireClient(player, snapshot(), message)
 	else
 		stateRemote:FireClient(player, snapshot())
+		sendCharacter(player)
 	end
+end)
+
+-- ---- character verbs ------------------------------------------------------------
+-- Separate, strictly validated remotes. Neither carries an effect, a target or a cell.
+abilityRemote.OnServerEvent:Connect(function(player: Player, ...: any)
+	if select("#", ...) ~= 0 then
+		return
+	end
+	local record = records[player.UserId]
+	if not record then
+		return
+	end
+	local now = Workspace:GetServerTimeNow()
+	if now - (record.requests.Ability or -math.huge) &lt; .25 then
+		return
+	end
+	record.requests.Ability = now
+	local character, humanoid, root = characterReady(player)
+	if not character or not humanoid or not root then
+		sendCharacter(player, "ABILITY NEEDS A LIVE CHARACTER")
+		return
+	end
+	local uid = player.UserId
+	local active = CharacterRules.ensure(characters, uid).active
+	local entry = Config.Characters.Roster[active]
+	local ok, reason = CharacterRules.ability(characters, uid, now, {
+		phase = machine.phase, participating = machine:isParticipating(uid),
+	})
+	if not ok then
+		sendCharacter(player, REFUSAL_NOTICES[reason] or "ABILITY REFUSED")
+		return
+	end
+	-- Every live participant is a candidate. The caster is excluded inside AbilityRules.
+	local candidates: { { player: Player, root: BasePart, humanoid: Humanoid } } = {}
+	for _, other in Players:GetPlayers() do
+		local _, otherHumanoid, otherRoot = characterReady(other)
+		if otherRoot and otherHumanoid and machine:isParticipating(other.UserId) then
+			table.insert(candidates, { player = other, root = otherRoot, humanoid = otherHumanoid })
+		end
+	end
+	local affected = AbilityService.perform(abilities, player, character, root, entry, candidates, now)
+	for _, victim in affected do
+		if victim ~= player then
+			sendCharacter(victim, string.format("%s HIT YOU", entry.Title))
+		end
+	end
+	local message
+	if entry.Ability == "MindTrick" then
+		message = string.format("%s • DECOY LIVE", entry.Title)
+	elseif entry.Ability == "BubbleDash" then
+		message = entry.Title
+	elseif #affected &gt; 0 then
+		message = string.format("%s • %d HIT", entry.Title, #affected)
+	else
+		message = string.format("%s • NOTHING IN RANGE", entry.Title)
+	end
+	sendCharacter(player, message)
+end)
+
+characterRemote.OnServerEvent:Connect(function(player: Player, ...: any)
+	if select("#", ...) ~= 1 then
+		return
+	end
+	local slot = ...
+	local record = records[player.UserId]
+	if not record then
+		return
+	end
+	local now = Workspace:GetServerTimeNow()
+	if now - (record.requests.Character or -math.huge) &lt; .25 then
+		return
+	end
+	record.requests.Character = now
+	local ok, reason = CharacterRules.switch(characters, player.UserId, slot, {
+		phase = machine.phase,
+		participating = machine:isParticipating(player.UserId),
+		chaos = machine.eventActive == true,
+	})
+	if ok then
+		applyCharacterTag(player)
+		local name = Config.Characters.Roster[CharacterRules.ensure(characters, player.UserId).active].Title
+		sendCharacter(player, "NOW: " .. name)
+	else
+		sendCharacter(player, REFUSAL_NOTICES[reason] or "SWITCH REFUSED")
+	end
+end)
+
+-- Every frame: keeps dashes moving for their duration and walk speeds equal to the live value.
+RunService.Heartbeat:Connect(function()
+	local now = Workspace:GetServerTimeNow()
+	local list: { { player: Player, root: BasePart, humanoid: Humanoid } } = {}
+	for _, player in Players:GetPlayers() do
+		local _, humanoid, root = characterReady(player)
+		if humanoid and root then
+			table.insert(list, { player = player, root = root, humanoid = humanoid })
+		end
+	end
+	AbilityService.drive(abilities, now, list)
 end)
 
 local accumulator = 0
@@ -40897,6 +41313,7 @@ RunService.Heartbeat:Connect(function(dt: number)
 	local effects = machine:step(now)
 	handleEffects(effects, now)
 	syncChaos()
+	AbilityService.prune(abilities, now)
 	if #effects &gt; 0 then
 		-- Checked after the world has been reconciled, so the invariant sees the result.
 		checkInvariants()
@@ -40992,7 +41409,7 @@ print(string.format("[Brainrot] v%s ready • %s • %d pickup slots • %ds rou
           <bool name="Disabled">false</bool>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001074">
+      <Item class="ModuleScript" referent="RBX001075">
         <Properties>
           <string name="Name">Persistence</string>
           <ProtectedString name="Source">--!nonstrict
@@ -41295,7 +41712,7 @@ return Persistence
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001075">
+      <Item class="ModuleScript" referent="RBX001076">
         <Properties>
           <string name="Name">WorldData</string>
           <ProtectedString name="Source">--!nocheck
@@ -42293,7 +42710,7 @@ return {
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="RBX001076">
+      <Item class="ModuleScript" referent="RBX001077">
         <Properties>
           <string name="Name">WorldService</string>
           <ProtectedString name="Source">--!strict
@@ -42444,11 +42861,121 @@ return WorldService
 </ProtectedString>
         </Properties>
       </Item>
-      <Item class="Folder" referent="RBX001077">
+      <Item class="Folder" referent="RBX001078">
         <Properties>
           <string name="Name">core</string>
         </Properties>
-        <Item class="ModuleScript" referent="RBX001078">
+        <Item class="ModuleScript" referent="RBX001079">
+          <Properties>
+            <string name="Name">AbilityRules</string>
+            <ProtectedString name="Source">--!strict
+-- Pure ability geometry and status bookkeeping. No Roblox services, no cells, no score.
+-- Positions are plain {x, y, z} tables, the same convention as ArenaRoute and MovementGuard.
+local AbilityRules = {}
+
+export type Vec = { x: number, y: number, z: number }
+export type Candidate = { userId: number, position: Vec }
+export type Hit = { userId: number, distance: number }
+export type Statuses = { [number]: { factor: number, untilAt: number } }
+
+local function distance(a: Vec, b: Vec): number
+	local dx, dy, dz = b.x - a.x, b.y - a.y, b.z - a.z
+	return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+-- Every eligible opponent inside `radius` of the caster, nearest first. The caster is
+-- always excluded, so an ability can never hit its own user.
+function AbilityRules.targetsIn(origin: Vec, candidates: { Candidate }, radius: number, casterId: number): { Hit }
+	assert(radius &gt; 0, "radius must be positive")
+	local hits: { Hit } = {}
+	for _, candidate in candidates do
+		if candidate.userId ~= casterId then
+			local d = distance(origin, candidate.position)
+			if d &lt;= radius then
+				table.insert(hits, { userId = candidate.userId, distance = d })
+			end
+		end
+	end
+	table.sort(hits, function(a: Hit, b: Hit): boolean
+		if a.distance == b.distance then
+			return a.userId &lt; b.userId
+		end
+		return a.distance &lt; b.distance
+	end)
+	return hits
+end
+
+-- Unit horizontal direction from `from` to `to`. Falls back to `fallback` when the two
+-- points coincide, so a launch always has a defined direction.
+function AbilityRules.horizontalDirection(from: Vec, to: Vec, fallback: Vec): Vec
+	local dx, dz = to.x - from.x, to.z - from.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length &lt; 1e-6 then
+		dx, dz = fallback.x, fallback.z
+		length = math.sqrt(dx * dx + dz * dz)
+		if length &lt; 1e-6 then
+			return { x = 0, y = 0, z = 1 }
+		end
+	end
+	return { x = dx / length, y = 0, z = dz / length }
+end
+
+-- Knockback: a horizontal push away from the caster plus a small lift.
+function AbilityRules.knockbackVelocity(direction: Vec, push: number, lift: number): Vec
+	return { x = direction.x * push, y = lift, z = direction.z * push }
+end
+
+-- Upward launch with no horizontal component.
+function AbilityRules.launchVelocity(lift: number): Vec
+	return { x = 0, y = lift, z = 0 }
+end
+
+-- Bubble Dash: horizontal only, along the caster's facing, so it cannot be used to fly.
+function AbilityRules.dashVelocity(look: Vec, speed: number): Vec
+	local dx, dz = look.x, look.z
+	local length = math.sqrt(dx * dx + dz * dz)
+	if length &lt; 1e-6 then
+		return { x = 0, y = 0, z = 0 }
+	end
+	return { x = dx / length * speed, y = 0, z = dz / length * speed }
+end
+
+-- Keeps the strongest slow on a player: the lowest factor wins, and the longest expiry wins.
+-- Re-applying an ability never weakens a slow that is already stronger.
+function AbilityRules.applySlow(statuses: Statuses, userId: number, factor: number, untilAt: number)
+	assert(factor &gt; 0 and factor &lt;= 1, "slow factor must be in (0, 1]")
+	local current = statuses[userId]
+	if current == nil then
+		statuses[userId] = { factor = factor, untilAt = untilAt }
+		return
+	end
+	current.factor = math.min(current.factor, factor)
+	current.untilAt = math.max(current.untilAt, untilAt)
+end
+
+-- The speed multiplier in force right now. 1 means no effect.
+function AbilityRules.speedFactor(statuses: Statuses, userId: number, now: number): number
+	local current = statuses[userId]
+	if current == nil or now &gt;= current.untilAt then
+		return 1
+	end
+	return current.factor
+end
+
+-- Drops every slow that has expired.
+function AbilityRules.prune(statuses: Statuses, now: number)
+	for userId, current in statuses do
+		if now &gt;= current.untilAt then
+			statuses[userId] = nil
+		end
+	end
+end
+
+return AbilityRules
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001080">
           <Properties>
             <string name="Name">ArenaRoute</string>
             <ProtectedString name="Source">--!strict
@@ -42696,7 +43223,7 @@ return ArenaRoute
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001079">
+        <Item class="ModuleScript" referent="RBX001081">
           <Properties>
             <string name="Name">ChaosRules</string>
             <ProtectedString name="Source">--!strict
@@ -42773,7 +43300,172 @@ return table.freeze(ChaosRules)
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001080">
+        <Item class="ModuleScript" referent="RBX001082">
+          <Properties>
+            <string name="Name">CharacterRules</string>
+            <ProtectedString name="Source">--!strict
+-- Pure character state: which character each player holds, how many switches they
+-- have left, and when each character's ability is ready again. No Roblox services.
+--
+-- Rules:
+--   * One active character at a time. Everyone starts a round on Order[1].
+--   * Normal switches: Config.Characters.SwitchesNormal per round, any time in Playing.
+--   * Bonus switch: Config.Characters.SwitchesBonus per round, only while the Chaos Event
+--     is active. Four switches at most in total.
+--   * Cooldowns are stored per player AND per character. A switch never resets or
+--     copies a cooldown, so switching away and back cannot clear one.
+--   * beginRound() clears every cooldown and every switch quota.
+local CharacterRules = {}
+CharacterRules.__index = CharacterRules
+
+export type Options = {
+	phase: string,
+	participating: boolean,
+	chaos: boolean?,
+}
+
+export type Player = {
+	active: string,
+	normalLeft: number,
+	bonusLeft: number,
+	readyAt: { [string]: number },
+}
+
+export type Rules = typeof(setmetatable({} :: {
+	order: { string },
+	roster: { [string]: { Ability: string, Cooldown: number } },
+	normalMax: number,
+	bonusMax: number,
+	players: { [number]: Player },
+}, CharacterRules))
+
+function CharacterRules.new(characters: any): Rules
+	assert(typeof(characters) == "table", "characters config required")
+	assert(#characters.Order == 6, "exactly six characters are required")
+	local seen: { [string]: boolean } = {}
+	for _, key in characters.Order do
+		assert(characters.Roster[key] ~= nil, "missing roster entry: " .. key)
+		assert(not seen[key], "duplicate character: " .. key)
+		seen[key] = true
+		assert(characters.Roster[key].Cooldown &gt; 0, "cooldown must be positive: " .. key)
+	end
+	assert(characters.SwitchesNormal &gt;= 0 and characters.SwitchesBonus &gt;= 0, "switch quotas cannot be negative")
+	return setmetatable({
+		order = characters.Order,
+		roster = characters.Roster,
+		normalMax = characters.SwitchesNormal,
+		bonusMax = characters.SwitchesBonus,
+		players = {},
+	}, CharacterRules) :: any
+end
+
+local function freshPlayer(self: Rules): Player
+	return { active = self.order[1], normalLeft = self.normalMax, bonusLeft = self.bonusMax, readyAt = {} }
+end
+
+-- Starts a new round for these players. Every cooldown and quota is reset here, and
+-- nowhere else, so "cooldowns reset at the next round" has exactly one implementation.
+function CharacterRules.beginRound(self: Rules, userIds: { number })
+	self.players = {}
+	for _, userId in userIds do
+		self.players[userId] = freshPlayer(self)
+	end
+end
+
+-- A player who joins mid-round gets a full quota and fresh cooldowns.
+function CharacterRules.ensure(self: Rules, userId: number): Player
+	local player = self.players[userId]
+	if player == nil then
+		player = freshPlayer(self)
+		self.players[userId] = player
+	end
+	return player
+end
+
+function CharacterRules.clear(self: Rules, userId: number)
+	self.players[userId] = nil
+end
+
+-- Returns (ok, reason). reason is "" on success.
+function CharacterRules.switch(self: Rules, userId: number, slot: any, options: Options): (boolean, string)
+	if options.phase ~= "Playing" then
+		return false, "phase"
+	end
+	if not options.participating then
+		return false, "not-participating"
+	end
+	if typeof(slot) ~= "number" or slot ~= math.floor(slot) or slot &lt; 1 or slot &gt; #self.order then
+		return false, "bad-slot"
+	end
+	local player = CharacterRules.ensure(self, userId)
+	local target = self.order[slot]
+	if target == player.active then
+		return false, "same-character"
+	end
+	local chaos = options.chaos == true
+	if player.normalLeft &gt; 0 then
+		player.normalLeft -= 1
+	elseif player.bonusLeft &gt; 0 and chaos then
+		player.bonusLeft -= 1
+	elseif player.bonusLeft &gt; 0 then
+		return false, "bonus-during-chaos-only"
+	else
+		return false, "no-switches"
+	end
+	player.active = target
+	return true, ""
+end
+
+-- Starts the active character's ability. Returns (ok, reason, abilityKey).
+function CharacterRules.ability(self: Rules, userId: number, now: number, options: Options): (boolean, string, string)
+	if options.phase ~= "Playing" then
+		return false, "phase", ""
+	end
+	if not options.participating then
+		return false, "not-participating", ""
+	end
+	local player = CharacterRules.ensure(self, userId)
+	local ready = player.readyAt[player.active] or 0
+	if now &lt; ready then
+		return false, "cooling", ""
+	end
+	local entry = self.roster[player.active]
+	player.readyAt[player.active] = now + entry.Cooldown
+	return true, "", entry.Ability
+end
+
+-- Seconds until a character's ability is ready again, never negative.
+function CharacterRules.remaining(self: Rules, userId: number, characterId: string, now: number): number
+	local player = self.players[userId]
+	if player == nil then
+		return 0
+	end
+	return math.max(0, (player.readyAt[characterId] or 0) - now)
+end
+
+-- The per-player view the client renders. Cooldowns are sent as server-clock deadlines,
+-- so the client can count down without the server re-sending every second.
+function CharacterRules.view(self: Rules, userId: number, chaos: boolean): { [string]: any }
+	local player = CharacterRules.ensure(self, userId)
+	local readyAt: { [string]: number } = {}
+	for id, value in player.readyAt do
+		readyAt[id] = value
+	end
+	return {
+		active = player.active,
+		normalLeft = player.normalLeft,
+		bonusLeft = if chaos then player.bonusLeft else 0,
+		bonusTotal = self.bonusMax,
+		normalTotal = self.normalMax,
+		readyAt = readyAt,
+	}
+end
+
+return CharacterRules
+</ProtectedString>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="RBX001083">
           <Properties>
             <string name="Name">MovementGuard</string>
             <ProtectedString name="Source">--!strict
@@ -42783,7 +43475,7 @@ local MovementGuard = {}
 MovementGuard.__index = MovementGuard
 
 export type Position = { x: number, y: number, z: number }
-type Track = { position: Position, at: number, unlockAt: number }
+type Track = { position: Position, at: number, unlockAt: number, grantSpeed: number, grantUntil: number }
 type Fields = { tracks: { [number]: Track }, speed: number, slack: number, protection: number }
 export type Guard = typeof(setmetatable({} :: Fields, MovementGuard))
 
@@ -42797,7 +43489,22 @@ function MovementGuard.new(speed: number, slack: number, protection: number): Gu
 end
 
 function MovementGuard.teleport(self: Guard, id: number, position: Position, now: number)
-	self.tracks[id] = { position = position, at = now, unlockAt = now + self.protection }
+	self.tracks[id] = { position = position, at = now, unlockAt = now + self.protection, grantSpeed = 0, grantUntil = 0 }
+end
+
+-- A temporary allowance for movement the server itself caused (an ability push or dash).
+-- It adds `speed` to the horizontal limit until `untilAt`, and nothing more. Without a
+-- grant the check is exactly as strict as before.
+function MovementGuard.grant(self: Guard, id: number, speed: number, untilAt: number, now: number)
+	assert(speed &gt;= 0, "grant speed cannot be negative")
+	local track = self.tracks[id]
+	if track == nil then
+		-- No known position yet: nothing to relax. The caller grants after observing.
+		return false
+	end
+	track.grantSpeed = math.max(if now &lt; track.grantUntil then track.grantSpeed else 0, speed)
+	track.grantUntil = math.max(if now &lt; track.grantUntil then track.grantUntil else 0, untilAt)
+	return true
 end
 
 function MovementGuard.remove(self: Guard, id: number)
@@ -42816,7 +43523,8 @@ function MovementGuard.observe(self: Guard, id: number, position: Position, now:
 	local dt = math.clamp(now - track.at, 0, 1)
 	local dx = position.x - track.position.x
 	local dz = position.z - track.position.z
-	local limit = self.speed * dt + self.slack
+	local bonus = if now &lt; track.grantUntil then track.grantSpeed else 0
+	local limit = (self.speed + bonus) * dt + self.slack
 	if dx * dx + dz * dz &gt; limit * limit then
 		track.at = now
 		track.unlockAt = now + self.protection
@@ -42831,7 +43539,7 @@ return MovementGuard
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001081">
+        <Item class="ModuleScript" referent="RBX001084">
           <Properties>
             <string name="Name">PickupLedger</string>
             <ProtectedString name="Source">--!strict
@@ -42999,7 +43707,7 @@ return PickupLedger
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001082">
+        <Item class="ModuleScript" referent="RBX001085">
           <Properties>
             <string name="Name">RoundMachine</string>
             <ProtectedString name="Source">--!strict
@@ -43669,7 +44377,7 @@ return RoundMachine
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="RBX001083">
+  <Item class="StarterPlayer" referent="RBX001086">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CharacterWalkSpeed">22</float>
@@ -43678,15 +44386,15 @@ return RoundMachine
       <float name="CameraMinZoomDistance">8</float>
       <bool name="CharacterUseJumpPower">true</bool>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="RBX001084">
+    <Item class="StarterPlayerScripts" referent="RBX001087">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="RBX001085">
+      <Item class="Folder" referent="RBX001088">
         <Properties>
           <string name="Name">BrainrotClient</string>
         </Properties>
-        <Item class="ModuleScript" referent="RBX001086">
+        <Item class="ModuleScript" referent="RBX001089">
           <Properties>
             <string name="Name">Audio</string>
             <ProtectedString name="Source">--!strict
@@ -43824,7 +44532,7 @@ return Audio
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001087">
+        <Item class="ModuleScript" referent="RBX001090">
           <Properties>
             <string name="Name">Collection</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44152,7 +44860,7 @@ return Collection
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001088">
+        <Item class="ModuleScript" referent="RBX001091">
           <Properties>
             <string name="Name">CreatureData</string>
             <ProtectedString name="Source">--!nocheck
@@ -44366,7 +45074,7 @@ return {
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001089">
+        <Item class="ModuleScript" referent="RBX001092">
           <Properties>
             <string name="Name">Creatures</string>
             <ProtectedString name="Source">--!nonstrict
@@ -44711,7 +45419,7 @@ return Creatures
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001090">
+        <Item class="ModuleScript" referent="RBX001093">
           <Properties>
             <string name="Name">Effects</string>
             <ProtectedString name="Source">--!nonstrict
@@ -45068,7 +45776,7 @@ return Effects
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001091">
+        <Item class="ModuleScript" referent="RBX001094">
           <Properties>
             <string name="Name">Hud</string>
             <ProtectedString name="Source">--!nonstrict
@@ -45079,6 +45787,8 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Species = require(ReplicatedStorage:WaitForChild("BrainrotShared"):WaitForChild("Creatures"))
 local Kit = require(script.Parent.Kit)
 local Theme = require(script.Parent.Theme)
 local Panels = require(script.Parent.Panels)
@@ -45087,6 +45797,12 @@ local Collection = require(script.Parent.Collection)
 local CreatureData = require(script.Parent.CreatureData)
 local Hud = {}
 Hud.__index = Hud
+
+-- Number keys 1-6 select the character in that slot.
+local KEY_SLOTS = {
+	[Enum.KeyCode.One] = 1, [Enum.KeyCode.Two] = 2, [Enum.KeyCode.Three] = 3,
+	[Enum.KeyCode.Four] = 4, [Enum.KeyCode.Five] = 5, [Enum.KeyCode.Six] = 6,
+}
 
 local C, Type, Space, Motion, Copy = Theme.Colors, Theme.Type, Theme.Space, Theme.Motion, Theme.Copy
 
@@ -45122,7 +45838,7 @@ local function eventLabel(kind)
 	return EVENT_LABEL[kind] or string.upper(kind)
 end
 
-function Hud.new(config, request)
+function Hud.new(config, request, actions)
 	local self = setmetatable({}, Hud)
 	self.config, self.request = config, request
 	self.soundOn, self.reducedMotion = true, false
@@ -45172,6 +45888,15 @@ function Hud.new(config, request)
 	-- The only offensive verb in the game. It sends a whitelisted request with no
 	-- arguments; the server decides who is in range and what (if anything) moves.
 	self.steal = Panels.stealPanel(self.root, function() self:requestSteal() end)
+
+	-- ---- characters: ability button and the six-slot strip ------------------
+	-- Each verb sends its own validated remote. The server owns every answer; the client
+	-- only shows the view it was last sent.
+	self.verbs = actions or {}
+	self.character = nil
+	self.ability = Panels.abilityPanel(self.root, function() self:requestAbility() end)
+	self.strip = Panels.characterStrip(self.root, function(slot) self:requestSwitch(slot) end,
+		#config.Characters.Order)
 
 	-- ---- stage chip (left, under the cells) --------------------------------
 	self.stageChip = Kit.panel(self.root, "StageChip", UDim2.fromOffset(196, 28), UDim2.fromOffset(Space.xl, 136), {
@@ -45296,6 +46021,10 @@ function Hud.new(config, request)
 			self:showModal("Shop")
 		elseif input.KeyCode == Enum.KeyCode.E then
 			self:requestSteal()
+		elseif input.KeyCode == Enum.KeyCode.Q then
+			self:requestAbility()
+		elseif KEY_SLOTS[input.KeyCode] then
+			self:requestSwitch(KEY_SLOTS[input.KeyCode])
 		end
 	end))
 	table.insert(self.connections, self.root:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -45453,6 +46182,32 @@ function Hud:resize()
 	self.steal.caption.TextSize = Type.Micro
 	self.steal.carried.TextSize = if compact then Type.Micro else Type.Label
 	self.steal.banked.Visible = not compact
+
+	-- Ability button sits beside the steal button, on the side away from the screen edge
+	-- the steal button is not on. The strip sits above the steal readout.
+	local stealWidth = if compact then 150 else 186
+	local abilityWidth = if compact then 118 else 150
+	if short then
+		self.ability.root.AnchorPoint = Vector2.new(0, 0)
+		self.ability.root.Position = UDim2.fromOffset(Space.md + stealWidth + Space.sm, height - stealLift - 52)
+	else
+		self.ability.root.AnchorPoint = Vector2.new(1, 0)
+		self.ability.root.Position = UDim2.new(1, -Space.md - stealWidth - Space.sm, 1, -stealLift - 52)
+	end
+	self.ability.root.Size = UDim2.fromOffset(abilityWidth, 52)
+	self.ability.button.Size = self.ability.root.Size
+	self.ability.label.TextSize = if compact then 12 else Type.Heading
+	self.ability.caption.TextSize = Type.Micro
+
+	local stripTop = -stealLift - 52 - 74
+	self.strip.root.Size = UDim2.fromOffset(6 * 32 + 5 * 4, 46)
+	if short then
+		self.strip.root.AnchorPoint = Vector2.new(0, 0)
+		self.strip.root.Position = UDim2.fromOffset(Space.md, height + stripTop)
+	else
+		self.strip.root.AnchorPoint = Vector2.new(1, 0)
+		self.strip.root.Position = UDim2.new(1, -Space.md, 1, stripTop)
+	end
 
 	-- Stage chip: desktop only, under the cell counter and above the help chip. On
 	-- phones the stage is named by the clock header instead, which keeps the top of
@@ -45711,6 +46466,7 @@ function Hud:tick()
 	end
 	self.collection:step(now, self.reducedMotion)
 	self:refreshSteal()
+	self:refreshCharacters()
 end
 
 -- --------------------------------------------------------------------------- #
@@ -45754,6 +46510,77 @@ end
 
 -- The steal request carries no target, no distance and no value: the server
 -- resolves everything from its own state.
+-- Server view for this player's characters. A notice from the server is shown as a toast.
+function Hud:setCharacters(view)
+	self.character = view
+	if view.notice and view.notice ~= "" then
+		self:notice(view.notice, C.Cyan)
+	end
+	self:refreshCharacters()
+end
+
+function Hud:refreshCharacters()
+	local view = self.character
+	if not view or not self.config or not self.config.Characters then return end
+	local now = Workspace:GetServerTimeNow()
+	local active = view.active
+	local entry = self.config.Characters.Roster[active]
+	local ready = (view.readyAt and view.readyAt[active]) or 0
+	local remaining = math.max(0, ready - now)
+	local span = entry.Cooldown
+
+	local playing = self.state ~= nil and self.state.phase == "Playing"
+	self.ability.label.Text = entry.Title
+	if remaining &gt; 0 then
+		self.ability.caption.Text = string.format("RECHARGING %ds", math.ceil(remaining))
+		self.ability.caption.TextColor3 = C.Muted
+	elseif playing then
+		self.ability.caption.Text = "Q • READY"
+		self.ability.caption.TextColor3 = C.Cyan
+	else
+		self.ability.caption.Text = "WAITING FOR PLAY"
+		self.ability.caption.TextColor3 = C.Muted
+	end
+	self.ability.veil.Size = UDim2.fromScale(math.clamp(remaining / span, 0, 1), 1)
+
+	local left = (view.normalLeft or 0) + (view.bonusLeft or 0)
+	self.strip.readout.Text = string.format("%s • %d SWITCH%s LEFT", Species.Characters[active].Label,
+		left, if left == 1 then "" else "ES")
+	for slot, chip in self.strip.chips do
+		local isActive = self.config.Characters.Order[slot] == active
+		chip.BackgroundColor3 = if isActive then C.Cyan else C.NavyRaised
+		chip.Label.TextColor3 = if isActive then C.Void else C.White
+	end
+end
+
+function Hud:requestAbility()
+	if self.modal.Visible or self.collection:isVisible() then return end
+	local view = self.character
+	if not self.state or self.state.phase ~= "Playing" then
+		self:notice("ABILITIES ARE LIVE DURING PLAY", C.Muted)
+		return
+	end
+	if view then
+		local ready = (view.readyAt and view.readyAt[view.active]) or 0
+		local remaining = ready - Workspace:GetServerTimeNow()
+		if remaining &gt; 0 then
+			self:notice(string.format("RECHARGING %ds", math.ceil(remaining)), C.Muted)
+			return
+		end
+	end
+	if self.verbs.ability then self.verbs.ability() end
+end
+
+function Hud:requestSwitch(slot)
+	if self.modal.Visible or self.collection:isVisible() then return end
+	if not self.state or self.state.phase ~= "Playing" then
+		self:notice("CHARACTERS ARE LIVE DURING PLAY", C.Muted)
+		return
+	end
+	if self.character and self.config.Characters.Order[slot] == self.character.active then return end
+	if self.verbs.switch then self.verbs.switch(slot) end
+end
+
 function Hud:requestSteal()
 	if self.modal.Visible or self.collection:isVisible() then
 		return
@@ -45892,7 +46719,7 @@ return Hud
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001092">
+        <Item class="ModuleScript" referent="RBX001095">
           <Properties>
             <string name="Name">Iconography</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46021,7 +46848,7 @@ return Iconography
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001093">
+        <Item class="ModuleScript" referent="RBX001096">
           <Properties>
             <string name="Name">Kit</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46321,7 +47148,7 @@ return Kit
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="RBX001094">
+        <Item class="LocalScript" referent="RBX001097">
           <Properties>
             <string name="Name">Main</string>
             <ProtectedString name="Source">--!strict
@@ -46337,12 +47164,23 @@ local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes")
 local stateRemote = remotes:WaitForChild("State") :: RemoteEvent
 local pickupRemote = remotes:WaitForChild("Pickup") :: RemoteEvent
 local requestRemote = remotes:WaitForChild("Request") :: RemoteEvent
+local abilityRemote = remotes:WaitForChild("Ability") :: RemoteEvent
+local characterRemote = remotes:WaitForChild("Character") :: RemoteEvent
+local characterStateRemote = remotes:WaitForChild("CharacterState") :: RemoteEvent
 
 -- Loaded before the HUD so rarity glyphs exist on the first frame.
 local _iconography = Iconography
 local hud = Hud.new(Config, function(action: string)
 	requestRemote:FireServer(action)
-end)
+end, {
+	-- Each verb has its own remote. Neither sends an effect, a target or a cell.
+	ability = function()
+		abilityRemote:FireServer()
+	end,
+	switch = function(slot: number)
+		characterRemote:FireServer(slot)
+	end,
+})
 local effects = Effects.new(hud, Config)
 local audio = Audio.new(Config)
 local connections: { RBXScriptConnection } = {}
@@ -46352,6 +47190,9 @@ table.insert(connections, stateRemote.OnClientEvent:Connect(function(state, noti
 	effects:update(state)
 	audio:setState(state)
 	if typeof(notice) == "string" then hud:notice(notice) end
+end))
+table.insert(connections, characterStateRemote.OnClientEvent:Connect(function(view)
+	hud:setCharacters(view)
 end))
 table.insert(connections, pickupRemote.OnClientEvent:Connect(function(receipt)
 	effects:pickup(receipt)
@@ -46390,7 +47231,7 @@ end)
             <bool name="Disabled">false</bool>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001095">
+        <Item class="ModuleScript" referent="RBX001098">
           <Properties>
             <string name="Name">Panels</string>
             <ProtectedString name="Source">--!nonstrict
@@ -46759,6 +47600,65 @@ end
 -- --------------------------------------------------------------------------- #
 -- Centre toast + event banner + lobby banner
 -- --------------------------------------------------------------------------- #
+-- The ability button. Q on a keyboard, or this button on a touch screen. The cooldown
+-- veil drains left to right, the same way the steal veil does.
+function Panels.abilityPanel(parent, onUse)
+	local root = Kit.instance("Frame", {
+		Name = "AbilityPanel",
+		Size = UDim2.fromOffset(150, 52),
+		Position = UDim2.new(1, -Space.lg, 1, -Space.lg - 52),
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+	local button = Kit.button(root, "AbilityButton", "", UDim2.fromOffset(150, 52), UDim2.fromOffset(0, 0),
+		function() onUse() end, { accent = C.Violet, zIndex = 4, color = C.NavyRaised })
+	glyph(button, "bolt", C.Violet, 20).Position = UDim2.fromOffset(12, 16)
+	local label = Kit.text(button, "Title", "ABILITY", "Heading", {
+		size = UDim2.new(1, -44, 0, 20), position = UDim2.fromOffset(38, 7),
+		color = C.White, zIndex = 5, truncate = true,
+	})
+	local caption = Kit.text(button, "Caption", "Q • READY", "Micro", {
+		size = UDim2.new(1, -44, 0, 12), position = UDim2.fromOffset(38, 28),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	local veil = Kit.instance("Frame", {
+		Name = "Cooldown",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = C.Void,
+		BackgroundTransparency = .45,
+		BorderSizePixel = 0,
+		ZIndex = 6,
+	}, button)
+	Kit.corner(veil, 12)
+	return { root = root, button = button, label = label, caption = caption, veil = veil }
+end
+
+-- Six numbered chips, one per character in slot order, with the active one lit. Keys 1-6
+-- or a tap both switch. The readout names the active character and the switches left.
+function Panels.characterStrip(parent, onPick, count)
+	local root = Kit.instance("Frame", {
+		Name = "CharacterStrip",
+		Size = UDim2.fromOffset(6 * 32 + 5 * 4, 46),
+		Position = UDim2.fromOffset(0, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+	local readout = Kit.text(root, "Readout", "", "Micro", {
+		size = UDim2.new(1, 0, 0, 14), position = UDim2.fromOffset(0, 0),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	local chips = {}
+	for slot = 1, count do
+		local chip = Kit.button(root, "Slot" .. slot, tostring(slot), UDim2.fromOffset(32, 28),
+			UDim2.fromOffset((slot - 1) * 36, 18), function() onPick(slot) end,
+			{ accent = C.Cyan, zIndex = 5, color = C.NavyRaised })
+		chip.Label.TextSize = Type.Label
+		chips[slot] = chip
+	end
+	return { root = root, readout = readout, chips = chips }
+end
+
 function Panels.toast(parent)
 	local toast = Kit.panel(parent, "Toast", UDim2.fromOffset(432, 56), UDim2.new(.5, 0, 0, 112), {
 		anchor = Vector2.new(.5, 0), zIndex = 6, visible = false,
@@ -46820,7 +47720,7 @@ return Panels
 </ProtectedString>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="RBX001096">
+        <Item class="ModuleScript" referent="RBX001099">
           <Properties>
             <string name="Name">Theme</string>
             <ProtectedString name="Source">--!nocheck
@@ -47012,7 +47912,7 @@ return {
       </Item>
     </Item>
   </Item>
-  <Item class="Lighting" referent="RBX001097">
+  <Item class="Lighting" referent="RBX001100">
     <Properties>
       <string name="Name">Lighting</string>
       <float name="Brightness">2.2</float>
@@ -47051,7 +47951,7 @@ return {
       <float name="FogStart">260</float>
       <float name="FogEnd">1150</float>
     </Properties>
-    <Item class="Sky" referent="RBX001098">
+    <Item class="Sky" referent="RBX001101">
       <Properties>
         <string name="Name">TropicalDaySky</string>
         <Content name="SkyboxBk">
@@ -47078,7 +47978,7 @@ return {
         <float name="StarCount">0</float>
       </Properties>
     </Item>
-    <Item class="Atmosphere" referent="RBX001099">
+    <Item class="Atmosphere" referent="RBX001102">
       <Properties>
         <string name="Name">CoastalHaze</string>
         <float name="Density">0.32</float>
@@ -47097,7 +47997,7 @@ return {
         <float name="Glare">0.08</float>
       </Properties>
     </Item>
-    <Item class="BloomEffect" referent="RBX001100">
+    <Item class="BloomEffect" referent="RBX001103">
       <Properties>
         <string name="Name">GameplayBloom</string>
         <float name="Intensity">0.22</float>
@@ -47105,7 +48005,7 @@ return {
         <float name="Threshold">1.45</float>
       </Properties>
     </Item>
-    <Item class="ColorCorrectionEffect" referent="RBX001101">
+    <Item class="ColorCorrectionEffect" referent="RBX001104">
       <Properties>
         <string name="Name">NeutralGrade</string>
         <float name="Saturation">0.06</float>
@@ -47119,14 +48019,14 @@ return {
       </Properties>
     </Item>
   </Item>
-  <Item class="Players" referent="RBX001102">
+  <Item class="Players" referent="RBX001105">
     <Properties>
       <string name="Name">Players</string>
       <float name="RespawnTime">2</float>
       <bool name="CharacterAutoLoads">true</bool>
     </Properties>
   </Item>
-  <Item class="SoundService" referent="RBX001103">
+  <Item class="SoundService" referent="RBX001106">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>

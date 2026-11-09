@@ -24,6 +24,9 @@ ServerScriptService/BrainrotServer
   core/PickupLedger                    pure atomic ownership / respawn generations
   core/MovementGuard                   pure basic horizontal movement sanity layer
   core/ChaosRules                      pure per-kind Chaos modifiers (gravity, friction, jump, rarity, respawn)
+  core/CharacterRules                  pure switching quota, Chaos-only bonus, cooldowns per character
+  core/AbilityRules                    pure target selection, knockback/dash/launch vectors, slow statuses
+  AbilityService                       adapter: turns ability decisions into velocities, walk speeds, a decoy
   EventDirector                        applies gravity and surface friction from the live
                                        Chaos modifiers, adopts new surfaces while friction
                                        is on, restores everything; never decides *when* or *which*
@@ -64,6 +67,8 @@ There is **no client pickup or score-submission remote**. The server owns slot p
 A short spawn/correction protection interval prevents arrival-time rewards. A horizontal displacement sanity check rejects extreme teleports and corrects the server root position; vertical jumps remain unrestricted for low gravity. This is a useful prototype safeguard, **not** a complete anti-cheat solution for a competitive public launch. Roblox character positions are still influenced by client network ownership.
 
 `Request` accepts only a string `"Snapshot"`, `"Halo"` or `"Steal"` with **zero additional arguments**. It rate-limits requests by player/action (1 second / 0.75 seconds / 8 seconds respectively). The client never supplies a price, amount, pickup ID, position *or a steal target*. Halo balance, ownership and equip decisions live in the round machine; a purchase is charged once, and subsequent requests toggle equip state.
+
+`Ability` (no arguments, 0.25 s rate limit) and `Character` (one integer slot 1–6, 0.25 s rate limit) are separate remotes. The server answers both, and the `CharacterState` remote, with the player's character view: active character, switches left, per-character ready times, and the last refusal notice. Ability targets are every participating rival in range, chosen by the server. The caster is never a target. Abilities never change a score, a carried cell or a banked cell. Dash and knockback movement is granted to `MovementGuard` for its exact duration only. Cooldowns live in `CharacterRules` per player and per character. They persist across switches and reset at the next round. See [PHASE_CHARACTERS_ABILITIES.md](PHASE_CHARACTERS_ABILITIES.md).
 
 `Steal` is resolved entirely on the server: the adapter finds the nearest participating
 player using the server's own `HumanoidRootPart` positions, then asks

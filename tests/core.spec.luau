@@ -18,6 +18,9 @@ end
 local function throws(fn)
 	eq(pcall(fn), false)
 end
+local function near(a, b)
+	assert(math.abs(a - b) < 1e-6, tostring(a) .. " is not " .. tostring(b))
+end
 -- Deterministic chooser: always draws the first kind (LowGravity) unless told otherwise.
 local function first() return 1 end
 local function machine(choose)
@@ -813,6 +816,232 @@ test("audio: shipped configuration invents no asset IDs and every slot is docume
 		eq(id, "")
 	end
 	for _, name in {"Lobby", "Arena", "Chaos"} do assert(A.Tracks[name] ~= nil, "missing track " .. name) end
+end)
+
+-- ---- characters and abilities ---------------------------------------------
+local CharacterRules = require("../src/server/core/CharacterRules")
+local AbilityRules = require("../src/server/core/AbilityRules")
+local MG = require("../src/server/core/MovementGuard")
+local C = Config.Characters
+local function fresh(userId)
+	local rules = CharacterRules.new(C)
+	CharacterRules.beginRound(rules, { userId })
+	return rules
+end
+local PLAY = { phase = "Playing", participating = true, chaos = false }
+local CHAOS = { phase = "Playing", participating = true, chaos = true }
+
+test("character: the roster is exactly six characters, each with a unique ability", function()
+	eq(#C.Order, 6)
+	local abilities = {}
+	for _, key in C.Order do
+		local entry = C.Roster[key]
+		assert(entry ~= nil and entry.Cooldown > 0, "every character has a cooldown: " .. key)
+		assert(not abilities[entry.Ability], "duplicate ability " .. entry.Ability)
+		abilities[entry.Ability] = true
+	end
+	for _, name in {"MindTrick","BellyBounce","BubbleDash","HonkWave","ToastLaunch","SockSnare"} do
+		assert(abilities[name], "missing ability " .. name)
+	end
+end)
+
+test("character: construction rejects a bad roster", function()
+	local bad = table.clone(C); bad.Order = { "brain", "frog" }
+	throws(function() CharacterRules.new(bad) end)
+	local dup = table.clone(C); dup.Order = { "brain","brain","fish","goose","toast","sock" }
+	throws(function() CharacterRules.new(dup) end)
+end)
+
+test("character: everyone starts on the first character with the full quota", function()
+	local r = fresh(1)
+	local v = CharacterRules.view(r, 1, false)
+	eq(v.active, "brain"); eq(v.normalLeft, 3); eq(v.bonusLeft, 0)
+	eq(CharacterRules.view(r, 1, true).bonusLeft, 1)
+end)
+
+test("character: three normal switches are allowed, then the fourth is refused outside Chaos", function()
+	local r = fresh(1)
+	local ok1 = CharacterRules.switch(r, 1, 2, PLAY); eq(ok1, true)
+	eq(CharacterRules.switch(r, 1, 3, PLAY), true)
+	eq(CharacterRules.switch(r, 1, 4, PLAY), true)
+	local ok, reason = CharacterRules.switch(r, 1, 5, PLAY)
+	eq(ok, false); eq(reason, "bonus-during-chaos-only")
+end)
+
+test("character: the bonus switch works only during Chaos, and four switches is the maximum", function()
+	local r = fresh(1)
+	for slot = 2, 4 do CharacterRules.switch(r, 1, slot, PLAY) end
+	local _, reason = CharacterRules.switch(r, 1, 5, PLAY); eq(reason, "bonus-during-chaos-only")
+	eq(CharacterRules.switch(r, 1, 5, CHAOS), true)           -- the one bonus switch
+	local ok, why = CharacterRules.switch(r, 1, 6, CHAOS)
+	eq(ok, false); eq(why, "no-switches")                     -- fifth switch: never
+end)
+
+test("character: the bonus is kept for Chaos, so normal switches never consume it", function()
+	local r = fresh(1)
+	for slot = 2, 4 do CharacterRules.switch(r, 1, slot, PLAY) end        -- all three normal switches
+	local ok, why = CharacterRules.switch(r, 1, 1, PLAY)                    -- outside Chaos: refused
+	eq(ok, false); eq(why, "bonus-during-chaos-only")
+	eq(CharacterRules.view(r, 1, true).bonusLeft, 1)                        -- still untouched
+	eq(CharacterRules.switch(r, 1, 1, CHAOS), true)                         -- usable once Chaos starts
+end)
+
+test("character: switches are refused outside Playing or for a non-participant, and do not spend a switch", function()
+	local r = fresh(1)
+	local _, why1 = CharacterRules.switch(r, 1, 2, { phase = "Intermission", participating = true }); eq(why1, "phase")
+	local _, why2 = CharacterRules.switch(r, 1, 2, { phase = "Results", participating = true }); eq(why2, "phase")
+	local _, why3 = CharacterRules.switch(r, 1, 2, { phase = "Playing", participating = false }); eq(why3, "not-participating")
+	eq(CharacterRules.view(r, 1, false).normalLeft, 3)
+end)
+
+test("character: bad slots are refused and never spend a switch", function()
+	local r = fresh(1)
+	for _, bad in {0, 7, 1.5, -1, 0/0, math.huge, "2", true} do
+		local ok, reason = CharacterRules.switch(r, 1, bad, PLAY)
+		eq(ok, false); eq(reason, "bad-slot")
+	end
+	eq(CharacterRules.view(r, 1, false).normalLeft, 3)
+end)
+
+test("character: re-selecting the active character is refused and spends nothing", function()
+	local r = fresh(1)
+	local ok, reason = CharacterRules.switch(r, 1, 1, PLAY)
+	eq(ok, false); eq(reason, "same-character")
+	eq(CharacterRules.view(r, 1, false).normalLeft, 3)
+end)
+
+test("character: an ability starts the active character's cooldown and is refused while cooling", function()
+	local r = fresh(1)
+	local ok, why, key = CharacterRules.ability(r, 1, 100, PLAY); eq(ok, true); eq(key, "MindTrick")
+	local ok2, why2 = CharacterRules.ability(r, 1, 100 + C.Roster.brain.Cooldown - .1, PLAY)
+	eq(ok2, false); eq(why2, "cooling")
+	eq(CharacterRules.ability(r, 1, 100 + C.Roster.brain.Cooldown, PLAY), true)
+end)
+
+test("character: cooldowns are independent per character", function()
+	local r = fresh(1)
+	CharacterRules.ability(r, 1, 100, PLAY)                       -- Brainy: 20 s
+	CharacterRules.switch(r, 1, 2, PLAY)                          -- Blorbo
+	eq(CharacterRules.ability(r, 1, 100, PLAY), true)             -- Blorbo is ready at once
+	eq(CharacterRules.remaining(r, 1, "brain", 101) > 18, true)
+end)
+
+test("character: cooldowns persist across switches within a round, both ways", function()
+	local r = fresh(1)
+	CharacterRules.ability(r, 1, 100, PLAY)                       -- Brainy cools for 20 s
+	local before = CharacterRules.remaining(r, 1, "brain", 105)
+	CharacterRules.switch(r, 1, 3, PLAY)                          -- away
+	CharacterRules.switch(r, 1, 1, PLAY)                          -- and straight back
+	eq(CharacterRules.remaining(r, 1, "brain", 105), before)      -- switching cleared nothing
+	local ok, why = CharacterRules.ability(r, 1, 105, PLAY)
+	eq(ok, false); eq(why, "cooling")
+end)
+
+test("character: beginRound resets every cooldown and every quota", function()
+	local r = fresh(1)
+	CharacterRules.ability(r, 1, 100, PLAY)
+	CharacterRules.switch(r, 1, 2, PLAY); CharacterRules.switch(r, 1, 3, PLAY)
+	CharacterRules.beginRound(r, { 1 })
+	eq(CharacterRules.ability(r, 1, 100, PLAY), true)
+	local v = CharacterRules.view(r, 1, false)
+	eq(v.active, "brain"); eq(v.normalLeft, 3)
+end)
+
+test("character: abilities are refused outside Playing and for non-participants", function()
+	local r = fresh(1)
+	local ok1, w1 = CharacterRules.ability(r, 1, 100, { phase = "Intermission", participating = true }); eq(ok1, false); eq(w1, "phase")
+	local ok2, w2 = CharacterRules.ability(r, 1, 100, { phase = "Playing", participating = false }); eq(ok2, false); eq(w2, "not-participating")
+	eq(CharacterRules.remaining(r, 1, "brain", 100), 0)           -- a refused ability starts no cooldown
+end)
+
+test("character: a mid-round joiner gets a full quota; the view is a copy, not the live state", function()
+	local r = fresh(1)
+	local late = CharacterRules.ensure(r, 99)
+	eq(late.active, "brain"); eq(late.normalLeft, 3)
+	local v = CharacterRules.view(r, 1, false)
+	v.readyAt.brain = 9999
+	eq(CharacterRules.remaining(r, 1, "brain", 0), 0)
+end)
+
+test("ability: targets are every opponent inside the radius, nearest first, and never the caster", function()
+	local origin = { x = 0, y = 0, z = 0 }
+	local cands = {
+		{ userId = 1, position = origin },                     -- the caster, standing on the spot
+		{ userId = 2, position = { x = 3, y = 0, z = 0 } },
+		{ userId = 3, position = { x = 0, y = 0, z = 9.9 } },
+		{ userId = 4, position = { x = 30, y = 0, z = 0 } },   -- out of range
+	}
+	local hits = AbilityRules.targetsIn(origin, cands, 10, 1)
+	eq(#hits, 2); eq(hits[1].userId, 2); eq(hits[2].userId, 3)
+	-- The radius is inclusive at its edge.
+	eq(#AbilityRules.targetsIn(origin, { { userId = 5, position = { x = 10, y = 0, z = 0 } } }, 10, 1), 1)
+	-- The caster is never hit, even when alone.
+	eq(#AbilityRules.targetsIn(origin, { { userId = 1, position = origin } }, 10, 1), 0)
+end)
+
+test("ability: knockback pushes away with the given strength and a lift, and a launch has no sideways part", function()
+	local dir = AbilityRules.horizontalDirection({ x = 0, y = 0, z = 0 }, { x = 3, y = 0, z = 4 }, { x = 0, y = 0, z = 1 })
+	near(dir.x * dir.x + dir.z * dir.z, 1)
+	local v = AbilityRules.knockbackVelocity(dir, 55, 18)
+	near(math.sqrt(v.x * v.x + v.z * v.z), 55)
+	eq(v.y, 18)
+	local up = AbilityRules.launchVelocity(60)
+	eq(up.x, 0); eq(up.z, 0); eq(up.y, 60)
+end)
+
+test("ability: a victim standing exactly on the caster gets the fallback direction, never NaN", function()
+	local dir = AbilityRules.horizontalDirection({ x = 1, y = 0, z = 1 }, { x = 1, y = 0, z = 1 }, { x = 0, y = 0, z = -1 })
+	eq(dir.x, 0); eq(dir.z, -1)
+	local none = AbilityRules.horizontalDirection({ x = 1, y = 0, z = 1 }, { x = 1, y = 0, z = 1 }, { x = 0, y = 0, z = 0 })
+	eq(none.z, 1)
+end)
+
+test("ability: Bubble Dash is horizontal, at the dash speed, and zero for a degenerate facing", function()
+	local v = AbilityRules.dashVelocity({ x = 0, y = -.9, z = 2 }, 70)
+	eq(v.y, 0); near(math.sqrt(v.x * v.x + v.z * v.z), 70)
+	local zero = AbilityRules.dashVelocity({ x = 0, y = 1, z = 0 }, 70)
+	eq(zero.x, 0); eq(zero.z, 0)
+end)
+
+test("ability: slows keep the strongest factor and the longest expiry, and expire exactly on time", function()
+	local statuses = {}
+	AbilityRules.applySlow(statuses, 7, .5, 10)
+	AbilityRules.applySlow(statuses, 7, .4, 8)     -- stronger but shorter: factor wins, expiry stays 10
+	AbilityRules.applySlow(statuses, 7, .9, 12)    -- weaker but longer: expiry extends, factor stays .4
+	eq(AbilityRules.speedFactor(statuses, 7, 9), .4)
+	eq(AbilityRules.speedFactor(statuses, 7, 11.99), .4)
+	eq(AbilityRules.speedFactor(statuses, 7, 12), 1)
+	AbilityRules.prune(statuses, 12)
+	eq(statuses[7], nil)
+	throws(function() AbilityRules.applySlow(statuses, 7, 0, 5) end)
+	throws(function() AbilityRules.applySlow(statuses, 7, 1.5, 5) end)
+end)
+
+test("movement: a server-caused push is refused without a grant, allowed with one, and strict again after it expires", function()
+	-- observe() returns (allowed, correction). A correction means the server pulled the player back.
+	local strict = MG.new(Config.MaxHorizontalSpeed, Config.MovementSlack, 0)
+	strict:teleport(1, { x = 0, y = 0, z = 0 }, 0)
+	local _, correction = strict:observe(1, { x = 20, y = 0, z = 0 }, .1)   -- limit 65*.1+9 = 15.5
+	assert(correction ~= nil, "20 studs in .1 s must be corrected without a grant")
+
+	local granted = MG.new(Config.MaxHorizontalSpeed, Config.MovementSlack, 0)
+	granted:teleport(1, { x = 0, y = 0, z = 0 }, 0)
+	eq(granted:grant(1, 70 + C.MovementMargin, 1, 0), true)                 -- a dash lasting until t=1
+	local _, none = granted:observe(1, { x = 20, y = 0, z = 0 }, .1)        -- limit (65+78)*.1+9 = 23.3
+	eq(none, nil)
+
+	local expired = MG.new(Config.MaxHorizontalSpeed, Config.MovementSlack, 0)
+	expired:teleport(1, { x = 0, y = 0, z = 0 }, 0)
+	expired:grant(1, 70 + C.MovementMargin, 1, 0)
+	local _, inside = expired:observe(1, { x = 0, y = 0, z = 0 }, .9)       -- still granted
+	eq(inside, nil)
+	local _, after = expired:observe(1, { x = 20, y = 0, z = 0 }, 1.05)     -- dt .15: strict limit 18.75
+	assert(after ~= nil, "after the grant ends the strict limit applies again")
+end)
+
+test("movement: a grant for an unknown player does nothing", function()
+	local g = MG.new(Config.MaxHorizontalSpeed, Config.MovementSlack, Config.SpawnProtection)
+	eq(g:grant(42, 90, 5, 0), false)
 end)
 
 print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))
