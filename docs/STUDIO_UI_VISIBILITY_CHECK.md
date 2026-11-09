@@ -17,9 +17,28 @@ UI. Re-download this branch and open the file from `places/`.
 
 1. Open the place, then press **F5** (or Play).
 2. Open **View → Output** and clear it.
-3. Look for these lines, each prefixed `[Brainrot]`:
-   - `[Brainrot] HUD built`: the client UI was constructed.
-   - `[Brainrot] intermission • round …` and similar: the server loop is running.
+3. Look for these lines, in this order. They are temporary startup diagnostics. Each line names the
+   last step that ran:
+
+   Server (from the `Script` in ServerScriptService):
+   - `[Brainrot][server] script started`
+   - `[Brainrot][server] remotes published`
+   - `[Brainrot][server] modules required`
+   - `[Brainrot][server] world ready`
+   - `[Brainrot][server] persistence ready`
+
+   Client (from the `LocalScript` in StarterPlayerScripts):
+   - `[Brainrot][client] LocalScript started`
+   - `[Brainrot][client] modules required`
+   - `[Brainrot][client] waiting for BrainrotRemotes`
+   - `[Brainrot][client] remotes found; building HUD`
+   - `[Brainrot][client] HUD built`
+
+   **The first line that is missing tells us where startup stopped.** For example, if the client prints
+   `waiting for BrainrotRemotes` but never `remotes found`, the server did not publish the remotes; look for
+   the red server error above it. If the client never prints `LocalScript started`, the LocalScript did not
+   run at all.
+
 4. Note every **red** error and every **yellow** warning, with its file and line.
 
 ## 3. What the player should see

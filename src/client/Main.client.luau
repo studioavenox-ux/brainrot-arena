@@ -1,4 +1,6 @@
 --!strict
+-- TEMPORARY startup diagnostics ([Brainrot][client] lines): remove after Studio verification.
+print("[Brainrot][client] LocalScript started")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9,6 +11,7 @@ local Iconography = require(script.Parent.Iconography)
 local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
 local Audio = require(script.Parent.Audio)
+print("[Brainrot][client] modules required")
 
 -- A startup failure must be visible in Play mode, not silent. The player sees this panel,
 -- and the same text goes to Output as a warning.
@@ -34,6 +37,7 @@ end
 
 -- Bounded waits: a missing server piece becomes a visible message, not a silent hang.
 local WAIT_SECONDS = 15
+print("[Brainrot][client] waiting for BrainrotRemotes")
 local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes", WAIT_SECONDS)
 if not remotes then
 	showStartupError("The server did not publish BrainrotRemotes within " .. WAIT_SECONDS .. " seconds. Check the server Output for an error.")
@@ -59,6 +63,7 @@ local ability: RemoteEvent = abilityRemote :: RemoteEvent
 local character: RemoteEvent = characterRemote :: RemoteEvent
 local characterState: RemoteEvent = characterStateRemote :: RemoteEvent
 
+print("[Brainrot][client] remotes found; building HUD")
 local okHud, hud = pcall(function()
 	return Hud.new(Config, function(action: string)
 		request:FireServer(action)

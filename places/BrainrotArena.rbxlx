@@ -40508,6 +40508,8 @@ return EventDirector
         <Properties>
           <string name="Name">Main</string>
           <ProtectedString name="Source">--!strict
+-- TEMPORARY startup diagnostics ([Brainrot][server] lines): remove after Studio verification.
+print("[Brainrot][server] script started")
 -- Roblox adapter. Only this server script can award cells, pay coins, or unlock cosmetics.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -40539,6 +40541,7 @@ local characterStateRemote = Instance.new("RemoteEvent")
 characterStateRemote.Name = "CharacterState"
 characterStateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
+print("[Brainrot][server] remotes published")
 
 local Shared = ReplicatedStorage:WaitForChild("BrainrotShared")
 local Config = require(Shared:WaitForChild("Config"))
@@ -40555,6 +40558,7 @@ local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
 local CharacterRules = require(script.Parent.core.CharacterRules)
 local AbilityService = require(script.Parent.AbilityService)
+print("[Brainrot][server] modules required")
 
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
@@ -40584,6 +40588,7 @@ local routeStep = 0
 -- Appearance only. Idempotent with the lighting rig baked into the place file.
 ArtService.apply()
 local world = WorldService.new()
+print("[Brainrot][server] world ready")
 -- Animates the baked event geometry by name. Owns gravity/friction *inside* an
 -- event window only; the round machine owns when a window opens.
 local director = EventDirector.new(Config.NormalGravity)
@@ -40594,6 +40599,7 @@ local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
 local profiles = Persistence.new({})
+print("[Brainrot][server] persistence ready")
 Workspace.Gravity = Config.NormalGravity
 Workspace.FallenPartsDestroyHeight = -160
 Players.RespawnTime = 2
@@ -47159,6 +47165,8 @@ return Kit
           <Properties>
             <string name="Name">Main</string>
             <ProtectedString name="Source">--!strict
+-- TEMPORARY startup diagnostics ([Brainrot][client] lines): remove after Studio verification.
+print("[Brainrot][client] LocalScript started")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -47169,6 +47177,7 @@ local Iconography = require(script.Parent.Iconography)
 local Hud = require(script.Parent.Hud)
 local Effects = require(script.Parent.Effects)
 local Audio = require(script.Parent.Audio)
+print("[Brainrot][client] modules required")
 
 -- A startup failure must be visible in Play mode, not silent. The player sees this panel,
 -- and the same text goes to Output as a warning.
@@ -47194,6 +47203,7 @@ end
 
 -- Bounded waits: a missing server piece becomes a visible message, not a silent hang.
 local WAIT_SECONDS = 15
+print("[Brainrot][client] waiting for BrainrotRemotes")
 local remotes = ReplicatedStorage:WaitForChild("BrainrotRemotes", WAIT_SECONDS)
 if not remotes then
 	showStartupError("The server did not publish BrainrotRemotes within " .. WAIT_SECONDS .. " seconds. Check the server Output for an error.")
@@ -47219,6 +47229,7 @@ local ability: RemoteEvent = abilityRemote :: RemoteEvent
 local character: RemoteEvent = characterRemote :: RemoteEvent
 local characterState: RemoteEvent = characterStateRemote :: RemoteEvent
 
+print("[Brainrot][client] remotes found; building HUD")
 local okHud, hud = pcall(function()
 	return Hud.new(Config, function(action: string)
 		request:FireServer(action)

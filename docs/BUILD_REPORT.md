@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-09T12:43:33+00:00**.
+Verified: **2026-11-09T12:58:42+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -158,7 +158,7 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 ## Export integrity
 
-Source SHA-256: `bd39ac50e0f4655d3812be2df391c9bc0cc7f49bff6b013cc2c94bc5ef700658`
+Source SHA-256: `26d7f475fabb11325f78c0d0f94bd87e9d1adc1a058b774bc658d32243e2dd0f`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,835,587 bytes; SHA-256 `f0b76b8fafcad81fddc58b5446a4a4f9da6483a767e3c8c7492541e68c568ab1`
-- `BrainrotArena.rbxlx` — 1,835,588 bytes; SHA-256 `b8fb16c486732cc217ba4b473c0b031852b7cedd7b84d7106e5d50fcddea1794`
+- `BrainrotArena-QuickTest.rbxlx` — 1,836,202 bytes; SHA-256 `92cb42582c5785a0d960e149b08436f018be4ddec49862df11a0fcb911ada089`
+- `BrainrotArena.rbxlx` — 1,836,203 bytes; SHA-256 `03d4c53a0916bd109ee1e80eafb23ee0f54d50a82c1dd1d67e6b5b1532f1b42f`

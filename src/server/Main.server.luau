@@ -1,4 +1,6 @@
 --!strict
+-- TEMPORARY startup diagnostics ([Brainrot][server] lines): remove after Studio verification.
+print("[Brainrot][server] script started")
 -- Roblox adapter. Only this server script can award cells, pay coins, or unlock cosmetics.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -30,6 +32,7 @@ local characterStateRemote = Instance.new("RemoteEvent")
 characterStateRemote.Name = "CharacterState"
 characterStateRemote.Parent = remotes
 remotes.Parent = ReplicatedStorage
+print("[Brainrot][server] remotes published")
 
 local Shared = ReplicatedStorage:WaitForChild("BrainrotShared")
 local Config = require(Shared:WaitForChild("Config"))
@@ -46,6 +49,7 @@ local WorldData = require(script.Parent.WorldData)
 local ArtService = require(script.Parent.ArtService)
 local CharacterRules = require(script.Parent.core.CharacterRules)
 local AbilityService = require(script.Parent.AbilityService)
+print("[Brainrot][server] modules required")
 
 local settings = table.clone(Config)
 local fast = RunService:IsStudio() and Config.StudioFastMode
@@ -75,6 +79,7 @@ local routeStep = 0
 -- Appearance only. Idempotent with the lighting rig baked into the place file.
 ArtService.apply()
 local world = WorldService.new()
+print("[Brainrot][server] world ready")
 -- Animates the baked event geometry by name. Owns gravity/friction *inside* an
 -- event window only; the round machine owns when a window opens.
 local director = EventDirector.new(Config.NormalGravity)
@@ -85,6 +90,7 @@ local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
 local profiles = Persistence.new({})
+print("[Brainrot][server] persistence ready")
 Workspace.Gravity = Config.NormalGravity
 Workspace.FallenPartsDestroyHeight = -160
 Players.RespawnTime = 2
