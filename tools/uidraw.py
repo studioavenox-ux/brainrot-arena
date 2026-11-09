@@ -176,8 +176,12 @@ def draw_hud(canvas, state):
         canvas.text(SP["xl"] + 1, SP["lg"] + 32, COPY["BrandBottom"], T["Label"], color="Violet")
         canvas.text(SP["xl"] + 2, SP["lg"] + 47, COPY["BrandTag"], T["Micro"], color="Muted", bold=False)
 
+    # The phone top bar is derived, not guessed: narrow phones cannot fit a cell
+    # chip, a clock and a coin chip side by side, so the end chips give way first.
+    narrow = compact and width < 380
+
     # brain cells
-    cell_w = 128 if compact else 196
+    cell_w = (92 if narrow else 128) if compact else 196
     cell_h = 44 if short else 52
     cell_x = pad if compact else SP["xl"]
     cell_y = pad if compact else 78
@@ -187,15 +191,46 @@ def draw_hud(canvas, state):
                 color="White")
     canvas.text(cell_x + 41, cell_y + 31, COPY["CellsLabel"], T["Micro"], color="Muted", bold=False)
 
+    # stage chip: under the cell counter, hidden on short screens (mirrors Hud:update)
+    stage = state.get("stage")
+    if stage and not compact and not short:
+        stage_w = 196
+        stage_x = SP["xl"]
+        stage_y = 136
+        label, accent = {
+            "Collect": (COPY["StageCollect"], "Amber"),
+            "Compete": (COPY["StageCompete"], "Amber"),
+            "Chaos": (COPY["StageChaos"], "Violet"),
+            "Final": (COPY["StageFinal"], "Danger"),
+        }.get(stage, (stage.upper(), "Amber"))
+        canvas.panel(stage_x, stage_y, stage_w, 26, color="NavyRaised", radius=10)
+        canvas.text(stage_x + 8, stage_y + 13, label, T["Micro"], color=accent, anchor="lm",
+                    width=stage_w - 16)
+
+    # coins (also needed by the clock, whose phone width is whatever they leave)
+    coin_w = (96 if narrow else 112) if compact else 152
+    coin_h = 44 if short else 52
+    coin_x = width - pad - coin_w
+    coin_y = SP["sm"] if compact else SP["lg"]
+
     # round clock
-    clock_width = max(132, min(width - 340, 212)) if not compact else max(96, min(width - 368, 190))
+    # Mirrors Hud:resize — it keeps its centre line and narrows to the gap the two
+    # chips leave, with a floor that keeps "00:00" legible.
+    if compact:
+        clock_width = max(88, min((coin_x) - (pad + cell_w) - SP["lg"], 190))
+    else:
+        clock_width = max(150, min(width - 340, 212))
     clock_h = 62 if short else 76
     clock_x = (width - clock_width) // 2
     clock_y = SP["sm"] if short else SP["lg"]
     canvas.panel(clock_x, clock_y, clock_width, clock_h, color="NavyRaised")
     phase_color = {"Playing": "Cyan", "Results": "Amber"}.get(state["phase"], "Violet")
-    canvas.text(clock_x + clock_width / 2, clock_y + 14, state["phaseLabel"], T["Label"],
-                color=phase_color, anchor="mm")
+    # In a live round the header names the stage (the clock's job is "time to the
+    # next bank"), otherwise it names the phase.
+    header = state["stage"].upper() if (state["phase"] == "Playing" and state.get("stage")) \
+        else state["phaseLabel"]
+    canvas.text(clock_x + clock_width / 2, clock_y + 14, header, T["Label"],
+                color=phase_color, anchor="mm", width=clock_width - 10)
     canvas.text(clock_x + clock_width / 2, clock_y + 40, state["clock"],
                 26 if short else (30 if compact else T["Display"]), color="White", anchor="mm")
     if not short:
@@ -204,25 +239,39 @@ def draw_hud(canvas, state):
         canvas.text(clock_x + clock_width / 2, clock_y + 69, round_label, T["Micro"],
                     color="Dim", bold=False, anchor="mm", width=clock_width - 20)
 
-    # coins
-    coin_w = 112 if compact else 152
-    coin_h = 44 if short else 52
-    coin_x = width - pad - coin_w
-    coin_y = SP["sm"] if compact else SP["lg"]
     canvas.panel(coin_x, coin_y, coin_w, coin_h)
     glyph(canvas, coin_x + pad, coin_y + pad + 2, "coin", "Amber", 22)
     canvas.text(coin_x + 40, coin_y + 6, str(state["coins"]), 18 if compact else T["Title"],
                 color="Amber")
     canvas.text(coin_x + 41, coin_y + 31, COPY["CoinsLabel"], T["Micro"], color="Muted", bold=False)
 
+    # Specimen chip geometry, shared by the RANKS chip that sits under it.
+    spec_w, spec_h = (coin_w if compact else 152), 30
+    spec_x = width - pad - spec_w
+    # Exactly Hud:resize: under the coin chip on desktop, under the clock on phones.
+    spec_y = ((SP["sm"] if short else SP["lg"]) + (62 if short else 76) + SP["xs"]) \
+        if compact else SP["lg"] + 60
+
+    # Message bands start under the *whole* top block: on a phone the coin chip
+    # reaches y=60 and the RANKS chip past 164, so a toast pinned at 112 ran
+    # straight through the specimen chip.
+    ranks_top = (spec_y + spec_h + SP["xs"]) if compact else 128
+    # Two placements, decided by the free width at the top (mirrors Hud:resize).
+    corridor = (width - pad - coin_w) - (pad + cell_w) - pad * 2
+    stacked = corridor < 360
+    band_top = (max(spec_y + spec_h, ranks_top + 32) + SP["sm"]) if stacked \
+        else (84 if short else 112)
+
     # ---- leaderboard (right) -------------------------------------------- #
     # Mirrors Hud:resize — the board is hidden on phone-width viewports until the
     # player taps RANKS, so it never covers the centre messaging.
-    board_visible = state.get("board", True) and not (compact and not state.get("ranksTouched"))
+    board_visible = state.get("board", True) and not (
+        (compact or short) and not state.get("ranksTouched"))
     board_w = 196 if compact else 232
-    board_h = int(np.clip(height - (190 if compact else 230), 150, 320))
+    board_h = int(np.clip(height - (232 if short else (190 if compact else 230)),
+                          96 if short else 150, 320))
     board_x = width - pad - board_w
-    board_y = 118 if compact else 162
+    board_y = 118 if (compact or short) else 162
     if board_visible:
         canvas.panel(board_x, board_y, board_w, board_h)
         canvas.text(board_x + pad, board_y + pad, COPY["BoardTitle"], T["Heading"], color="White")
@@ -245,31 +294,34 @@ def draw_hud(canvas, state):
                         T["Label"], color="White", anchor="lm", width=board_w - pad * 2 - 78)
             canvas.text(board_x + board_w - pad - 6, row_y + 15, str(row["score"]), T["Body"],
                         color="Amber" if index == 0 else "Cyan", anchor="rm")
-    if compact or short:
-        # RANKS chip, right-aligned under the coin counter
+    if (compact or short) and not board_visible:
+        # RANKS chip, below the specimen chip on phones and hidden while the board
+        # is open (mirrors Hud:resize).
         chip_w, chip_h = (68 if compact else 84), 32
         chip_x = width - pad - chip_w
-        chip_y = 40 if short else (74 if compact else 128)
+        # Under the specimen chip on short landscape, where there is no room between
+        # it and the coin chip. The board and this chip are never up together, so
+        # they cannot collide even though their bands overlap.
+        chip_y = ranks_top
         canvas.panel(chip_x, chip_y, chip_w, chip_h, color="NavyRaised", radius=12)
         canvas.text(chip_x + chip_w / 2, chip_y + chip_h / 2, "RANKS", T["Micro"], color="Violet",
                     anchor="mm")
 
     # SPECIMENS chip: the way into the collection log, under the coin counter.
     # Mirrors Panels.topHud: Cyan until all six are logged, then Amber.
-    spec_w, spec_h = (112 if short else 116), 30
-    spec_x = width - pad - spec_w
-    spec_y = coin_y + coin_h + SP["xs"]
+    # Width follows the *compact* breakpoint (Hud:resize), not the short-height one:
+    # a wide-but-short landscape phone keeps the full-size stack.
     caught = state.get("specimens", 0)
     spec_color = "Amber" if caught >= 6 else "Cyan"
     canvas.panel(spec_x, spec_y, spec_w, spec_h, color="NavyRaised", radius=11)
     glyph(canvas, spec_x + 9, spec_y + 6, "specimen", spec_color, 16)
     canvas.text(spec_x + 30, spec_y + spec_h / 2 + 1,
-                f"SPECIMENS {caught} / 6", T["Micro"], color=spec_color, anchor="lm",
-                width=spec_w - 38)
+                f"SPECS  {caught}/6" if compact else f"SPECIMENS  {caught} / 6", T["Micro"],
+                color=spec_color, anchor="lm", width=spec_w - 38)
 
     # help chip
     help_x = pad if compact else SP["xl"]
-    help_y = 74 if compact else 136
+    help_y = 74 if compact else 172
     canvas.panel(help_x, help_y, 36, 36, color="NavyRaised", radius=12)
     canvas.text(help_x + 18, help_y + 18, "?", T["Body"], color="Cyan", anchor="mm")
 
@@ -277,7 +329,7 @@ def draw_hud(canvas, state):
     if state.get("lobby") is not None:
         lobby_w = min(width - 32, 420)
         lobby_x = (width - lobby_w) // 2
-        lobby_y = 186 if short else 236
+        lobby_y = band_top + 56 + SP["sm"] + 34 + SP["sm"]
         canvas.panel(lobby_x, lobby_y, lobby_w, 92)
         canvas.text(lobby_x + lobby_w / 2, lobby_y + SP["md"] + 10, COPY["LobbyWelcome"], T["Heading"],
                     color="White", anchor="mm")
@@ -290,14 +342,14 @@ def draw_hud(canvas, state):
     if state.get("event"):
         event_w = min(width - 40, 320)
         event_x = (width - event_w) // 2
-        event_y = 146 if short else 174
+        event_y = band_top + 56 + SP["sm"]
         canvas.panel(event_x, event_y, event_w, 34, color="NavyRaised")
         canvas.rect(event_x + SP["md"], event_y + 13, 8, 8, "Cyan", radius=8)
         canvas.text(event_x + 30, event_y + 17, state["event"], T["Label"], color="Cyan", anchor="lm")
     if state.get("toast"):
-        toast_w = min(width - 32, 432)
+        toast_w = min(width - 32, 432, width - 32 if stacked else corridor)
         toast_x = (width - toast_w) // 2
-        toast_y = 84 if short else 112
+        toast_y = band_top
         canvas.panel(toast_x, toast_y, toast_w, 56)
         canvas.rect(toast_x + SP["md"], toast_y + 10, 4, 36, "Cyan", radius=2)
         canvas.text(toast_x + 32, toast_y + 28, state["toast"], T["Body"], color="White", anchor="lm",
@@ -347,6 +399,45 @@ def draw_hud(canvas, state):
         glyph(canvas, button_x + button_w / 2 - 10, bar_y + 10, kind, accent, 20)
         canvas.text(button_x + button_w / 2, bar_y + 38, label.strip(), T["Micro"], color="Muted",
                     bold=False, anchor="mm", width=button_w - 8)
+
+    # ---- steal action (mirrors Panels.stealPanel) ------------------------ #
+    steal = state.get("steal")
+    if steal:
+        steal_w = 150 if compact else 186
+        # short landscape anchors the panel bottom-left, clear of the board and pads
+        steal_x = pad if short else width - pad - steal_w
+        steal_y = height - bar_lift - 52
+        carried, cooldown, protected = steal.get("carried", 0), steal.get("cooldown", 0.0), steal.get("protected", 0.0)
+        # carried / banked readout above the button
+        canvas.panel(steal_x, steal_y - 38, steal_w, 30, color="NavyRaised", radius=10)
+        glyph(canvas, steal_x + SP["sm"], steal_y - 38 + SP["sm"], "cell", "Cyan", 14)
+        canvas.text(steal_x + 26, steal_y - 36, str(carried), T["Label"],
+                    color="Amber" if carried else "Muted")
+        if not compact:
+            canvas.text(steal_x + 26, steal_y - 23, f"{carried} IN {steal.get('count', 0)} CELLS",
+                        T["Micro"], color="Muted", bold=False, width=steal_w - 34)
+        # button body
+        canvas.panel(steal_x, steal_y, steal_w, 52, color="NavyRaised", radius=12)
+        canvas.rect(steal_x, steal_y + 5, 3, 42, "Danger", radius=2)
+        glyph(canvas, steal_x + 14, steal_y + 15, "steal", "Danger", 20)
+        if not steal.get("playing", True):
+            label, caption, color = COPY["StealBar"], "COLLECT PHASE", "Muted"
+        elif protected > 0:
+            label, caption, color = COPY["StealProtected"], f"{protected:.0f}s", "Cyan"
+        elif cooldown > 0:
+            label, caption, color = f"{cooldown:.1f}s", COPY["StealCooldown"], "Muted"
+        else:
+            label, caption, color = COPY["StealReady"], "8s COOLDOWN", "White"
+        canvas.text(steal_x + 42, steal_y + 15, label, 13 if compact else T["Heading"],
+                    color=color, anchor="lm", width=steal_w - 50)
+        canvas.text(steal_x + 42, steal_y + 34, caption, T["Micro"], color="Muted", bold=False,
+                    anchor="lm", width=steal_w - 50)
+        # cooldown veil drains left-to-right
+        if cooldown > 0:
+            frac = min(1.0, cooldown / 8.0)
+            veil_w = int((steal_w - 2) * frac)
+            if veil_w > 0:
+                canvas.rect(steal_x + 2, steal_y + 2, veil_w, 48, "Void", 0.45, radius=10)
 
     # plate caption: this is a mock, and it says so
     canvas.rect(0, height - 22, width, 22, "Void", 0.75)
@@ -564,6 +655,8 @@ def mock(kind, width, height, **overrides):
         "lobby": True,
         "lobbyCountdown": "ARENA OPENS IN 00:09",
         "event": None,
+        "stage": None,
+        "steal": None,
         "toast": None,
         "results": False,
         "modal": None,
@@ -573,6 +666,8 @@ def mock(kind, width, height, **overrides):
         state.update({
             "phase": "Playing", "phaseLabel": COPY["PlayingStatus"], "clock": "02:41",
             "cells": 27, "coins": 55, "lobby": None,
+            "stage": "Chaos",
+            "steal": {"carried": 15, "count": 3, "cooldown": 0.0, "protected": 0.0, "playing": True},
             "rows": [
                 {"name": "MintBrain", "score": 34, "mine": True},
                 {"name": "Orbital", "score": 27},
@@ -596,7 +691,7 @@ def mock(kind, width, height, **overrides):
             ],
             "results": True,
             "winner": "MintBrain wins!\n34 brain cells",
-            "cast": "Toast  •  burnt, beloved, worth ten",
+            "cast": "CRUSTY  •  +10  •  3 STEALS  •  2 LOST",
             "reward": "+97 COINS",
             "next": "INTERMISSION IN 00:06",
         })

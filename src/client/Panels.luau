@@ -66,6 +66,16 @@ local function glyph(parent, kind, color, size)
 					if row == 0 and column == 1 then .45 else 0)
 			end
 		end
+	elseif kind == "hook" then
+		-- a hooked hand: palm block, thumb, curved finger
+		piece("Palm", 11 * u, 10 * u, 4 * u, 4 * u, 3 * u)
+		piece("Thumb", 4 * u, 6 * u, 1.5 * u, 6 * u, 2 * u)
+		piece("Finger", 8 * u, 3 * u, 9 * u, 8 * u, 1.5 * u)
+		piece("Hook", 3 * u, 7 * u, 15 * u, 8 * u, 1.5 * u)
+	elseif kind == "bolt" then
+		piece("A", 5 * u, 8 * u, 7 * u, 2 * u, 1 * u)
+		piece("B", 6 * u, 7 * u, 4 * u, 8 * u, 1 * u)
+		piece("C", 4 * u, 4 * u, 8 * u, 6 * u, 1 * u)
 	elseif kind == "settings" then
 		piece("Ring", 12 * u, 12 * u, 4 * u, 4 * u, 12 * u, .25)
 		piece("Hub", 6 * u, 6 * u, 7 * u, 7 * u, 6 * u)
@@ -109,7 +119,8 @@ function Panels.topHud(parent, handlers)
 	Kit.text(brand, "Arena", Copy.BrandBottom, "Label", {
 		size = UDim2.fromOffset(196, 16), position = UDim2.fromOffset(1, 32), color = C.Violet,
 	})
-	Kit.text(brand, "Tagline", Copy.BrandTag, "Micro", {
+	-- The tagline is inside the brand frame, so hiding the lockup hides all of it.
+	local tagline = Kit.text(brand, "Tagline", Copy.BrandTag, "Micro", {
 		size = UDim2.fromOffset(196, 12), position = UDim2.fromOffset(2, 47), color = C.Dim,
 	})
 
@@ -159,10 +170,13 @@ function Panels.topHud(parent, handlers)
 
 	-- Collection progress chip: always-on reminder that there are six specimens,
 	-- with a live count of how many this player has logged. Clicking opens the log.
+	-- Right-anchored like the coin chip above it: without this the offset was read
+	-- from the left edge and the chip hung off the right of every viewport.
 	local specimens = Kit.button(root, "Specimens", "", UDim2.fromOffset(152, 34),
 		UDim2.new(1, -Space.xl, 0, Space.lg + 60), function()
 			if handlers and handlers.Specimens then handlers.Specimens() end
-		end, { accent = C.Cyan, zIndex = 2, radius = 10, variant = "Micro" })
+		end, { accent = C.Cyan, zIndex = 2, radius = 10, variant = "Micro",
+			anchor = Vector2.new(1, 0) })
 	specimens.Label.Size = UDim2.new(1, -12, 1, 0)
 	specimens.Label.TextXAlignment = Enum.TextXAlignment.Center
 	local specimenText = specimens.Label
@@ -172,6 +186,7 @@ function Panels.topHud(parent, handlers)
 		specimens = specimens,
 		specimenText = specimenText,
 		brand = brand,
+		brandTag = tagline,
 		cells = cells,
 		cellValue = cellValue,
 		cellScale = cellScale,
@@ -285,6 +300,65 @@ function Panels.actionBar(parent, handlers)
 		buttons[name] = slot
 	end
 	return { bar = bar, buttons = buttons }
+end
+
+-- --------------------------------------------------------------------------- #
+-- Steal action: a big tag button with a live cooldown, plus the carried/banked
+-- readout that explains what is at risk.
+-- --------------------------------------------------------------------------- #
+function Panels.stealPanel(parent, onSteal)
+	local root = Kit.instance("Frame", {
+		Name = "StealPanel",
+		Size = UDim2.fromOffset(186, 52),
+		Position = UDim2.new(1, -Space.lg, 1, -Space.lg - 52),
+		AnchorPoint = Vector2.new(1, 0),
+		BackgroundTransparency = 1,
+		ZIndex = 4,
+	}, parent)
+
+	local button = Kit.button(root, "Steal", "", UDim2.fromOffset(186, 52), UDim2.fromOffset(0, 0),
+		function() onSteal() end, { accent = C.Danger, zIndex = 4, color = C.NavyRaised })
+	glyph(button, "hook", C.Danger, 22).Position = UDim2.fromOffset(14, 15)
+	local label = Kit.text(button, "State", Copy.StealReady, "Heading", {
+		size = UDim2.new(1, -46, 0, 20), position = UDim2.fromOffset(42, 7),
+		color = C.White, zIndex = 5, truncate = true,
+	})
+	local caption = Kit.text(button, "Caption", "8s COOLDOWN", "Micro", {
+		size = UDim2.new(1, -46, 0, 12), position = UDim2.fromOffset(42, 28),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+	-- Cooldown veil: covers the button from the left, so "how much longer" reads
+	-- at a glance without a second number.
+	local veil = Kit.instance("Frame", {
+		Name = "Cooldown",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = C.Void,
+		BackgroundTransparency = .45,
+		BorderSizePixel = 0,
+		ZIndex = 6,
+	}, button)
+	Kit.corner(veil, 12)
+
+	-- Carried / banked readout stacked above the button. It is a child of the panel,
+	-- so it follows the panel wherever the HUD anchors it (right on desktop and
+	-- portrait, left on short landscape).
+	local readout = Kit.panel(root, "Carried", UDim2.fromOffset(186, 30), UDim2.fromOffset(0, -38), {
+		zIndex = 4, radius = 10, color = C.NavyRaised,
+	})
+	glyph(readout, "cell", C.Cyan, 14).Position = UDim2.fromOffset(Space.sm, Space.sm)
+	local carried = Kit.text(readout, "Carried", "0", "Label", {
+		size = UDim2.fromOffset(60, 14), position = UDim2.fromOffset(26, 2),
+		color = C.Amber, zIndex = 5,
+	})
+	local banked = Kit.text(readout, "Banked", "0", "Micro", {
+		size = UDim2.fromOffset(96, 12), position = UDim2.fromOffset(26, 15),
+		color = C.Muted, zIndex = 5, truncate = true,
+	})
+
+	return {
+		root = root, button = button, label = label, caption = caption,
+		veil = veil, readout = readout, carried = carried, banked = banked,
+	}
 end
 
 -- --------------------------------------------------------------------------- #

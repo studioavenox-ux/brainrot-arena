@@ -603,6 +603,12 @@ VIEWS = {
         eye=(30, 33, 36), target=(-6, 24, -8), fov=70, width=1000, height=580,
         title="PLAYER EYE — Brain Cells read clearly over sand and stone",
     ),
+    # Phase 5: the two event surfaces, framed so both read in one plate.
+    # Deliberately a "rest" pose — this is what a freshly opened place looks like.
+    "events": dict(
+        eye=(46, 33, 62), target=(14, 22, 14), fov=64, width=1000, height=580,
+        title="EVENT SURFACES — three orbit rafts and four vanishing spans",
+    ),
     "cast": dict(
         eye=(0, 29.6, 12.3), target=(0, 28.6, 0), fov=30, width=1560, height=620,
         title="THE CAST — six characters on their plinths: +1 Common, +5 Rare, +10 Legendary",

@@ -1,26 +1,26 @@
 {
-  "verified_at_utc": "2026-11-08T14:47:11+00:00",
+  "verified_at_utc": "2026-11-09T07:45:45+00:00",
   "status": "automated_checks_passed_studio_unverified",
   "test_counts": {
-    "core_luau": 90,
-    "mock_adapter_luau": 60,
+    "core_luau": 107,
+    "mock_adapter_luau": 76,
     "place_python": 36,
     "art_direction_python": 35
   },
-  "total_passed": 221,
+  "total_passed": 254,
   "failed": 0,
-  "luau_files_compiled": 24,
-  "source_sha256": "07d49691281e354da80ccbed6c85e008cb1a84038e9c515146d063545fdaaab5",
-  "static_world_parts": 824,
+  "luau_files_compiled": 26,
+  "source_sha256": "3dbd31d70d0bab8e0863837a0db904d250dd54badbadcaafd16ce94b558ed744",
+  "static_world_parts": 906,
   "pickup_slots": 48,
   "places": {
     "BrainrotArena-QuickTest.rbxlx": {
-      "bytes": 1603336,
-      "sha256": "92595a0cb39ac424e00218039f6bade64e969efc8360fcd288ac5cadc8ad3f4d"
+      "bytes": 1791117,
+      "sha256": "589d2927e6d83797efc39f0db09aa4c62096337c5068ba3c49b18908381dc29d"
     },
     "BrainrotArena.rbxlx": {
-      "bytes": 1603337,
-      "sha256": "c724dde201b9bb32f76917e2dfa22f7428a36a554185cff7de7758070fb94953"
+      "bytes": 1791118,
+      "sha256": "81f07df282224afdc21209eac2c67ee29bd009afe840d4cb54bd71e4563c9bdb"
     }
   },
   "stages": [
@@ -29,7 +29,7 @@
       "passed": true
     },
     {
-      "name": "All 24 Luau files compile",
+      "name": "All 26 Luau files compile",
       "passed": true
     },
     {
