@@ -75,6 +75,20 @@ hidden in the code comments.
 11e. **The 20 s shutdown budget is unverified against a real DataStore.** The
     drain sits inside the engine's 30 s ceiling, but a heavily throttled store
     could still leave writes `pending`. Row S-01 measures it.
+11f. **Mocks cannot prove engine behaviour, and one mock hole caused a shipped
+    crash.** Hotfix 01: `Kit.button` assigned `button.__hovered = fn`, which Roblox
+    rejects (`__hovered is not a valid member of TextButton`) and which aborted HUD
+    construction on the first Play test. The mock had a blanket "any `_`-prefixed
+    key is mine" rule, so the assignment was never validated and 361 tests passed
+    over it. Now closed by a fixed allowlist plus `tools/audit_properties.py`, but
+    the general lesson stands: **a green suite over a mock is not evidence the game
+    runs.** The HUD is not Studio-verified until a new Play test builds it. See
+    [HOTFIX_01_HUD_STARTUP.md](HOTFIX_01_HUD_STARTUP.md).
+11g. **The property audit is lexical, not a type checker.** `audit_properties.py`
+    follows a binding from its creation site inside one function and validates the
+    properties assigned to it. It cannot see an Instance that crosses a function
+    boundary or is stored on a wrapper table; `HF-05` covers those at runtime, but
+    only for code paths a test builds.
 12. **No purchase ledger.** Cosmetic purchases are coin spends inside the round,
     persisted immediately. There is no audit trail of individual transactions.
 13. **Save interval.** Profiles are written on purchase, on leave and on round

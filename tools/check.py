@@ -57,6 +57,10 @@ def main():
     run("compile", f"All {len(files)} Luau files compile", [binaries["luau-compile"], "--null", *map(str, files)])
     core = sorted(ROOT.glob("src/server/core/*.luau")) + [ROOT / "src/shared/Config.luau", ROOT / "src/shared/AudioRules.luau"]
     run("analyze", "Strict type analysis: authority modules + configuration", [binaries["luau-analyze"], *map(str, core)])
+    # Static net for Hotfix 01: no Instance may be given a property it does not
+    # have. The adapter tests cover this at runtime, but only for the paths they
+    # execute; this covers every source file.
+    run("properties", "No invalid custom Instance properties", [py, "tools/audit_properties.py", "--quiet"])
     core_output = run("core", "Core rules and 100 simulated 12-player rounds", [binaries["luau"], "tests/core.spec.luau"])
     adapter_output = run("adapters", "Production adapters against mocked Roblox services", [py, "tools/test_adapters.py", "--luau", binaries["luau"]])
     xml_output = run("place", "Place structure, loadable API properties and geometry", [py, "tools/verify_place.py"])

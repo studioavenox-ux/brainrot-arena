@@ -166,6 +166,21 @@ function Mock.new(sources, schema, options)
 		local anchor=obj._props.AnchorPoint or Vector2.zero
 		return {X=pp.X+ps.X*pos.X.Scale+pos.X.Offset-size.X*anchor.X,Y=pp.Y+ps.Y*pos.Y.Scale+pos.Y.Offset-size.Y*anchor.Y}
 	end
+	-- Internal mock bookkeeping. Roblox Instances reject ANY property that is not a
+	-- real API member, including names starting with an underscore:
+	--   `button.__hovered = fn`  ->  "__hovered is not a valid member of TextButton"
+	-- An earlier version of this mock let every `_`-prefixed key through unchecked,
+	-- which is exactly why that crash in Kit.button survived 361 tests and had to
+	-- be found by a real Studio run. Only the fields this mock actually owns may be
+	-- written; everything else must be a real member of the class.
+	local INTERNAL_FIELDS = {
+		_props = true, _children = true, _signals = true, _attributes = true,
+		_propertySignals = true, _destroyed = true, _class = true,
+		-- ModuleScript nodes carry their source; plain data doubles carry a type tag.
+		_sourcePath = true, _type = true,
+		-- gameplay doubles that hang state off an instance
+		_pivot = true, _droppedPivots = true, _played = true,
+	}
 	instanceMt.__index=function(obj,key)
 		if key=="ClassName" then return obj._class end
 		if methods[key] then return methods[key] end
@@ -175,12 +190,16 @@ function Mock.new(sources, schema, options)
 		if key=="AbsolutePosition" then return absolutePosition(obj) end
 		if obj._props[key]~=nil then return obj._props[key] end
 		if obj._signals[key] then return obj._signals[key] end
+		if INTERNAL_FIELDS[key] then return nil end
+		-- A non-member property reads as nil in Roblox; reading `inst.__x` does not
+		-- error, writing it does. Matched here so a read cannot mask a bad write.
 		for _,child in obj._children do if child.Name==key then return child end end
 		return nil
 	end
 	instanceMt.__newindex=function(obj,key,value)
-		if string.sub(key,1,1)=="_" then rawset(obj,key,value); return end
-		assert(propertyExists(obj._class,key),"Unknown property "..obj._class.."."..key)
+		if INTERNAL_FIELDS[key] then rawset(obj,key,value); return end
+		assert(propertyExists(obj._class,key),
+			string.format("%s is not a valid member of %s",tostring(key),obj._class))
 		if key=="Parent" then
 			local old=obj._props.Parent
 			if old==value then return end
@@ -421,6 +440,19 @@ function Mock.new(sources, schema, options)
 		return result
 	end
 	function env:import(path) return import(nodes[path]) end
+	-- Run a snippet inside the same sandbox the sources execute in. Needed when a
+	-- test must construct an object using engine datatypes (UDim2, Color3) that are
+	-- sandbox globals rather than fields on `env`. Returns the snippet's value.
+	function env:sandbox(source)
+		local fn,err=loadstring(source,"@test-sandbox")
+		assert(fn,err)
+		local scope=setmetatable({
+			-- Like a real `require`, but by the repository path the tests use.
+			require=function(path) return import(assert(nodes[path],"Unknown module "..tostring(path))) end,
+		},{__index=function(_,key) return globals[key] or getfenv()[key] end})
+		setfenv(fn,scope)
+		return fn()
+	end
 	function env:startServer() self:import("src/server/Main.server.luau") end
 	function env:startClient(player)
 		self.services.Players.LocalPlayer=player
