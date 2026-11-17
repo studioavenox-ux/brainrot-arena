@@ -3,7 +3,7 @@
 **An implemented Roblox party-game prototype, not a design-only brief.**
 Original procedural floating islands, glowing Brain Cells, three-minute rounds, and a very unreasonable gravity problem.
 
-> **Status:** Project files built; **329 automated tests passing**. Roblox Studio is not installed in the development sandbox, so actual Studio import, engine physics, multiplayer networking, device rendering, and sound playback have **not** been verified here. [Build report →](docs/BUILD_REPORT.md)
+> **Status:** Project files built; **361 automated tests passing**. Roblox Studio is not installed in the development sandbox, so actual Studio import, engine physics, multiplayer networking, device rendering, and sound playback have **not** been verified here. The manual acceptance matrix is [documented and not yet executed](docs/PHASE7B_ACCEPTANCE_PACKAGE.md). [Build report →](docs/BUILD_REPORT.md)
 
 ## Windows: extract, open and test
 
@@ -141,4 +141,4 @@ python3 tools/package_release.py
 
 On Linux/macOS with `make` and `g++`, `python3 tools/bootstrap_luau.py` builds pinned official **Luau 0.744** locally. Existing tools on `PATH` are also supported. [Architecture / editing notes →](docs/ARCHITECTURE.md)
 
-The test suite executes 150 core Luau tests (including 100 simulated 12-player logical rounds), 108 production-adapter tests against explicit Roblox service doubles, 36 XML/API/geometry tests and 35 art-direction tests — 329 in total. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.
+The test suite executes 150 core Luau tests (including 100 simulated 12-player logical rounds), 140 production-adapter tests against explicit Roblox service doubles, 36 XML/API/geometry tests and 35 art-direction tests — 361 in total. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.
