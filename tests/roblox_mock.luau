@@ -316,13 +316,26 @@ function Mock.new(sources, schema, options)
 	env.Vector3,env.CFrame=V,CF
 	env.services={}
 	env.game=new("DataModel")
+	-- Mirrors the engine: `BindToClose(function)` registers a callback and takes
+	-- no other arguments. The real engine runs every binding concurrently and
+	-- kills the instance at most 30 s later; the mock runs them in order and
+	-- returns, so a test observes the callbacks but NOT the engine's timing.
+	rawset(env.game,"BindToClose",function(_,fn)
+		assert(type(fn)=="function","BindToClose expects a function")
+		table.insert(env.closeBindings,fn)
+	end)
 	-- DataStoreService is a deterministic in-memory double: the same key always
 	-- returns what was last written, and `options.store` can preseed or inspect it.
 	env.stores={}
+	env.writeCounts={}   -- key -> number of successful SetAsync calls
 	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","ServerStorage","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui","DataStoreService"} do
 		local service=new(name); service.Name=name; service.Parent=env.game; env.services[name]=service
 	end
 	function methods:GetService(name) assert(env.services[name],"Unknown service "..name); return env.services[name] end
+	-- `game:BindToClose` is a DataModel method, not a generic instance method, so
+	-- it is defined only on the DataModel (see below). Registered callbacks are
+	-- kept on the environment and fired by `env:shutdown()`.
+	env.closeBindings={}
 	local dataStore=env.services.DataStoreService
 	rawset(dataStore,"GetDataStore",function(self,name)
 		env.stores[name]=env.stores[name] or {}
@@ -333,8 +346,11 @@ function Mock.new(sources, schema, options)
 			return store[key]
 		end
 		function methods2:SetAsync(key,value)
+			-- `options.writeFail` is readable at call time, so a test can fail a
+			-- write that starts *during* a shutdown without failing earlier ones.
 			if options.storeFail or options.writeFail then error("DataStore write disabled in this test") end
 			store[key]=value
+			env.writeCounts[key]=(env.writeCounts[key] or 0)+1
 			return key
 		end
 		function methods2:UpdateAsync(key,fn)
@@ -446,6 +462,15 @@ function Mock.new(sources, schema, options)
 	end
 	-- Run every continuation that task.spawn deferred, in order. Tests call this
 	-- to simulate "the DataStore response finally arrived".
+	-- Fire every BindToClose callback, as the engine does when the server closes.
+	-- Returns the number of bindings run. This is a contract double: it does not
+	-- model the 30 s kill, concurrent execution, or the engine dropping work that
+	-- is still running when the instance dies.
+	function env:shutdown()
+		local bindings=self.closeBindings; self.closeBindings={}
+		for _,fn in bindings do fn() end
+		return #bindings
+	end
 	function env:flushAsync()
 		local queue=self.deferred; self.deferred={}
 		for _,item in queue do item.fn(table.unpack(item.args)) end

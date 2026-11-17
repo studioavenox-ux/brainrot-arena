@@ -657,6 +657,34 @@ local function playerAdded(player: Player)
 	dirty = true
 end
 
+-- Fold everything this session earned into the durable profile. Called from
+-- PlayerRemoving and from the shutdown drain so both write the SAME table: two
+-- different merge orders against one key is exactly how a shutdown can end up
+-- persisting less than the player actually earned.
+-- Returns false when the profile is not writable, and never touches it then.
+local function snapshotSession(userId: number): boolean
+	if not profiles:isWritable(userId) then
+		return false
+	end
+	local data = machine.players[userId]
+	if not data then
+		return profiles:profile(userId) ~= nil
+	end
+	local profile = profiles:profile(userId)
+	if not profile then
+		return false
+	end
+	local coins, halo = machine:cosmetics(userId)
+	profile.Coins = math.max(profile.Coins, coins)
+	profile.Halo = halo
+	for species, amount in data.collection do
+		if type(species) == "string" then
+			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
+		end
+	end
+	return true
+end
+
 Players.PlayerAdded:Connect(playerAdded)
 Players.PlayerRemoving:Connect(function(player)
 	local record = records[player.UserId]
@@ -666,17 +694,15 @@ Players.PlayerRemoving:Connect(function(player)
 	-- Persist what this session earned before the machine forgets the player.
 	-- Only a profile that actually loaded is writable: if the read failed, this
 	-- final save is skipped so the real record survives the outage.
-	local data = machine.players[player.UserId]
-	if data and profiles:isWritable(player.UserId) then
-		local profile = profiles:profile(player.UserId)
-		local coins, halo = machine:cosmetics(player.UserId)
-		profile.Coins = math.max(profile.Coins, coins)
-		profile.Halo = halo
-		for species, amount in data.collection do
-			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
-		end
-		profiles:save(player.UserId)
-	elseif data then
+	if snapshotSession(player.UserId) then
+		-- AWAITED, deliberately. `release` below bumps the generation, and the
+		-- write aborts when it sees a newer generation — so a write merely
+		-- *queued* here would be dropped by the release that follows it. (That
+		-- was a real data-loss bug: every leaving player's final save was lost.)
+		-- PlayerRemoving is allowed to yield: the player is already gone and
+		-- nothing on screen waits for it.
+		profiles:saveAwait(player.UserId)
+	else
 		print(string.format("[Brainrot] %s left with an unsaved session (profile %s)",
 			player.Name, tostring(profiles:state(player.UserId))))
 	end
@@ -691,6 +717,37 @@ Players.PlayerRemoving:Connect(function(player)
 	CharacterRules.clear(characters, player.UserId)
 	AbilityService.forget(abilities, player.UserId)
 	dirty = true
+end)
+
+-- Shutdown. Roblox runs this when the server is closing (update, migration, or
+-- the last player leaving) and terminates the instance at most 30 s later
+-- whether or not the callback finished, so the drain is bounded and reports what
+-- it could not finish. It saves only profiles that reached Loaded: a session
+-- whose read failed is skipped here exactly as it is on PlayerRemoving.
+--
+-- A player PlayerRemoving already saved has an unchanged payload, so nothing is
+-- written twice. A player whose PlayerRemoving save is still in flight is
+-- joined, not duplicated.
+game:BindToClose(function()
+	local started = os.clock()
+	local players = Players:GetPlayers()
+	local writable = 0
+	for _, player in Players:GetPlayers() do
+		if snapshotSession(player.UserId) then
+			writable += 1
+		end
+	end
+	local report = profiles:shutdownSave()
+	local skipped = report.skipped
+	local stats = profiles:stats()
+	print(string.format(
+		"[Brainrot] shutdown • %d online, %d writable, %d written, %d already saved, %d failed, %d pending (%.2fs, store=%s memoryOnly=%s)",
+		#players, writable, report.saved, skipped, report.failed, report.pending,
+		os.clock() - started, tostring(stats.storeName), tostring(stats.memoryOnly)))
+	if report.failed > 0 or report.pending > 0 then
+		warn(string.format("[Brainrot] shutdown finished with %d unsaved profile(s); see the line above",
+			report.failed + report.pending))
+	end
 end)
 for _, player in Players:GetPlayers() do
 	playerAdded(player)

@@ -62,15 +62,19 @@ hidden in the code comments.
     write path exists for that session, so nothing is lost and nothing is gained
     until the next join succeeds. A player who never rejoins while the store is
     healthy keeps only their previously saved progress.
-11c. **The phone action bar can overlap the steal and ability panels.** All three
-    sit in the same 118 px lift band, and the bar is 252 px wide and centred. The
-    steal button stays readable and on top where they cross, but touch
-    interception has not been verified on a device (rows T-03/T-04/T-10).
-11d. **No `game:BindToClose`.** A player leaving is saved, and every completed
-    round is saved at the Results edge, but a server *shutdown* does not wait for
-    the final queued write. Coins earned after the last Results edge, and the
-    last specimen merge, can be lost on shutdown. Verify with P-06 in
-    [PHASE7B_ACCEPTANCE_PACKAGE.md](PHASE7B_ACCEPTANCE_PACKAGE.md).
+11c. **The phone action bar no longer overlaps the action controls** (fixed in
+    Phase 7C). Phones use a two-row layout and wider screens park the bar beside
+    the action cluster; 17 viewports are geometry-clean. What is still unverified
+    is touch *delivery*: where the controls are is proven, that a tap lands is
+    not (rows T-03/T-04/T-12).
+11d. **Shutdown has a bounded drain** (added in Phase 7C). `game:BindToClose`
+    flushes every `Loaded` profile, deduplicates against writes already in flight,
+    and reports `written` / `failed` / `pending` in one line. A failed or pending
+    write is reported, never swallowed. Engine confirmation is row S-01, which has
+    not been run.
+11e. **The 20 s shutdown budget is unverified against a real DataStore.** The
+    drain sits inside the engine's 30 s ceiling, but a heavily throttled store
+    could still leave writes `pending`. Row S-01 measures it.
 12. **No purchase ledger.** Cosmetic purchases are coin spends inside the round,
     persisted immediately. There is no audit trail of individual transactions.
 13. **Save interval.** Profiles are written on purchase, on leave and on round

@@ -3,6 +3,12 @@
 Commit under test: `34b6fc5` (Phase 7A) plus this phase's two fixes.
 Branch: `arena/0f1a67b1-brainrot-arena`.
 
+> **Updated by Phase 7C** (`docs/PHASE7C_SHUTDOWN_AND_MOBILE.md`): the ActionBar
+> overlap (risk R2) is fixed and a shutdown drain was added. Two rows were added
+> below — **S-01** (real server shutdown) and **T-12** (two-row layout reach) —
+> and R2's status changed. The ActionBar/T-03/T-04 rows are unchanged in intent
+> but now test a corrected layout.
+
 **Status: NOT RUN.** Roblox Studio cannot execute in this environment (Linux
 container, no Studio, no Rojo, no Roblox control connector). **No row in this
 document has been executed in an engine.** Every row is `BLOCKED — no engine`.
@@ -249,6 +255,7 @@ actual session.
 | P-04 | Statistics saving | Play 2 rounds, note Rounds / Wins / BestScore, leave, rejoin | Rounds, Wins and BestScore match exactly; BestScore is the best single round, not the sum. | — | **BLOCKED — no engine (7B)** | |
 | P-05 | Leave and reconnect (direct via Join) | Leave deliberately; rejoin within a minute | Progress present. Note in evidence whether the server had already shut down or not — that is what separates P-05 from P-06. | — | **BLOCKED — no engine (7B)** | |
 | P-06 | Persistence across server restart | Finish a round (so the payout is written), then **stop the server** (or let it empty), then start a fresh server and rejoin | Progress up to the last completed round is present on the fresh server. **Expected risk:** progress earned *after* the last `Results` edge but before shutdown may be lost — this is risk **R1** (§1). Record exactly how much was lost, if any. | — | **BLOCKED — no engine (7B)** | |
+| S-01 | **Real server shutdown** (added by 7C) | Finish a round, catch cells **without** reaching a round boundary, then shut the server down. Read the `[Brainrot] shutdown • …` line. | The line appears; `pending` is **0**; `written` equals the number of online writable players. After restarting a server in the same namespace, the un-banked catches are present. | — | **BLOCKED — no engine (7C)** | |
 | P-07 | Failed load refuses to overwrite | Simulate an unreadable store, then attempt to earn and leave. Suggestion: temporarily make `BrainrotPersistenceConfig.AcceptanceRunId` a name whose store is broken/unavailable, or run a build with `storeFail`. Observe Output. | The session logs `left with an unsaved session (profile Failed)`, **nothing is written**, and the pre-existing record is byte-identical afterwards. This is the Phase 7A guarantee seen in a real engine, and it is the single most important row in this section. | — | **BLOCKED — no engine (7B)** | |
 | P-08 | Halo purchase persists | Buy a halo (100 coins) with **B**, leave, rejoin | The halo is still owned and equipped; the coin balance dropped by exactly 100. | — | **BLOCKED — no engine (7B)** | |
 | P-09 | Production untouched (audit) | After the whole run, inspect the **production** experience's data (or its stats), and confirm the acceptance place was never configured to it | No acceptance-run writes in production. The guard in §3.2 plus P-00 is the evidence; this row is the human audit of that claim. | — | **BLOCKED — no engine (7B)** | |
@@ -277,17 +284,16 @@ Layout is responsive with these breakpoints, which is why the rows name them:
 | T-08 | Screen scaling — tablet | iPad preset (e.g. 820×1180) | Layout uses the desktop arrangement; brand cluster visible; bottom bar hugs the bottom edge (no phone lift) | — | **BLOCKED — no engine (7B)** | |
 | T-09 | Responsive interaction (rotation) | Rotate portrait → landscape → portrait mid-round | Every control returns fully on screen; nothing is stranded off screen; the round is not interrupted | — | **BLOCKED — no engine (7B)** | |
 | T-10 | Touch targets in the action bar | Tap SHOP, INV (specimen log), SETTINGS, RANKS, HELP | Each opens its panel on the first tap; all are ≥ 44 px tall; `Shop/Inventory/Settings` are above the thumbstick zone | — | **BLOCKED — no engine (7B)** | |
+| T-12 | **Two-row layout reach** (added by 7C) | Portrait phone: the shop bar is now on its own row above STEAL/ABILITY. Tap SHOP, INV, SETTINGS, then STEAL and ABILITY. | Every control is individually tappable with no mis-taps between rows; the bar is comfortably thumb-reachable; it does not cover the arena centre | — | **BLOCKED — no engine (7C)** | |
 | T-11 | Real device | Repeat T-01, T-04, T-06, T-09 on a physical phone via the Roblox app on the private server | Matches the emulator; thumb reach is comfortable; no accidental jumps when tapping the bottom bar | — | **BLOCKED — no device** | |
 
-> **Known cosmetic risk (not fixed):** on phone widths the three-button action
-> bar (`Shop / Inventory / Settings`, 252 px wide, centred) geometrically
-> overlaps the steal and ability buttons, because all sit at `barLift` 118 px.
-> The bar is at `ZIndex` 4 and its buttons at 3, so the steal label and cooldown
-> sweep are **visible and tappable** only on the right-hand portion; the overlap
-> is partly transparent framing. On landscape phones the ability panel overlaps
-> the bar's left edge. This is recorded as risk **R2**; T-03/T-04/T-10 must
-> confirm the actual tap behaviour, and if any tap is lost it is a **FAIL** that
-> promotes R2 to a defect.
+> **R2 — FIXED in Phase 7C.** The overlap was real at every phone size, not
+> cosmetic: on a 390 px phone the three controls need 528 px. Phones now use a
+> two-row layout (bar above, steal + ability below) and wider screens park the
+> bar immediately left of the action cluster. Geometry is clean at 17 viewports
+> (`7C-M1…M6`). What remains unverified is **touch delivery** — the tests prove
+> where the controls are, not that a tap lands — so T-03/T-04/T-10 still decide
+> that, and T-12 checks the new two-row reach.
 
 ---
 

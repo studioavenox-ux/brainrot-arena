@@ -270,6 +270,23 @@ function Hud:resize()
 	local portrait = width < height
 	self.compact, self.short, self.portrait = compact, short, portrait
 
+	-- ---- bottom control geometry, computed once ------------------------- #
+	-- Three controls compete for the bottom of the screen: the steal panel,
+	-- the ability panel and the shop/inventory/settings bar. The steal panel and
+	-- its readout are ONE footprint (the readout is 30 px tall at -38, so 68 px
+	-- above the button's own 52). Getting these numbers from one place is what
+	-- stops each control from being cleared independently and still colliding.
+	local stealW = if compact then 150 else 186
+	local abilityW = if compact then 118 else 150
+	local barW = if compact then 252 else 268
+	local STEAL_STACK = 52 + 38           -- button + readout above it
+	local CONTROL_ROW = STEAL_STACK       -- the row the steal/ability panels use
+	-- Two rows are needed when the three controls cannot share one. They need
+	-- stealW + gap + barW + gap + abilityW; below that the bar takes its own row.
+	local singleRowNeeds = stealW + Space.sm + barW + Space.sm + abilityW
+	self.twoRows = width < singleRowNeeds or width < 700
+	self.abilityOnOwnRow = self.twoRows
+
 	local top = self.top
 	self.scrimTop.Size = UDim2.new(1, 0, 0, math.min(190, math.max(120, height * .26)))
 	self.scrimBottom.Size = UDim2.new(1, 0, 0, math.min(150, math.max(100, height * .2)))
@@ -350,8 +367,30 @@ function Hud:resize()
 
 	-- Action bar. On phones it sits above the thumbstick and jump zones so a tap on
 	-- the shop never registers as a jump; on desktop it hugs the bottom edge.
-	local barLift = if compact then 118 else Space.lg
-	self.actions.bar.Position = UDim2.new(.5, 0, 1, -barLift - 52)
+	--
+	-- Everything at the bottom of the screen shares one horizontal band: the
+	-- steal panel (right), the ability panel (left of it) and this bar. On a
+	-- 390 px phone that band is 390 px wide and the three controls need
+	-- 150 + 8 + 118 + 252 = 528 px, so no arrangement fits them side by side and
+	-- the bar used to sit on top of both action panels. Phones therefore get TWO
+	-- rows: this bar alone above, the two action panels below it, each keeping its
+	-- 52 px touch height and its existing horizontal position.
+	--
+	-- In the single-row layout the bar shares the bottom row, parked immediately
+	-- left of the action cluster. In the two-row layout it is lifted by the panel
+	-- lift + the whole steal stack + one gap, so it clears the buttons AND the
+	-- readout that rides above the steal button.
+	local PANEL_LIFT = 118
+	local barLift = if self.twoRows then PANEL_LIFT + STEAL_STACK + Space.sm else Space.lg
+	if self.twoRows then
+		self.actions.bar.AnchorPoint = Vector2.new(.5, 0)
+		self.actions.bar.Position = UDim2.new(.5, 0, 1, -barLift - 52)
+	else
+		-- [bar] [ability][steal] — the bar's right edge clears the ability panel.
+		local clusterLeft = width - Space.md - (stealW + Space.sm + abilityW)
+		self.actions.bar.AnchorPoint = Vector2.new(1, 0)
+		self.actions.bar.Position = UDim2.fromOffset(clusterLeft - Space.sm, height - barLift - 52)
+	end
 	self.actions.bar.Visible = true
 	for _, name in { "Shop", "Inventory", "Settings" } do
 		local button = self.actions.buttons[name]
@@ -390,9 +429,11 @@ function Hud:resize()
 	self.lobby.frame.Size = UDim2.fromOffset(math.min(width - 32, 420), 92)
 	self.lobby.frame.Position = UDim2.new(.5, 0, 0, lobbyTop)
 
-	-- Steal action. Portrait/desktop: bottom-right. Short landscape: bottom-LEFT,
-	-- above the thumbstick, so it cannot sit under the leaderboard or the jump pad.
-	local stealLift = if compact then 118 else Space.lg
+	-- Steal action. Portrait/desktop: bottom-right. Short landscape: bottom-left,
+	-- but LIFTED clear of the thumbstick. Roblox puts the thumbstick bottom-left
+	-- and jump bottom-right, so both sides of the bottom edge are occupied on
+	-- touch: the lift is what keeps the control usable, not the side.
+	local stealLift = if short then PANEL_LIFT elseif self.twoRows or compact then PANEL_LIFT else Space.lg
 	-- The panel is built right-anchored (see Panels.stealPanel), so the left-hand
 	-- short-landscape branch must reset the anchor. Without this the root is
 	-- positioned from the left edge but still anchored by its right edge, which
@@ -418,9 +459,11 @@ function Hud:resize()
 	-- the steal button is not on. The strip sits above the steal readout.
 	local stealWidth = if compact then 150 else 186
 	local abilityWidth = if compact then 118 else 150
-	if short then
+	if self.twoRows then
+		-- Above the steal panel AND above the bar's row, which sits further up.
+		-- The ability is a gameplay verb, so it moves rather than hides.
 		self.ability.root.AnchorPoint = Vector2.new(0, 0)
-		self.ability.root.Position = UDim2.fromOffset(Space.md + stealWidth + Space.sm, height - stealLift - 52)
+		self.ability.root.Position = UDim2.new(0, Space.md, 1, -barLift - 52 - 60)
 	else
 		self.ability.root.AnchorPoint = Vector2.new(1, 0)
 		self.ability.root.Position = UDim2.new(1, -Space.md - stealWidth - Space.sm, 1, -stealLift - 52)

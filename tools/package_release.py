@@ -49,6 +49,7 @@ def main():
         "docs/CHAOS_EVENTS.md", "docs/AUDIO.md", "docs/PHASE_CHARACTERS_ABILITIES.md",
         "docs/PHASE6_DURABILITY.md", "docs/PHASE7A_PERSISTENCE_SAFETY.md",
     "docs/PHASE7B_ACCEPTANCE_PACKAGE.md", "docs/PHASE7B_ACCEPTANCE_REPORT.md",
+    "docs/PHASE7C_SHUTDOWN_AND_MOBILE.md",
         "docs/STUDIO_VERIFICATION_10de1d9.md", "docs/STUDIO_UI_VISIBILITY_CHECK.md",
         "docs/previews/cast.jpg", "docs/previews/collection.jpg",
         "docs/previews/ui-collection.jpg", "docs/previews/ui-collection-full.jpg",
