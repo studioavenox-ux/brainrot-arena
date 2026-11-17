@@ -1,6 +1,6 @@
 # BRAINROT ARENA — prototype build report
 
-Verified: **2026-11-09T12:58:42+00:00**.
+Verified: **2026-11-17T10:06:33+00:00**.
 
 **Automated checks passed. Roblox Studio / engine acceptance is still unverified.**
 This Linux workspace has no Roblox Studio installation or Roblox control connector.
@@ -26,8 +26,11 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
   round and Chaos stingers, one Sound setting, and an ability-cue API. No sound IDs are bundled.
   See [AUDIO.md](AUDIO.md).
 - Winner/tie/no-score announcements; **persistent** coins, specimen log, lifetime stats and the
-  server-validated Pulse Halo in a DataStore profile with a documented memory fallback. See
-  [PHASE5_STEAL_AND_EVENTS.md](PHASE5_STEAL_AND_EVENTS.md).
+  server-validated Pulse Halo in a DataStore profile with a documented memory fallback.
+  Phase 6: the DataStore is now enabled by default on a live server (Studio stays
+  memory-only unless asked) and each payout adds only that round's specimens. See
+  [Phase 6 durability report](PHASE6_DURABILITY.md); steal/stage/event
+  design is in [PHASE5_STEAL_AND_EVENTS.md](PHASE5_STEAL_AND_EVENTS.md).
 - Server-authoritative arena access: heartbeat routing with verified pivots, backoff and a
   seated/dead-safe fallback, so a round always pulls every eligible player in and returns
   them afterwards. See [PHASE3_GAMEPLAY_FIXES.md](PHASE3_GAMEPLAY_FIXES.md).
@@ -67,8 +70,8 @@ This Linux workspace has no Roblox Studio installation or Roblox control connect
 
 | Check | Result |
 |---|---:|
-| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 145 passed |
-| Real server/client scripts against mocked Roblox services (+ steal, persistence, characters and abilities) | 105 passed |
+| Luau core tests (100 × 12-player round simulations + steal / stage / event rules) | 150 passed |
+| Real server/client scripts against mocked Roblox services (+ steal, persistence, characters and abilities) | 140 passed |
 | XML/API/geometry export tests | 36 passed |
 | Art-direction gate (palette, hierarchy, legibility, lighting) | 35 passed |
 | Official Luau compilation | 32 files passed |
@@ -158,7 +161,7 @@ No code pasting, plugin installation, API keys, asset uploads, or monetization s
 
 ## Export integrity
 
-Source SHA-256: `26d7f475fabb11325f78c0d0f94bd87e9d1adc1a058b774bc658d32243e2dd0f`
+Source SHA-256: `568742d13c6c07991a0b5b8f64a4c04b443bc7cdc24fd856b21a46f0320aa402`
 
-- `BrainrotArena-QuickTest.rbxlx` — 1,836,202 bytes; SHA-256 `92cb42582c5785a0d960e149b08436f018be4ddec49862df11a0fcb911ada089`
-- `BrainrotArena.rbxlx` — 1,836,203 bytes; SHA-256 `03d4c53a0916bd109ee1e80eafb23ee0f54d50a82c1dd1d67e6b5b1532f1b42f`
+- `BrainrotArena-QuickTest.rbxlx` — 1,864,639 bytes; SHA-256 `9048fe269a5e2e992f7b2b5c6ba19e851c7963b783fe06e698714372b0597645`
+- `BrainrotArena.rbxlx` — 1,864,640 bytes; SHA-256 `b9411f88c74251a5a2a766930b6d297023d201ad2b2fc455ae3111b9d3f7f498`

@@ -15,13 +15,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 14111,
-      "sha256": "0820a8bd8f1486d93a6b6178797b39d4f65521b0bfd8d651570d3d40dd0e0b86"
+      "bytes": 14396,
+      "sha256": "b1f46132118b16a62d9d67e70654343d99422ce9bdac0268dba6aac24326d5b1"
     },
     {
       "path": "artifacts/verification.json",
       "bytes": 1908,
-      "sha256": "bbce996aeee6178418f1ddb17b11988a2bc2882ed9d04170085894dd3387523b"
+      "sha256": "145511ef3b1e8eab3ebc9aa626d334efb918972ab72e1f792e40093d22ff1ad1"
     },
     {
       "path": "assets/README.md",
@@ -40,8 +40,8 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 16918,
-      "sha256": "1cce5af06badd8aeec20c45594d95235e8500c2ac8502e9f4c53cfc86904eb8b"
+      "bytes": 19272,
+      "sha256": "c8ad67d2f8dd7e0d6c1824fffb03a37f6012ffa4061044e2ba1bd1425737f721"
     },
     {
       "path": "docs/AUDIO.md",
@@ -50,8 +50,8 @@
     },
     {
       "path": "docs/BUILD_REPORT.md",
-      "bytes": 11419,
-      "sha256": "9f324a9876a30b84c03f16ba4b12d1e7662053bba0837a1c748fc4c90c721a4e"
+      "bytes": 11663,
+      "sha256": "8915d860757495f9407e21cbbd3a285e4561eb32de143de429f37bee9bb2f57b"
     },
     {
       "path": "docs/CHAOS_EVENTS.md",
@@ -70,8 +70,8 @@
     },
     {
       "path": "docs/KNOWN_LIMITATIONS.md",
-      "bytes": 4043,
-      "sha256": "989aa4b41575d60adfffe85328605e8f34ba0a72650bb0defb2ecd8b854ffe15"
+      "bytes": 5922,
+      "sha256": "1aad096acd19204eab2f6eacfacab4cbb786b72a8116cea9a7a138b6253396d4"
     },
     {
       "path": "docs/PHASE3_GAMEPLAY_FIXES.md",
@@ -82,6 +82,31 @@
       "path": "docs/PHASE5_STEAL_AND_EVENTS.md",
       "bytes": 9819,
       "sha256": "af62994ffbe186375a9628bc820424addbce8abdb6068b350b760041ef62bea0"
+    },
+    {
+      "path": "docs/PHASE6_DURABILITY.md",
+      "bytes": 12566,
+      "sha256": "aba6a283f443b8cba8c4432958a0d2962747ea845c622303ad25b0f02c99a8e0"
+    },
+    {
+      "path": "docs/PHASE7A_PERSISTENCE_SAFETY.md",
+      "bytes": 10131,
+      "sha256": "4325248be29162646935754a4dd66a01255cea9f11b527404dca19bae9ccd448"
+    },
+    {
+      "path": "docs/PHASE7B_ACCEPTANCE_PACKAGE.md",
+      "bytes": 25080,
+      "sha256": "a8254b9deb65051aaa6b0f91798d493191162f9e566a6d9d1439d5eaaa248d7b"
+    },
+    {
+      "path": "docs/PHASE7B_ACCEPTANCE_REPORT.md",
+      "bytes": 12873,
+      "sha256": "b4e9f2adb1b714f97fdb3bad264872320f1d14d4041b821fd0e51a7db24192ba"
+    },
+    {
+      "path": "docs/PHASE7C_SHUTDOWN_AND_MOBILE.md",
+      "bytes": 16953,
+      "sha256": "0d53730c0ccc88c36ee0192de259b791888fa74da18a79e3596c9b0972e72718"
     },
     {
       "path": "docs/PHASE_CHARACTERS_ABILITIES.md",
@@ -100,8 +125,8 @@
     },
     {
       "path": "docs/TESTING.md",
-      "bytes": 13335,
-      "sha256": "d0bdb59b6ec75013ce000cf43884adef26d07fcabbdf1ad063328b0956df27cd"
+      "bytes": 14970,
+      "sha256": "816cb8aaea78dd2a43ab95695848cf95102d5e1867dabf776665cc90419cdf4f"
     },
     {
       "path": "docs/TEST_REPORT_PHASE5.md",
@@ -255,13 +280,13 @@
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1836202,
-      "sha256": "92cb42582c5785a0d960e149b08436f018be4ddec49862df11a0fcb911ada089"
+      "bytes": 1864639,
+      "sha256": "9048fe269a5e2e992f7b2b5c6ba19e851c7963b783fe06e698714372b0597645"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1836203,
-      "sha256": "03d4c53a0916bd109ee1e80eafb23ee0f54d50a82c1dd1d67e6b5b1532f1b42f"
+      "bytes": 1864640,
+      "sha256": "b9411f88c74251a5a2a766930b6d297023d201ad2b2fc455ae3111b9d3f7f498"
     },
     {
       "path": "src/client/Audio.luau",
@@ -270,8 +295,8 @@
     },
     {
       "path": "src/client/Collection.luau",
-      "bytes": 11310,
-      "sha256": "df4ead9235cf2831d99b42efbe691127ffb192570219edea235b6df157dd2bbb"
+      "bytes": 11448,
+      "sha256": "8b1d1078375d6fadfe0ed914756720990f21e9adb0221a9b53b2ba1958178d94"
     },
     {
       "path": "src/client/CreatureData.luau",
@@ -290,8 +315,8 @@
     },
     {
       "path": "src/client/Hud.luau",
-      "bytes": 41815,
-      "sha256": "82e302af4e2edba33ee32de65c4bad176bf1851710ddf73ec8afe35098e13a26"
+      "bytes": 44992,
+      "sha256": "c564f1d42ded3681f6ed82cf8d93857302461bdbfb73e66958d9ac2890e70b0e"
     },
     {
       "path": "src/client/Iconography.luau",
@@ -335,13 +360,13 @@
     },
     {
       "path": "src/server/Main.server.luau",
-      "bytes": 35280,
-      "sha256": "df49acc7a181c2ce6b8fcd6dce25ea9980b21212febe7e65208ad31bc1ae9a47"
+      "bytes": 41242,
+      "sha256": "362288412299100d5d7e7b4e428a4fe2b858dab9e630e63e1085cde79ca39228"
     },
     {
       "path": "src/server/Persistence.luau",
-      "bytes": 9620,
-      "sha256": "baa566176f88b63709d9fa52825729b09b3bb577b68cb7da8a745e85b9b5fce8"
+      "bytes": 25586,
+      "sha256": "d8e8144aab35ac67d846ff98f2a7448b1168d52bacd99667c7006865ac88af42"
     },
     {
       "path": "src/server/WorldData.luau",
@@ -385,8 +410,8 @@
     },
     {
       "path": "src/server/core/RoundMachine.luau",
-      "bytes": 23881,
-      "sha256": "e213582c42e5c015cbf6132f0725d9527bc2dc56799e42f51c6941c5c3141ea8"
+      "bytes": 26840,
+      "sha256": "e61b07d57f6d6954524992add973c2877124e9738a1bfd27642ca4ef367eb27e"
     },
     {
       "path": "src/shared/ArtDirection.luau",
@@ -400,8 +425,8 @@
     },
     {
       "path": "src/shared/Config.luau",
-      "bytes": 6730,
-      "sha256": "be3a6ee1bd6916a1b2a23a095054cfe490e1ac45ce4ee65dc92664cb9660e54c"
+      "bytes": 6911,
+      "sha256": "3af05668fe59fc0009425ae4ee870881a23469b33e7efb073810c5951b5ae793"
     },
     {
       "path": "src/shared/Creatures.luau",
@@ -410,18 +435,18 @@
     },
     {
       "path": "tests/adapters.spec.luau",
-      "bytes": 62679,
-      "sha256": "bf1654085d8cc6afc76b25f97845a645894afb0cb6c2a3262aba960daf34f824"
+      "bytes": 101168,
+      "sha256": "e524655088d2b2e09a0f9ee812cadc1c7780a31a90e66e03e9d59ae1ca54be36"
     },
     {
       "path": "tests/core.spec.luau",
-      "bytes": 54471,
-      "sha256": "d3f7cb296b7bc8f752023678704e4c44fc1c4e75d6cc4e8fb3bdf112427c331b"
+      "bytes": 58379,
+      "sha256": "6c138148d92e410abd85d684c858e9cb3746a85e88aed6f0a1430a69c5ce577a"
     },
     {
       "path": "tests/fixtures/roblox-api.json",
-      "bytes": 89332,
-      "sha256": "d18edd77e2e2c8130c9f9006d63762b834be317e565c14c233f1c38301e65343"
+      "bytes": 90433,
+      "sha256": "15403dc09b55fff41a9e1ce285245fddca76071433f12dd9f5287f8b0649043b"
     },
     {
       "path": "tests/fixtures/world-baseline.json",
@@ -430,8 +455,8 @@
     },
     {
       "path": "tests/roblox_mock.luau",
-      "bytes": 21599,
-      "sha256": "c0ebab9029bdf22590cc0442833637630eb049980a8900d45f2f71fe6f59be4c"
+      "bytes": 24196,
+      "sha256": "4756e1c030dbfdeee42f7d969ffa126491ca363a325d1b0d8883a4ab125677f6"
     },
     {
       "path": "tools/artcheck.py",
@@ -450,8 +475,8 @@
     },
     {
       "path": "tools/check.py",
-      "bytes": 18525,
-      "sha256": "ab91448b3d7082cd289a110e07313f39287b026ea16fef7cea2b12ac31e16b71"
+      "bytes": 18802,
+      "sha256": "385674528d203d0eddaa5a65006b2ec6e3bbecd73dea4eb6c380fcc0afcd41d5"
     },
     {
       "path": "tools/creatures.py",
@@ -470,8 +495,8 @@
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 9611,
-      "sha256": "497b60a2bf2a3a500077b5a7e13e487ec1b8fcd249c312ddcad6ed97e847068b"
+      "bytes": 9808,
+      "sha256": "b288631051a201da3083c187633f40efe6a8af3f8f94ab2fdbe6784a2b9f863c"
     },
     {
       "path": "tools/preview.py",
@@ -514,12 +539,12 @@
       "sha256": "c6427b28e8f9a7d41d293b81576b3bfe697497b81b5af6e2ae433bae5d088bda"
     }
   ],
-  "file_count_excluding_manifest": 102,
+  "file_count_excluding_manifest": 107,
   "production_script_count": 29,
   "place_count": 2,
-  "source_sha256": "26d7f475fabb11325f78c0d0f94bd87e9d1adc1a058b774bc658d32243e2dd0f",
-  "prior_verification_timestamp_utc": "2026-11-09T12:58:42+00:00",
-  "prior_automated_tests_passed": 321,
+  "source_sha256": "568742d13c6c07991a0b5b8f64a4c04b443bc7cdc24fd856b21a46f0320aa402",
+  "prior_verification_timestamp_utc": "2026-11-17T10:06:18+00:00",
+  "prior_automated_tests_passed": 361,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",

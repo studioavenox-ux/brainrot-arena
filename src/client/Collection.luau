@@ -248,8 +248,10 @@ function Collection:update(row)
 		card.stage.rim.Color = RARITY[card.entry.rarity].color
 	end
 	if row then
+		-- row.pickups is this ROUND's catch count (the server resets it at every
+		-- round start), so the label must not claim it is a session total.
 		self.subtitle.Text = string.format(
-			"%d / %d CHARACTERS LOGGED  •  %d CELLS CAUGHT THIS SESSION  •  %d COINS",
+			"%d / %d CHARACTERS LOGGED  •  %d CAUGHT THIS ROUND  •  %d COINS",
 			caught, #self.cards, row.pickups or 0, row.coins or 0)
 	else
 		self.subtitle.Text = string.format("%d / %d CHARACTERS LOGGED", caught, #self.cards)

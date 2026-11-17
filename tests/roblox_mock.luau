@@ -104,7 +104,13 @@ local Vector2 = {new=function(x,y) return {X=x,Y=y,_type="Vector2"} end,zero={X=
 
 function Mock.new(sources, schema, options)
 	options = options or {}
-	local env = { now=100, viewport={X=1280,Y=720}, logs={}, delayed={}, modules={}, sources=sources, options=options }
+	-- Roblox reports `RunService:IsStudio()` from the execution context, and the
+	-- unchanged default here is "studio". A test that wants the *live-server*
+	-- behaviour (DataStore persistence, published-only guards) must opt in with an
+	-- explicit `studio = false`: a defaulted false is exactly what would have
+	-- produced a false green on the persistence path.
+	if options.studio == nil then options.studio = true end
+	local env = { now=100, viewport={X=1280,Y=720}, logs={}, delayed={}, deferred={}, modules={}, sources=sources, options=options }
 	local enum={}
 	for enumName,items in schema.Enums do
 		local values={}
@@ -218,6 +224,9 @@ function Mock.new(sources, schema, options)
 		if obj:IsA("GuiObject") then obj._props.Visible=true; obj._props.Size=UDim2.fromOffset(0,0); obj._props.Position=UDim2.fromOffset(0,0) end
 		if class=="Humanoid" then obj._props.Health=100 end
 		if class=="IntValue" then obj._props.Value=0 end
+		if class=="StringValue" then obj._props.Value="" end
+		if class=="NumberValue" then obj._props.Value=0 end
+		if class=="BoolValue" then obj._props.Value=false end
 		return obj
 	end
 	function methods:IsA(class) return classIs(self._class,class) end
@@ -307,25 +316,41 @@ function Mock.new(sources, schema, options)
 	env.Vector3,env.CFrame=V,CF
 	env.services={}
 	env.game=new("DataModel")
+	-- Mirrors the engine: `BindToClose(function)` registers a callback and takes
+	-- no other arguments. The real engine runs every binding concurrently and
+	-- kills the instance at most 30 s later; the mock runs them in order and
+	-- returns, so a test observes the callbacks but NOT the engine's timing.
+	rawset(env.game,"BindToClose",function(_,fn)
+		assert(type(fn)=="function","BindToClose expects a function")
+		table.insert(env.closeBindings,fn)
+	end)
 	-- DataStoreService is a deterministic in-memory double: the same key always
 	-- returns what was last written, and `options.store` can preseed or inspect it.
 	env.stores={}
-	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui","DataStoreService"} do
+	env.writeCounts={}   -- key -> number of successful SetAsync calls
+	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","ServerStorage","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui","DataStoreService"} do
 		local service=new(name); service.Name=name; service.Parent=env.game; env.services[name]=service
 	end
 	function methods:GetService(name) assert(env.services[name],"Unknown service "..name); return env.services[name] end
+	-- `game:BindToClose` is a DataModel method, not a generic instance method, so
+	-- it is defined only on the DataModel (see below). Registered callbacks are
+	-- kept on the environment and fired by `env:shutdown()`.
+	env.closeBindings={}
 	local dataStore=env.services.DataStoreService
 	rawset(dataStore,"GetDataStore",function(self,name)
 		env.stores[name]=env.stores[name] or {}
 		local store=env.stores[name]
 		local methods2={}
 		function methods2:GetAsync(key)
-			if options.storeFail then error("DataStore disabled in this test") end
+			if options.storeFail or options.readFail then error("DataStore read disabled in this test") end
 			return store[key]
 		end
 		function methods2:SetAsync(key,value)
-			if options.storeFail then error("DataStore disabled in this test") end
+			-- `options.writeFail` is readable at call time, so a test can fail a
+			-- write that starts *during* a shutdown without failing earlier ones.
+			if options.storeFail or options.writeFail then error("DataStore write disabled in this test") end
 			store[key]=value
+			env.writeCounts[key]=(env.writeCounts[key] or 0)+1
 			return key
 		end
 		function methods2:UpdateAsync(key,fn)
@@ -368,7 +393,14 @@ function Mock.new(sources, schema, options)
 			return {_type="PhysicalProperties",Density=density,Friction=friction,Elasticity=elasticity,
 				FrictionWeight=weight,ElasticityWeight=strength} end},
 		Random={new=function() return {NextNumber=function() return options.roll or .1 end} end},
-		task={spawn=function(fn,...) fn(...) end,wait=function() return 0 end,delay=function(delay,fn) table.insert(env.delayed,{at=env.now+delay,fn=fn}) end},
+		task={spawn=function(fn,...)
+			-- `options.deferAsync` holds every spawned continuation until the test
+			-- releases it, so an in-flight load can be raced against a leave.
+			if options.deferAsync then table.insert(env.deferred,{fn=fn,args={...}}); return end
+			fn(...)
+		end,
+		wait=function() return 0 end,
+		delay=function(delay,fn) table.insert(env.delayed,{at=env.now+delay,fn=fn}) end},
 		typeof=function(value) return if type(value)=="table" then (value._type or (if value._class then "Instance" else "table")) else type(value) end,
 	}
 	local loading={}
@@ -427,6 +459,22 @@ function Mock.new(sources, schema, options)
 	end
 	function env:request(player,...)
 		self.services.ReplicatedStorage.BrainrotRemotes.Request.OnServerEvent:Fire(player,...)
+	end
+	-- Run every continuation that task.spawn deferred, in order. Tests call this
+	-- to simulate "the DataStore response finally arrived".
+	-- Fire every BindToClose callback, as the engine does when the server closes.
+	-- Returns the number of bindings run. This is a contract double: it does not
+	-- model the 30 s kill, concurrent execution, or the engine dropping work that
+	-- is still running when the instance dies.
+	function env:shutdown()
+		local bindings=self.closeBindings; self.closeBindings={}
+		for _,fn in bindings do fn() end
+		return #bindings
+	end
+	function env:flushAsync()
+		local queue=self.deferred; self.deferred={}
+		for _,item in queue do item.fn(table.unpack(item.args)) end
+		return #queue
 	end
 	function env:logsMatching(needle)
 		local out={}

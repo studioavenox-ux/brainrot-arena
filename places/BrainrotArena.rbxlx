@@ -39918,6 +39918,9 @@ local Config = {
 	WinnerCoins = 30,
 	HaloCost = 100,
 	SaveInterval = 60,
+	-- Seconds before one bounded retry of a profile whose first read failed.
+	-- The player keeps playing meanwhile; nothing is written until it succeeds.
+	PersistenceRetryDelay = 5,
 
 	-- ------------------------------------------------------------------ #
 	-- Round stages. Elapsed seconds from the start of a Playing round.
@@ -40598,7 +40601,34 @@ local appliedChaos = ""
 local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
-local profiles = Persistence.new({})
+-- The DataStore namespace is chosen on the SERVER only, and never from client
+-- input. Production is the default and needs no configuration. An acceptance run
+-- sets it once, in Studio or on an isolated test place, BEFORE the server starts:
+--
+--   local Storage = game:GetService("ServerStorage")
+--   local config = Instance.new("Configuration")
+--   config.Name = "BrainrotPersistenceConfig"
+--   local runId = Instance.new("StringValue"); runId.Name = "AcceptanceRunId"
+--   runId.Value = "p7a-2026-11-17"          -- unique per acceptance run
+--   runId.Parent = config
+--   config.Parent = Storage
+--
+-- Any other name is rejected by Persistence.resolveStoreName, so a typo cannot
+-- point a test at live progression. Leaving the configuration out (the normal
+-- published game) uses BrainrotArenaProfiles.
+local function persistenceOptions(): { [string]: any }
+	local storage = game:GetService("ServerStorage")
+	local config = storage:FindFirstChild("BrainrotPersistenceConfig")
+	local runId = if config then config:FindFirstChild("AcceptanceRunId") else nil
+	if runId and runId:IsA("StringValue") and runId.Value ~= "" then
+		print(string.format("[Brainrot] ACCEPTANCE DataStore namespace: %s", runId.Value))
+		return { acceptance = true, storeName = "BrainrotArenaAcceptance_" .. runId.Value }
+	end
+	return {}
+end
+local profiles = Persistence.new(persistenceOptions())
+print(string.format("[Brainrot] persistence: store=%s acceptance=%s memoryOnly=%s",
+	tostring(profiles.storeName), tostring(profiles.acceptance), tostring(profiles.memoryOnly)))
 print("[Brainrot][server] persistence ready")
 Workspace.Gravity = Config.NormalGravity
 Workspace.FallenPartsDestroyHeight = -160
@@ -41000,22 +41030,28 @@ local function handleEffects(effects, now: number)
 			print(string.format("[Brainrot] stage • %s (banked all carried cells)", tostring(effect.stage)))
 		elseif effect.kind == "phase" then
 			if machine.phase == "Results" and machine.lastResults then
-				-- Pay the round into each profile once, from the machine's own result.
+				-- Pay the round into each profile exactly once, from the result the
+				-- machine froze when the round closed. Nothing here re-reads live
+				-- player state: a save that runs late can no longer record the next
+				-- round's catches, and only players the machine paid are touched.
 				local winners = {}
 				for _, row in machine.lastResults.winners do
 					winners[row.id] = true
 				end
 				for _, row in machine:rows() do
-					local profile = profiles:profile(row.id)
-					if profile then
-						local paid = (machine.lastResults.rewards[tostring(row.id)] or 0)
-						Persistence.applyRound(profile, {
-							score = row.score, steals = row.steals, lost = row.lost,
-							pickups = row.pickups, coins = paid, won = winners[row.id] == true,
-							collection = row.collection,
-						})
-						-- The machine owns live coins; keep them in step with the profile.
-						profiles:save(row.id)
+					local paid = machine.lastResults.rewards[tostring(row.id)]
+					if paid ~= nil then
+						local profile = profiles:profile(row.id)
+						if profile then
+							Persistence.applyRound(profile, {
+								score = row.score, steals = row.steals, lost = row.lost,
+								pickups = row.pickups, coins = paid, won = winners[row.id] == true,
+								-- Round-scoped catches, frozen at the results edge.
+								collection = machine.lastResults.collections[tostring(row.id)],
+							})
+							-- The machine owns live coins; keep them in step with the profile.
+							profiles:save(row.id)
+						end
 					end
 				end
 			end
@@ -41087,12 +41123,29 @@ local function playerAdded(player: Player)
 	-- Seed the session from the saved profile as soon as it is available. The
 	-- machine's numbers stay authoritative for the round; the profile is what
 	-- survives it.
-	profiles:load(player.UserId, function(profile)
+	-- The load reports its state. Only a Loaded profile may seed the session;
+	-- a Failed one keeps the player playing in memory with their saved progress
+	-- untouched on disk, and gets one bounded retry so a brief throttle does not
+	-- cost the whole session.
+	local function seed(profile, state)
+		if state == "Failed" then
+			warn(string.format("[Brainrot] %s: profile unavailable, playing unsaved", player.Name))
+			return
+		end
 		if machine.players[player.UserId] then
 			machine:seedProfile(player.UserId, profile.Coins, profile.Halo)
 			applyHalo(player)
 			syncStats()
 			dirty = true
+		end
+	end
+	profiles:load(player.UserId, function(profile, state)
+		seed(profile, state)
+		if state == "Failed" and player.Parent == Players then
+			task.wait(Config.PersistenceRetryDelay)
+			if player.Parent == Players and profiles:state(player.UserId) == "Failed" then
+				profiles:load(player.UserId, seed, { retry = true })
+			end
 		end
 	end)
 	nextSpawn += 1
@@ -41116,6 +41169,34 @@ local function playerAdded(player: Player)
 	dirty = true
 end
 
+-- Fold everything this session earned into the durable profile. Called from
+-- PlayerRemoving and from the shutdown drain so both write the SAME table: two
+-- different merge orders against one key is exactly how a shutdown can end up
+-- persisting less than the player actually earned.
+-- Returns false when the profile is not writable, and never touches it then.
+local function snapshotSession(userId: number): boolean
+	if not profiles:isWritable(userId) then
+		return false
+	end
+	local data = machine.players[userId]
+	if not data then
+		return profiles:profile(userId) ~= nil
+	end
+	local profile = profiles:profile(userId)
+	if not profile then
+		return false
+	end
+	local coins, halo = machine:cosmetics(userId)
+	profile.Coins = math.max(profile.Coins, coins)
+	profile.Halo = halo
+	for species, amount in data.collection do
+		if type(species) == "string" then
+			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
+		end
+	end
+	return true
+end
+
 Players.PlayerAdded:Connect(playerAdded)
 Players.PlayerRemoving:Connect(function(player)
 	local record = records[player.UserId]
@@ -41123,17 +41204,24 @@ Players.PlayerRemoving:Connect(function(player)
 		record.connection:Disconnect()
 	end
 	-- Persist what this session earned before the machine forgets the player.
-	local data = machine.players[player.UserId]
-	local profile = profiles:profile(player.UserId)
-	if data and profile then
-		local coins, halo = machine:cosmetics(player.UserId)
-		profile.Coins = math.max(profile.Coins, coins)
-		profile.Halo = halo
-		for species, amount in data.collection do
-			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
-		end
-		profiles:save(player.UserId)
+	-- Only a profile that actually loaded is writable: if the read failed, this
+	-- final save is skipped so the real record survives the outage.
+	if snapshotSession(player.UserId) then
+		-- AWAITED, deliberately. `release` below bumps the generation, and the
+		-- write aborts when it sees a newer generation — so a write merely
+		-- *queued* here would be dropped by the release that follows it. (That
+		-- was a real data-loss bug: every leaving player's final save was lost.)
+		-- PlayerRemoving is allowed to yield: the player is already gone and
+		-- nothing on screen waits for it.
+		profiles:saveAwait(player.UserId)
+	else
+		print(string.format("[Brainrot] %s left with an unsaved session (profile %s)",
+			player.Name, tostring(profiles:state(player.UserId))))
 	end
+	-- Tear the session down after the save was queued. `release` invalidates any
+	-- read still in flight, so a late completion cannot store a profile for a
+	-- player who is gone, and a rejoin starts from a clean generation.
+	profiles:release(player.UserId)
 	records[player.UserId] = nil
 	movement:remove(player.UserId)
 	route:remove(player.UserId)
@@ -41141,6 +41229,37 @@ Players.PlayerRemoving:Connect(function(player)
 	CharacterRules.clear(characters, player.UserId)
 	AbilityService.forget(abilities, player.UserId)
 	dirty = true
+end)
+
+-- Shutdown. Roblox runs this when the server is closing (update, migration, or
+-- the last player leaving) and terminates the instance at most 30 s later
+-- whether or not the callback finished, so the drain is bounded and reports what
+-- it could not finish. It saves only profiles that reached Loaded: a session
+-- whose read failed is skipped here exactly as it is on PlayerRemoving.
+--
+-- A player PlayerRemoving already saved has an unchanged payload, so nothing is
+-- written twice. A player whose PlayerRemoving save is still in flight is
+-- joined, not duplicated.
+game:BindToClose(function()
+	local started = os.clock()
+	local players = Players:GetPlayers()
+	local writable = 0
+	for _, player in Players:GetPlayers() do
+		if snapshotSession(player.UserId) then
+			writable += 1
+		end
+	end
+	local report = profiles:shutdownSave()
+	local skipped = report.skipped
+	local stats = profiles:stats()
+	print(string.format(
+		"[Brainrot] shutdown • %d online, %d writable, %d written, %d already saved, %d failed, %d pending (%.2fs, store=%s memoryOnly=%s)",
+		#players, writable, report.saved, skipped, report.failed, report.pending,
+		os.clock() - started, tostring(stats.storeName), tostring(stats.memoryOnly)))
+	if report.failed &gt; 0 or report.pending &gt; 0 then
+		warn(string.format("[Brainrot] shutdown finished with %d unsaved profile(s); see the line above",
+			report.failed + report.pending))
+	end
 end)
 for _, player in Players:GetPlayers() do
 	playerAdded(player)
@@ -41168,8 +41287,14 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 			stateRemote:FireClient(player, snapshot(), STEAL_MESSAGES["cooldown"])
 			return
 		end
-		record.requests.StealSent = now
 		local outcome, value, victim = resolveSteal(player, now)
+		-- Only a steal that actually moved a cell starts the cooldown. A refusal
+		-- (nothing in range, protected, empty-handed) leaves the verb ready, so the
+		-- HUD — which counts down from the server's stealReadyAt — never shows
+		-- "STEAL READY" while the server is silently refusing for eight seconds.
+		if outcome == "ok" then
+			record.requests.StealSent = now
+		end
 		print(string.format("[Brainrot] steal %s • %s -&gt; %s (+%d)", outcome, player.Name,
 			if victim then victim.Name else "nobody", value))
 		-- A steal moves score between two players: refresh leaderstats immediately
@@ -41192,8 +41317,8 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 			-- Coins are spent inside the round, then written to the profile: one
 			-- transition, one save. A client never sends the price.
 			local coins, halo = machine:cosmetics(player.UserId)
-			local profile = profiles:profile(player.UserId)
-			if profile then
+			if profiles:isWritable(player.UserId) then
+				local profile = profiles:profile(player.UserId)
 				profile.Coins = coins
 				profile.Halo = halo
 				profiles:save(player.UserId)
@@ -41441,9 +41566,39 @@ local RunService = game:GetService("RunService")
 local Persistence = {}
 
 local VERSION = 1
-local STORE_NAME = "BrainrotArenaProfiles"
 local MAX_RETRIES = 3
 local RETRY_DELAY = 1.5
+
+-- --------------------------------------------------------------------------- #
+-- Namespace. Production has exactly one name and it never changes: existing
+-- player keys (`p_&lt;userId&gt;`) live in it. An acceptance run must select a
+-- DIFFERENT name, and only a name carrying this prefix is accepted for that.
+-- `Persistence.new` refuses (asserts) anything else, so a typo cannot point a
+-- test run at live progression. Selection is server-side only — see
+-- `Persistence.resolveStoreName` and `Main.server`; no client input reaches it.
+-- --------------------------------------------------------------------------- #
+local PRODUCTION_STORE = "BrainrotArenaProfiles"
+local ACCEPTANCE_PREFIX = "BrainrotArenaAcceptance_"
+
+-- --------------------------------------------------------------------------- #
+-- Loading states. A profile is only writable in LOADED, which is reached only
+-- by a GetAsync that returned (or a confirmed nil, meaning a new player). Any
+-- other state refuses writes, so an outage or a race can never replace a real
+-- record with a default one.
+-- --------------------------------------------------------------------------- #
+local LOADING = "Loading"
+local LOADED = "Loaded"
+local FAILED = "Failed"
+-- Set by `release` (player left). Late async work checks this and stops, so a
+-- finished read cannot resurrect a disconnected session or write for it.
+local LEAVING = "Leaving"
+
+-- How long the shutdown drain is allowed to hold the server open. Roblox gives
+-- every function bound with `game:BindToClose` up to 30 s before the instance is
+-- terminated regardless; this budget stays well inside it and leaves room for a
+-- slow final round trip. Kept in one place so the adapter and the tests agree.
+local SHUTDOWN_BUDGET = 20
+local SHUTDOWN_POLL = 0.1
 
 -- The one definition of a valid profile. `sanitise` is the only way a profile is
 -- built, so a hostile or corrupted table cannot reach gameplay code.
@@ -41535,6 +41690,51 @@ end
 local Store = {}
 Store.__index = Persistence
 
+-- `options` is optional and every field is optional. The DEFAULTS matter:
+--   * memoryOnly defaults to FALSE — a live server persists unless it is told not
+--     to. (An earlier expression, `o.memoryOnly ~= false`, made `new({})` memory
+--     only, so the production path never opened a DataStore at all.)
+--   * Studio is the exception: it is memory-only unless `persistInStudio = true`
+--     is passed explicitly, so local playtests never contend for the live keys.
+--   * `readOnly = true` opens no DataStore at all. It exists for isolated tests
+--     and offline tooling, not for the game.
+--   * `storeName` selects the namespace. It defaults to production and is
+--     validated by `Persistence.resolveStoreName`: only a name with the
+--     acceptance prefix may differ from the production one. Passing the
+--     acceptance name requires `acceptance = true` as well, so the two halves of
+--     the switch must agree before a test run can write anywhere.
+function Persistence.resolveStoreName(options)
+	local o = options or {}
+	local requested = o.storeName
+	if requested == nil or requested == "" then
+		if o.acceptance == true then
+			-- An acceptance run that forgot its namespace must not fall back to
+			-- production. Fail closed, loudly.
+			error("acceptance persistence requires an explicit acceptance storeName", 2)
+		end
+		return PRODUCTION_STORE
+	end
+	if type(requested) ~= "string" then
+		error("storeName must be a string", 2)
+	end
+	if requested == PRODUCTION_STORE then
+		if o.acceptance == true then
+			error("refusing to run an acceptance store against the production namespace", 2)
+		end
+		return PRODUCTION_STORE
+	end
+	if string.sub(requested, 1, #ACCEPTANCE_PREFIX) ~= ACCEPTANCE_PREFIX then
+		error("unknown DataStore namespace (expected the acceptance prefix)", 2)
+	end
+	if o.acceptance ~= true then
+		error("an acceptance namespace requires acceptance = true", 2)
+	end
+	if #requested &lt;= #ACCEPTANCE_PREFIX then
+		error("acceptance namespace needs a run id after the prefix", 2)
+	end
+	return requested
+end
+
 function Persistence.new(options)
 	local o = options or {}
 	local self = setmetatable({}, Store)
@@ -41544,20 +41744,39 @@ function Persistence.new(options)
 	self.available = false
 	self.store = nil
 	self.profiles = {}       -- userId -&gt; profile (cache: the session's truth)
-	self.loaded = {}         -- userId -&gt; true once the durable copy was read
-	self.failed = {}         -- userId -&gt; true if the read failed (retry later)
+	self.states = {}         -- userId -&gt; LOADING | LOADED | FAILED | LEAVING
+	self.generations = {}    -- userId -&gt; monotonic token, invalidates stale async work
 	self.savedAt = {}
-	self.memoryOnly = o.memoryOnly ~= false or RunService:IsStudio() and o.persistInStudio ~= true
+	self.memoryOnly = (o.memoryOnly == true) or (o.readOnly == true)
+		or (RunService:IsStudio() and o.persistInStudio ~= true)
+	-- Resolved before any store is opened, and asserted here so a bad namespace
+	-- fails at start-up instead of at the first write.
+	self.storeName = Persistence.resolveStoreName(o)
+	self.acceptance = o.acceptance == true
 	self.writes = 0
 	self.reads = 0
 	self.errors = 0
+	self.refusedSaves = 0
+	-- Shutdown bookkeeping. `inflight` is the single-flight register: a player's
+	-- id is present while that profile has a write in progress, so a second save
+	-- (a concurrent PlayerRemoving and BindToClose) attaches instead of stacking.
+	self.inflight = {}      -- userId -&gt; true
+	self.lastPayload = {}   -- userId -&gt; the exact table last written, for dedupe
+	self.shutdownSaves = 0
+	self.shutdownSkipped = 0
+	self.shutdownFailed = 0
+	self.shuttingDown = false
+	-- Monotonic count of successful writes. Comparing this before and after a
+	-- drain is how the report knows a write actually landed (comparing payload
+	-- identity is wrong: a retry reuses the same table).
+	self.writeSerial = 0
 
 	if not self.memoryOnly then
 		local ok, result = pcall(function()
 			if forcedFailure then
 				error("DataStore forced unavailable")
 			end
-			return DataStoreService:GetDataStore(STORE_NAME)
+			return DataStoreService:GetDataStore(self.storeName)
 		end)
 		if ok and result then
 			self.store = result
@@ -41578,29 +41797,98 @@ function Persistence.profile(self, userId)
 	return self.profiles[userId]
 end
 
+-- The load state for a player: LOADING, LOADED, FAILED, LEAVING, or nil when
+-- they were never seen. Only LOADED makes `save` write.
+function Persistence.state(self, userId)
+	return self.states[userId]
+end
+
+-- True when this profile may be written. Kept as one function so every caller
+-- (round payout, halo purchase, PlayerRemoving) agrees on the rule.
+function Persistence.isWritable(self, userId)
+	return self.states[userId] == LOADED and self.profiles[userId] ~= nil
+end
+
+-- Marks a player as gone. Bumps the generation so any in-flight read for them
+-- is discarded when it lands, and drops the cache entry. A later `load` for the
+-- same id starts a fresh generation, so a fast rejoin is independent of the
+-- session that just ended.
+function Persistence.release(self, userId)
+	self.generations[userId] = (self.generations[userId] or 0) + 1
+	self.states[userId] = LEAVING
+	self.profiles[userId] = nil
+end
+
+-- Forget a player entirely (the adapter calls this after its final save).
+function Persistence.forget(self, userId)
+	self.generations[userId] = (self.generations[userId] or 0) + 1
+	self.states[userId] = nil
+	self.profiles[userId] = nil
+	self.savedAt[userId] = nil
+end
+
 -- Read one profile. Returns the cached copy immediately and refreshes it in the
 -- background; the caller never yields on a DataStore.
-function Persistence.load(self, userId, callback)
-	if self.profiles[userId] then
-		if callback then callback(self.profiles[userId]) end
+--
+-- States, and why each matters:
+--   memory-only store  -&gt; LOADED immediately. There is nothing durable to lose,
+--                         so a writable default is correct (Studio playtesting).
+--   read returned data -&gt; LOADED, merged over anything earned meanwhile.
+--   read returned nil  -&gt; LOADED. A confirmed new player: a default profile is
+--                         the real record and may be written.
+--   read failed        -&gt; FAILED. The profile stays non-writable, so the next
+--                         `save` is refused instead of overwriting the record we
+--                         could not read. A caller may retry with `retry = true`.
+function Persistence.load(self, userId, callback, options)
+	local o = options or {}
+	local existing = self.states[userId]
+	if existing == LOADED then
+		local cached = self.profiles[userId]
+		if callback then callback(cached) end
+		return cached
+	end
+	if existing == LOADING then
+		-- A load is already in flight for this session; never start a second one.
 		return self.profiles[userId]
 	end
-	self.profiles[userId] = table.clone(DEFAULTS)
-	self.profiles[userId].Specimens = {}
+	if existing == FAILED and o.retry ~= true then
+		return self.profiles[userId]
+	end
+
+	-- New session (or an explicit retry): claim a generation. Anything that
+	-- lands from an older generation is ignored below.
+	local generation = (self.generations[userId] or 0) + 1
+	self.generations[userId] = generation
+	-- The cached shell is only a display value while LOADING; `writable` is
+	-- false, so no caller can persist it.
+	local shell = table.clone(DEFAULTS)
+	shell.Specimens = {}
+	self.profiles[userId] = shell
+	self.states[userId] = LOADING
+
 	if not self.store then
-		self.loaded[userId] = true
+		self.states[userId] = LOADED
 		if callback then callback(self.profiles[userId]) end
 		return self.profiles[userId]
 	end
+
 	task.spawn(function()
+		local function current(): boolean
+			return self.generations[userId] == generation
+		end
 		local key = Persistence.key(userId)
 		local data = nil
+		local ok = false
 		for attempt = 1, MAX_RETRIES do
-			local ok, result = pcall(function()
-				return self.store:GetAsync(key)
+			if not current() then
+				return
+			end
+			ok = pcall(function()
+				local value = self.store:GetAsync(key)
+				data = value
+				return true
 			end)
 			if ok then
-				data = result
 				self.reads += 1
 				break
 			end
@@ -41610,13 +41898,33 @@ function Persistence.load(self, userId, callback)
 				task.wait(RETRY_DELAY * attempt)
 			end
 		end
-		self.loaded[userId] = true
-		self.failed[userId] = data == nil and false or false
-		-- Merge, never replace: anything earned between join and load is kept.
+		-- The player left, or was reloaded, while this was in flight. Do not
+		-- touch the cache and do not call back: a stale completion must not
+		-- resurrect a disconnected session.
+		if not current() then
+			return
+		end
+		if not ok then
+			-- FAILED is terminal until someone asks for a retry. The shell stays
+			-- readable for the UI but `writable` is false, so it can never be
+			-- saved over the record we failed to read.
+			self.states[userId] = FAILED
+			self.errors += 1
+			warn("[Brainrot] profile unavailable; this session will not be saved")
+			if callback then callback(self.profiles[userId], FAILED) end
+			return
+		end
+		-- ok with data == nil is a confirmed new player: the default is the truth.
+		-- Shape the merge against what the cache holds now (it may have been
+		-- touched while the read was in flight).
 		local merged = Persistence.sanitise(data)
 		merged = Persistence.merge(merged, self.profiles[userId])
+		if not current() then
+			return
+		end
 		self.profiles[userId] = merged
-		if callback then callback(merged) end
+		self.states[userId] = LOADED
+		if callback then callback(merged, LOADED) end
 	end)
 	return self.profiles[userId]
 end
@@ -41650,28 +41958,99 @@ end
 
 -- Save one profile. Schema-checked, retried, and never raises into a gameplay
 -- loop: a failed save is logged and retried on the next save point.
+--
+-- Refuses (returns false, reason "not-ready") unless the profile reached LOADED.
+-- That single rule is what makes a DataStore outage harmless: a session whose
+-- read failed keeps playing in memory, and nothing it does can replace the real
+-- record. The in-memory profile is never mutated by a failed write either, so a
+-- later successful save is still correct.
 function Persistence.save(self, userId, callback)
-	local profile = self.profiles[userId]
-	if not profile then
-		return false
+	local reason, write = Persistence.beginSave(self, userId)
+	if not reason then
+		self.refusedSaves += 1
+		if callback then callback(false, write) end
+		return false, write
 	end
-	local payload = Persistence.sanitise(profile)
+	if write == nil then
+		-- Joined an in-flight write, or the payload is unchanged.
+		if callback then callback(true, "joined") end
+		return true, "joined"
+	end
+	-- Queued: the caller never yields on a DataStore, so a round payout or a
+	-- halo purchase cannot stall the authority loop.
+	task.spawn(write)
+	return true, "queued"
+end
+
+-- Await a write for one player, for callers that are allowed to yield: the
+-- shutdown drain, which is inside `BindToClose` and must not return until the
+-- data is durable. Returns (wrote, reason) where `wrote` reports whether the
+-- record is now durably up to date.
+function Persistence.saveAwait(self, userId)
+	local reason, write = Persistence.beginSave(self, userId)
+	if not reason then
+		return false, write
+	end
+	if write == nil then
+		-- An in-flight write for this player is already the newest state. The
+		-- drain waits for the register to clear, so this is never returned to
+		-- the shutdown path before the bytes are durable.
+		return true, reason
+	end
+	return write(), reason
+end
+
+-- Validate, dedupe and claim the single-flight slot for one player.
+-- Returns (ok, write-or-reason):
+--   false, reason  -&gt; refused; nothing was claimed
+--   true, nil      -&gt; nothing to do (in flight, or unchanged since last write)
+--   true, function -&gt; the caller owns the write and must run it exactly once
+function Persistence.beginSave(self, userId)
+	if not self:isWritable(userId) then
+		return false, "not-ready"
+	end
+	-- Single flight. A PlayerRemoving save and a BindToClose save for the same
+	-- player are the same write, so the second attaches to the first rather than
+	-- racing it: two unordered SetAsync calls could otherwise land out of order
+	-- and persist an older table.
+	if self.inflight[userId] then
+		return true, nil
+	end
+	local generation = self.generations[userId]
+	local payload = Persistence.sanitise(self.profiles[userId])
+	-- Nothing changed since the last successful write, so re-writing the same
+	-- bytes only burns request budget. A failed write never records a payload,
+	-- so a retry is never suppressed.
+	if self.lastPayload[userId] ~= nil and Persistence.equal(self.lastPayload[userId], payload) then
+		return true, nil
+	end
 	if not self.store then
+		-- Memory-only (Studio): there is nothing durable to write. Recording the
+		-- payload keeps the dedupe honest for repeated saves in one session.
 		self.savedAt[userId] = os.time()
-		if callback then callback(true) end
-		return true
+		self.lastPayload[userId] = payload
+		return true, nil
 	end
-	task.spawn(function()
+
+	self.inflight[userId] = true
+	local write = function(): boolean
 		local key = Persistence.key(userId)
 		for attempt = 1, MAX_RETRIES do
+			if self.generations[userId] ~= generation then
+				-- The player left or reloaded; abandoning this write is correct.
+				self.inflight[userId] = nil
+				return false
+			end
 			local ok, result = pcall(function()
 				return self.store:SetAsync(key, payload)
 			end)
 			if ok then
 				self.writes += 1
+				self.writeSerial += 1
 				self.savedAt[userId] = os.time()
-				if callback then callback(true, result) end
-				return
+				self.lastPayload[userId] = payload
+				self.inflight[userId] = nil
+				return true
 			end
 			self.errors += 1
 			warn(string.format("[Brainrot] profile write failed (attempt %d/%d)", attempt, MAX_RETRIES))
@@ -41679,9 +42058,149 @@ function Persistence.save(self, userId, callback)
 				task.wait(RETRY_DELAY * attempt)
 			end
 		end
-		if callback then callback(false) end
-	end)
+		self.inflight[userId] = nil
+		return false
+	end
+	return true, write
+end
+
+-- Structural equality for two sanitised profiles. Used only to decide whether a
+-- write would change anything; both arguments came from `sanitise`, so the shape
+-- is known and small (flat fields plus one string-keyed map).
+function Persistence.equal(a, b)
+	if a == b then
+		return true
+	end
+	if type(a) ~= "table" or type(b) ~= "table" then
+		return false
+	end
+	for key, value in a do
+		if type(value) ~= "table" then
+			if b[key] ~= value then
+				return false
+			end
+		end
+	end
+	for key, value in b do
+		if type(value) ~= "table" then
+			if a[key] ~= value then
+				return false
+			end
+		end
+	end
+	local sa, sb = a.Specimens, b.Specimens
+	if type(sa) ~= "table" or type(sb) ~= "table" then
+		return false
+	end
+	for species, count in sa do
+		if sb[species] ~= count then
+			return false
+		end
+	end
+	for species in sb do
+		if sa[species] == nil then
+			return false
+		end
+	end
 	return true
+end
+
+-- --------------------------------------------------------------------------- #
+-- Shutdown.
+--
+-- Roblox runs every `game:BindToClose` callback concurrently and terminates the
+-- instance at most 30 s after the close begins, whether or not the callbacks have
+-- finished. Two consequences shape this code:
+--
+--   * The drain must be BOUNDED. It waits for outstanding writes only until
+--     SHUTDOWN_BUDGET, then returns and lets the server die with whatever is
+--     durable. Waiting longer does not buy more time; the engine ignores it.
+--   * It must not start writes it cannot finish. Only profiles that are already
+--     LOADED are flushed — the same `isWritable` rule every other save point
+--     uses — so a shutdown can never turn an unread profile into a default record.
+--
+-- A player saved by PlayerRemoving a moment earlier has nothing to do here: the
+-- payload is unchanged, so `beginSave` returns no work and no duplicate
+-- SetAsync is issued.
+-- --------------------------------------------------------------------------- #
+
+-- Save every writable profile and wait, bounded, for those writes to finish.
+-- Returns a small report; the adapter prints it so a live run is auditable.
+function Persistence.shutdownSave(self, budget)
+	if self.shuttingDown then
+		return { players = 0, saved = 0, skipped = 0, failed = 0, pending = 0, already = true }
+	end
+	self.shuttingDown = true
+	local limit = budget or SHUTDOWN_BUDGET
+	local ids: { number } = {}
+	for userId, state in self.states do
+		if state == LOADED and self.profiles[userId] ~= nil then
+			table.insert(ids, userId)
+		end
+	end
+	table.sort(ids)
+	local report = { players = #ids, saved = 0, skipped = 0, failed = 0, pending = 0, already = false }
+	if #ids == 0 then
+		return report
+	end
+
+	-- Kick off every write first so they overlap, then wait once for all of them.
+	local serialBefore = self.writeSerial
+	local started: { [number]: boolean } = {}
+	for _, userId in ids do
+		local ok, write = Persistence.beginSave(self, userId)
+		if not ok then
+			report.failed += 1
+		elseif write == nil then
+			-- Already in flight (a concurrent PlayerRemoving), or unchanged since
+			-- the last successful write. Either way, not a second SetAsync.
+			report.skipped += 1
+		else
+			started[userId] = true
+			task.spawn(write)
+		end
+	end
+
+	local deadline = os.clock() + limit
+	while os.clock() &lt; deadline do
+		local busy = false
+		for _, userId in ids do
+			if self.inflight[userId] then
+				busy = true
+				break
+			end
+		end
+		if not busy then
+			break
+		end
+		task.wait(SHUTDOWN_POLL)
+	end
+
+	local landed = self.writeSerial - serialBefore
+	-- `landed` can exceed the number of players when a previously queued write
+	-- (a concurrent PlayerRemoving) also completed during the drain. Never let
+	-- that inflate the count above the number actually started here.
+	report.saved = math.min(landed, (function()
+		local count = 0
+		for _ in started do count += 1 end
+		return count
+	end)())
+	report.failed += (function()
+		local count = 0
+		for _ in started do count += 1 end
+		return count
+	end)() - report.saved
+	for _, userId in ids do
+		if self.inflight[userId] then
+			-- Still writing when the budget ran out. The engine terminates the
+			-- instance regardless, so report it rather than claiming success.
+			report.pending += 1
+		end
+	end
+	self.shutdownSaves += report.saved
+	self.shutdownSkipped += report.skipped
+	self.shutdownFailed += report.failed
+	return report
 end
 
 -- A cosmetic purchase. `cost` is a server constant, never a client argument.
@@ -41705,9 +42224,22 @@ function Persistence.buyHalo(self, userId, halo, cost)
 end
 
 function Persistence.stats(self)
+	local loading, failed, loaded = 0, 0, 0
+	for _, state in self.states do
+		if state == LOADING then
+			loading += 1
+		elseif state == FAILED then
+			failed += 1
+		elseif state == LOADED then
+			loaded += 1
+		end
+	end
 	return {
 		available = self.available, memoryOnly = self.memoryOnly,
+		storeName = self.storeName, acceptance = self.acceptance,
 		reads = self.reads, writes = self.writes, errors = self.errors,
+		refusedSaves = self.refusedSaves,
+		loading = loading, loaded = loaded, failed = failed,
 		tracked = (function()
 			local count = 0
 			for _ in self.profiles do count += 1 end
@@ -43750,7 +44282,12 @@ export type Settings = {
 export type Player = {
 	id: number, name: string, score: number, coins: number, wins: number, pickups: number,
 	participating: boolean, haloOwned: boolean, haloEquipped: boolean,
+	-- Two records, deliberately separate:
+	--   `collection`      every catch this session (drives the specimen log)
+	--   `roundCollection` only this round's catches (the ONLY thing a round payout
+	--                     may add to a durable profile — see Persistence.applyRound)
 	collection: { [string]: number },
+	roundCollection: { [string]: number },
 	-- Round inventory. `carried` holds the values not yet banked, so a stolen cell
 	-- can be removed from exactly the right place.
 	carried: { number }, carriedValue: number,
@@ -43760,11 +44297,17 @@ export type Player = {
 export type Row = {
 	id: number, name: string, score: number, coins: number, wins: number, pickups: number,
 	haloOwned: boolean, haloEquipped: boolean, collection: { [string]: number },
+	-- This round's catches only. Round rewards, and therefore the shipped profile,
+	-- are computed from this table and never from `collection`.
+	roundCollection: { [string]: number },
 	collected: number, carried: number, carriedValue: number,
 	steals: number, lost: number, stealReadyAt: number, protectedUntil: number, immuneUntil: number,
 }
 export type Results = {
 	roundId: number, winners: { Row }, topScore: number, rewards: { [string]: number },
+	-- userId -&gt; that round's catches, captured when the round closes. The payout is
+	-- the only consumer, so a slow profile save can never re-read a newer round.
+	collections: { [string]: { [string]: number } },
 }
 export type Effect = {
 	kind: string, phase: string?, active: boolean?, event: string?, stage: string?,
@@ -43860,7 +44403,7 @@ function RoundMachine.addPlayer(self: Machine, id: number, name: string): boolea
 	self.players[id] = {
 		id = id, name = string.sub(name, 1, 50), score = 0, coins = 0, wins = 0, pickups = 0,
 		participating = self.phase == "Playing", haloOwned = false, haloEquipped = false,
-		collection = {}, carried = {}, carriedValue = 0,
+		collection = {}, roundCollection = {}, carried = {}, carriedValue = 0,
 		-- A player who joins mid-round is protected for the usual spawn window.
 		stealReadyAt = 0, protectedUntil = 0, immuneUntil = 0,
 		lastVictim = 0, lastStealAt = -math.huge, steals = 0, lost = 0,
@@ -43938,7 +44481,10 @@ function RoundMachine.award(
 	table.insert(player.carried, value)
 	player.carriedValue += value
 	if species and species ~= "" then
+		-- Session record for the specimen log, and the round-scoped record that the
+		-- payout is allowed to persist. Both are incremented together, here only.
 		player.collection[species] = (player.collection[species] or 0) + 1
+		player.roundCollection[species] = (player.roundCollection[species] or 0) + 1
 	end
 	return true
 end
@@ -44105,11 +44651,15 @@ function RoundMachine.rows(self: Machine): { Row }
 				collected += 1
 			end
 		end
+		local roundCollection: { [string]: number } = {}
+		for species, amount in player.roundCollection do
+			roundCollection[species] = amount
+		end
 		table.insert(rows, {
 			id = player.id, name = player.name, score = player.score, coins = player.coins,
 			wins = player.wins, pickups = player.pickups,
 			haloOwned = player.haloOwned, haloEquipped = player.haloEquipped,
-			collection = collection, collected = collected,
+			collection = collection, roundCollection = roundCollection, collected = collected,
 			carried = #player.carried, carriedValue = player.carriedValue,
 			steals = player.steals, lost = player.lost,
 			stealReadyAt = player.stealReadyAt, protectedUntil = player.protectedUntil,
@@ -44127,6 +44677,11 @@ function RoundMachine.finishRound(self: Machine)
 	local topScore = if rows[1] then rows[1].score else 0
 	local winners: { Row } = {}
 	local rewards: { [string]: number } = {}
+	-- Snapshot each participant's round catches as it closes. The adapter pays from
+	-- this table, not from a live record, so the amount saved to a profile is
+	-- exactly what this round earned even if the save runs after the next round
+	-- has already started collecting.
+	local collections: { [string]: { [string]: number } } = {}
 	for _, row in rows do
 		local player = self.players[row.id]
 		if player.participating then
@@ -44139,13 +44694,21 @@ function RoundMachine.finishRound(self: Machine)
 			end
 			player.coins += amount
 			rewards[tostring(row.id)] = amount
+			local caught: { [string]: number } = {}
+			for species, count in player.roundCollection do
+				caught[species] = count
+			end
+			collections[tostring(row.id)] = caught
 		end
 		-- Round inventory never survives the round; the score that already counted
 		-- it is what gets paid and recorded.
 		bankPlayer(player)
 		player.participating = false
 	end
-	self.lastResults = { roundId = self.roundId, winners = winners, topScore = topScore, rewards = rewards }
+	self.lastResults = {
+		roundId = self.roundId, winners = winners, topScore = topScore, rewards = rewards,
+		collections = collections,
+	}
 end
 
 -- Which stage an elapsed time falls in. Pure, so both the machine and tests agree.
@@ -44212,6 +44775,9 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 			player.score = 0
 			player.pickups = 0
 			player.participating = true
+			-- A new round starts with an empty round record. The session record is
+			-- left alone: it is the specimen log, and it spans rounds.
+			table.clear(player.roundCollection)
 			table.clear(player.carried)
 			player.carriedValue = 0
 			player.stealReadyAt = 0
@@ -44254,6 +44820,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.chaosKind = ""
 		for _, player in self.players do
 			player.participating = false
+			table.clear(player.roundCollection)
 			table.clear(player.carried)
 			player.carriedValue = 0
 		end
@@ -44361,12 +44928,33 @@ end
 function RoundMachine.snapshot(self: Machine)
 	local schedule: { { Kind: string, Label: string, At: number, Duration: number } } = {}
 	local base = self.phaseStartedAt
+	-- The wire rows carry what the HUD reads. `roundCollection` is payout
+	-- bookkeeping that the client never needs, so it is not replicated.
+	local rows: { any } = {}
+	for _, row in self:rows() do
+		rows[#rows + 1] = {
+			id = row.id, name = row.name, score = row.score, coins = row.coins, wins = row.wins,
+			pickups = row.pickups, haloOwned = row.haloOwned, haloEquipped = row.haloEquipped,
+			collection = row.collection, collected = row.collected, carried = row.carried,
+			carriedValue = row.carriedValue, steals = row.steals, lost = row.lost,
+			stealReadyAt = row.stealReadyAt, protectedUntil = row.protectedUntil,
+			immuneUntil = row.immuneUntil,
+		}
+	end
 	for _, entry in self.schedule do
 		table.insert(schedule, {
 			Kind = entry.Kind, Label = RoundMachine.eventLabel(entry.Kind),
 			At = base + entry.StartsAt, Duration = entry.EndsAt - entry.StartsAt,
 		})
 	end
+	-- Results are shown, not persisted by a client: send the winners, the score and
+	-- the reward dictionary, and deliberately not the per-player `collections`
+	-- snapshot the adapter pays from.
+	local results = self.lastResults
+	local wireResults = if results == nil then nil else {
+		roundId = results.roundId, winners = results.winners,
+		topScore = results.topScore, rewards = results.rewards,
+	}
 	return {
 		phase = self.phase, roundId = self.roundId, phaseEndsAt = self.phaseEndsAt,
 		eventActive = self.eventActive, eventEndsAt = self.eventEndsAt,
@@ -44374,7 +44962,7 @@ function RoundMachine.snapshot(self: Machine)
 		eventWarning = self.eventWarning, eventWarningEndsAt = self.warningEndsAt,
 		stage = self.stage, stageIndex = self.stageIndex, stageEndsAt = self.stageEndsAt,
 		events = schedule,
-		rows = self:rows(), results = self.lastResults,
+		rows = rows, results = wireResults,
 	}
 end
 
@@ -44793,8 +45381,10 @@ function Collection:update(row)
 		card.stage.rim.Color = RARITY[card.entry.rarity].color
 	end
 	if row then
+		-- row.pickups is this ROUND's catch count (the server resets it at every
+		-- round start), so the label must not claim it is a session total.
 		self.subtitle.Text = string.format(
-			"%d / %d CHARACTERS LOGGED  •  %d CELLS CAUGHT THIS SESSION  •  %d COINS",
+			"%d / %d CHARACTERS LOGGED  •  %d CAUGHT THIS ROUND  •  %d COINS",
 			caught, #self.cards, row.pickups or 0, row.coins or 0)
 	else
 		self.subtitle.Text = string.format("%d / %d CHARACTERS LOGGED", caught, #self.cards)
@@ -46059,6 +46649,23 @@ function Hud:resize()
 	local portrait = width &lt; height
 	self.compact, self.short, self.portrait = compact, short, portrait
 
+	-- ---- bottom control geometry, computed once ------------------------- #
+	-- Three controls compete for the bottom of the screen: the steal panel,
+	-- the ability panel and the shop/inventory/settings bar. The steal panel and
+	-- its readout are ONE footprint (the readout is 30 px tall at -38, so 68 px
+	-- above the button's own 52). Getting these numbers from one place is what
+	-- stops each control from being cleared independently and still colliding.
+	local stealW = if compact then 150 else 186
+	local abilityW = if compact then 118 else 150
+	local barW = if compact then 252 else 268
+	local STEAL_STACK = 52 + 38           -- button + readout above it
+	local CONTROL_ROW = STEAL_STACK       -- the row the steal/ability panels use
+	-- Two rows are needed when the three controls cannot share one. They need
+	-- stealW + gap + barW + gap + abilityW; below that the bar takes its own row.
+	local singleRowNeeds = stealW + Space.sm + barW + Space.sm + abilityW
+	self.twoRows = width &lt; singleRowNeeds or width &lt; 700
+	self.abilityOnOwnRow = self.twoRows
+
 	local top = self.top
 	self.scrimTop.Size = UDim2.new(1, 0, 0, math.min(190, math.max(120, height * .26)))
 	self.scrimBottom.Size = UDim2.new(1, 0, 0, math.min(150, math.max(100, height * .2)))
@@ -46139,8 +46746,30 @@ function Hud:resize()
 
 	-- Action bar. On phones it sits above the thumbstick and jump zones so a tap on
 	-- the shop never registers as a jump; on desktop it hugs the bottom edge.
-	local barLift = if compact then 118 else Space.lg
-	self.actions.bar.Position = UDim2.new(.5, 0, 1, -barLift - 52)
+	--
+	-- Everything at the bottom of the screen shares one horizontal band: the
+	-- steal panel (right), the ability panel (left of it) and this bar. On a
+	-- 390 px phone that band is 390 px wide and the three controls need
+	-- 150 + 8 + 118 + 252 = 528 px, so no arrangement fits them side by side and
+	-- the bar used to sit on top of both action panels. Phones therefore get TWO
+	-- rows: this bar alone above, the two action panels below it, each keeping its
+	-- 52 px touch height and its existing horizontal position.
+	--
+	-- In the single-row layout the bar shares the bottom row, parked immediately
+	-- left of the action cluster. In the two-row layout it is lifted by the panel
+	-- lift + the whole steal stack + one gap, so it clears the buttons AND the
+	-- readout that rides above the steal button.
+	local PANEL_LIFT = 118
+	local barLift = if self.twoRows then PANEL_LIFT + STEAL_STACK + Space.sm else Space.lg
+	if self.twoRows then
+		self.actions.bar.AnchorPoint = Vector2.new(.5, 0)
+		self.actions.bar.Position = UDim2.new(.5, 0, 1, -barLift - 52)
+	else
+		-- [bar] [ability][steal] — the bar's right edge clears the ability panel.
+		local clusterLeft = width - Space.md - (stealW + Space.sm + abilityW)
+		self.actions.bar.AnchorPoint = Vector2.new(1, 0)
+		self.actions.bar.Position = UDim2.fromOffset(clusterLeft - Space.sm, height - barLift - 52)
+	end
 	self.actions.bar.Visible = true
 	for _, name in { "Shop", "Inventory", "Settings" } do
 		local button = self.actions.buttons[name]
@@ -46179,12 +46808,21 @@ function Hud:resize()
 	self.lobby.frame.Size = UDim2.fromOffset(math.min(width - 32, 420), 92)
 	self.lobby.frame.Position = UDim2.new(.5, 0, 0, lobbyTop)
 
-	-- Steal action. Portrait/desktop: bottom-right. Short landscape: bottom-LEFT,
-	-- above the thumbstick, so it cannot sit under the leaderboard or the jump pad.
-	local stealLift = if compact then 118 else Space.lg
+	-- Steal action. Portrait/desktop: bottom-right. Short landscape: bottom-left,
+	-- but LIFTED clear of the thumbstick. Roblox puts the thumbstick bottom-left
+	-- and jump bottom-right, so both sides of the bottom edge are occupied on
+	-- touch: the lift is what keeps the control usable, not the side.
+	local stealLift = if short then PANEL_LIFT elseif self.twoRows or compact then PANEL_LIFT else Space.lg
+	-- The panel is built right-anchored (see Panels.stealPanel), so the left-hand
+	-- short-landscape branch must reset the anchor. Without this the root is
+	-- positioned from the left edge but still anchored by its right edge, which
+	-- put it at x = -174 on an 844x354 phone — off screen, so a landscape phone
+	-- could not steal at all.
 	if short then
+		self.steal.root.AnchorPoint = Vector2.new(0, 0)
 		self.steal.root.Position = UDim2.fromOffset(Space.md, height - stealLift - 52)
 	else
+		self.steal.root.AnchorPoint = Vector2.new(1, 0)
 		self.steal.root.Position = UDim2.new(1, -Space.md, 1, -stealLift - 52)
 	end
 	self.steal.root.Size = UDim2.fromOffset(if compact then 150 else 186, 52)
@@ -46200,9 +46838,11 @@ function Hud:resize()
 	-- the steal button is not on. The strip sits above the steal readout.
 	local stealWidth = if compact then 150 else 186
 	local abilityWidth = if compact then 118 else 150
-	if short then
+	if self.twoRows then
+		-- Above the steal panel AND above the bar's row, which sits further up.
+		-- The ability is a gameplay verb, so it moves rather than hides.
 		self.ability.root.AnchorPoint = Vector2.new(0, 0)
-		self.ability.root.Position = UDim2.fromOffset(Space.md + stealWidth + Space.sm, height - stealLift - 52)
+		self.ability.root.Position = UDim2.new(0, Space.md, 1, -barLift - 52 - 60)
 	else
 		self.ability.root.AnchorPoint = Vector2.new(1, 0)
 		self.ability.root.Position = UDim2.new(1, -Space.md - stealWidth - Space.sm, 1, -stealLift - 52)
@@ -46649,9 +47289,11 @@ function Hud:refreshModal()
 	if kind == "Shop" then
 		self.modalTitle.Text = Copy.ShopTitle
 		self.modalTitle.TextColor3 = C.Amber
-		self.modalBody.Text = Copy.ShopBody .. "\n\nPULSE HALO — " .. self.config.HaloCost .. " session coins."
+		-- Coins are a saved balance, not a per-session counter: say so, because the
+		-- halo is the one thing a player buys with them.
+		self.modalBody.Text = Copy.ShopBody .. "\n\nPULSE HALO — " .. self.config.HaloCost .. " coins."
 			.. "\n\nBalance: " .. coins .. " coins."
-			.. (if owned then "\n\nYou already own this glow for the session." else "")
+			.. (if owned then "\n\nYou already own this glow." else "")
 		self.modalPrimary.Label.Text = if owned then (if equipped then "UNEQUIP" else "EQUIP") else "UNLOCK  •  " .. self.config.HaloCost
 		self.modalPrimary.Visible = true
 	elseif kind == "Inventory" then

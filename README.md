@@ -3,7 +3,7 @@
 **An implemented Roblox party-game prototype, not a design-only brief.**
 Original procedural floating islands, glowing Brain Cells, three-minute rounds, and a very unreasonable gravity problem.
 
-> **Status:** Project files built; **129 automated tests passing**. Roblox Studio is not installed in the development sandbox, so actual Studio import, engine physics, multiplayer networking, device rendering, and sound playback have **not** been verified here. [Build report →](docs/BUILD_REPORT.md)
+> **Status:** Project files built; **361 automated tests passing**. Roblox Studio is not installed in the development sandbox, so actual Studio import, engine physics, multiplayer networking, device rendering, and sound playback have **not** been verified here. The manual acceptance matrix is [documented and not yet executed](docs/PHASE7B_ACCEPTANCE_PACKAGE.md). [Build report →](docs/BUILD_REPORT.md)
 
 ## Windows: extract, open and test
 
@@ -94,7 +94,9 @@ is driven by the server's own timestamp.
 - **Complete game UI:** a top HUD (brain cells, coins, synchronized round clock), a live server-driven leaderboard, centre notifications (round flow, chaos events, winner/tie), a bottom bar with **Shop**, **Gear** and **Settings**, and a lobby panel with the next-round countdown. Dark navy translucent panels, cyan/violet/amber accents, rounded corners and short tweens; it reflows for desktop, tablet and phone in both orientations.
 - **Recovery:** death/reset rejoins the current arena; falling rescues the player without losing points; round cleanup removes cells and resets gravity.
 - **Persistent progression:** 10 coins for participation + 2 per point + 30 for each tied
-  winner. Coins, the specimen log, lifetime stats (rounds, wins, best score, steals, losses),
+  winner. Saved by default on a live server (Studio stays memory-only unless asked);
+  each payout adds only the specimens that round caught. See
+  [Phase 6 →](docs/PHASE6_DURABILITY.md). Coins, the specimen log, lifetime stats (rounds, wins, best score, steals, losses),
   and the original Pulse Halo (100 coins) are saved server-side in a DataStore with
   schema-checked, retried, pcall-protected reads and writes — and a documented memory
   fallback if storage is unavailable. No Robux, no monetization, no pay-to-win.
@@ -139,4 +141,4 @@ python3 tools/package_release.py
 
 On Linux/macOS with `make` and `g++`, `python3 tools/bootstrap_luau.py` builds pinned official **Luau 0.744** locally. Existing tools on `PATH` are also supported. [Architecture / editing notes →](docs/ARCHITECTURE.md)
 
-The test suite executes 90 core Luau tests (including 100 simulated 12-player logical rounds), 60 production-adapter tests against explicit Roblox service doubles, 36 XML/API/geometry tests and 35 art-direction tests — 221 in total. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.
+The test suite executes 150 core Luau tests (including 100 simulated 12-player logical rounds), 140 production-adapter tests against explicit Roblox service doubles, 36 XML/API/geometry tests and 35 art-direction tests — 361 in total. **Mocks are not Roblox Studio or a real multi-client network.** A GitHub Actions workflow is provided; it has not been run on GitHub from this sandbox.

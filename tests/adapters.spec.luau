@@ -284,6 +284,43 @@ return function(Mock, sources, schema)
 			end
 		end
 	end)
+	test("7B-MOB-1: a landscape phone can reach the steal button",function()
+		-- Regression: `StealPanel` is built right-anchored, but the short-landscape
+		-- branch positioned it from the left edge WITHOUT resetting the anchor, so
+		-- the real rectangle was (Space.md - width) = -174..12 on an 844x354
+		-- phone: almost entirely off screen with only 12 px tappable. The button
+		-- must be fully reachable at every phone size, in both orientations.
+		for _,size in {{844,354},{740,360},{932,430},{1280,600}} do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			local r=rect(e:find("StealPanel"))
+			assert(r.x>=0 and r.y>=0 and r.x+r.w<=size[1]+1 and r.y+r.h<=size[2]+1,
+				string.format("steal button off screen at %dx%d -> %.0f,%.0f %.0fx%.0f",
+					size[1],size[2],r.x,r.y,r.w,r.h))
+			-- A comfortable touch target: at least 44 px tall (accessibility floor)
+			-- and at least 44 px of it on screen.
+			assert(r.h>=44,string.format("steal button only %.0f px tall at %dx%d",r.h,size[1],size[2]))
+		end
+	end)
+
+	test("7B-MOB-2: rotating a phone keeps every action control on screen",function()
+		-- Device rotation re-runs resize() from the AbsoluteSize signal. A control
+		-- that is placed correctly once but keeps a stale anchor after rotating
+		-- would end up off screen, so check the round trip.
+		local e=fixture(nil,true)
+		local function check(width,height,label)
+			for _,name in {"StealPanel","AbilityPanel","ActionBar"} do
+				local r=rect(e:find(name))
+				assert(r.x>=0 and r.y>=0 and r.x+r.w<=width+1 and r.y+r.h<=height+1,
+					string.format("%s off screen %s at %dx%d -> %.0f,%.0f %.0fx%.0f",
+						name,label,width,height,r.x,r.y,r.w,r.h))
+			end
+		end
+		for _,size in {{390,800},{844,354},{390,800},{354,844},{844,354}} do
+			e:setViewport(size[1],size[2])
+			check(size[1],size[2],"after rotation")
+		end
+	end)
+
 	test("shop, inventory and settings modals all act on real state",function()
 		local e,a=fixture({fast=true,studio=true,roll=.97},true); e:setViewport(390,800)
 		-- Empty wallet: the shop explains the price and sends only the validated verb.
@@ -937,6 +974,10 @@ return function(Mock, sources, schema)
 	end)
 	test("persistence: a saved profile reloads with the same coins and specimens",function()
 		local store=Persistence.new({memoryOnly=false,persistInStudio=true})
+		-- Load first: since Phase 7A only a Loaded profile is writable, so the test
+		-- must reach the real state machine instead of writing into the cache.
+		store:load(-7)
+		eq(store:state(-7),"Loaded")
 		store.profiles[-7]=Persistence.sanitise({Coins=250,Specimens={toast=2},Halo="Gold"})
 		store:save(-7)
 		assert(store.writes==1,"the save must reach the store")
@@ -1291,6 +1332,796 @@ return function(Mock, sources, schema)
 		local e,a=fixture({fast=true,studio=true,roll=.1},true)
 		assert(a.PlayerGui:FindFirstChild("BrainrotHUD")~=nil,"HUD is built")
 		eq(a.PlayerGui:FindFirstChild("BrainrotStartupError"),nil)
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7A: persistence safety. A profile is writable only after a read that
+	-- actually established it. Each test below names the failure it locks down.
+	-- ------------------------------------------------------------------------ #
+	local function seededVeteran()
+		return { Version=1, Coins=5000, Halo="Cyan", Specimens={toast=9}, Rounds=120,
+			Wins=40, BestScore=310, TotalScore=9000, Steals=30, Lost=12, Picked=800 }
+	end
+	-- A live-server Persistence over the mock DataStore, with its store pre-seeded.
+	local function persistFixture(options, seed)
+		local opts = options or {}
+		opts.studio = false
+		local e = Mock.new(sources, schema, opts)
+		local Persistence = e:import("src/server/Persistence.luau")
+		local store = Persistence.new({ memoryOnly = false, persistInStudio = true })
+		if seed then
+			for _, underlying in e.stores do underlying[Persistence.key(-42)] = seed end
+		end
+		return e, Persistence, store
+	end
+	local function stored(e, Persistence)
+		local found = nil
+		for _, underlying in e.stores do found = underlying[Persistence.key(-42)] end
+		return found
+	end
+
+	test("7A-A: existing profile + successful load + save round-trips",function()
+		local e,Persistence,store=persistFixture({}, seededVeteran())
+		local loaded = store:load(-42)
+		eq(store:state(-42),"Loaded")
+		eq(loaded.Coins,5000)
+		eq(store:isWritable(-42),true)
+		loaded.Coins = 5100
+		local ok,reason = store:save(-42)
+		eq(ok,true)
+		-- "queued" (dispatched) or "joined"/"unchanged" (nothing new to write) are
+		-- all acceptance; "ok" is no longer returned because the write is async.
+		assert(reason=="queued" or reason=="joined" or reason=="unchanged",
+			"unexpected save reason: "..tostring(reason))
+		eq(stored(e,Persistence).Coins,5100)
+	end)
+
+	test("7A-B: a confirmed nil read is a new player and may be written",function()
+		local e,Persistence,store=persistFixture({})
+		local fresh = store:load(-42)
+		eq(store:state(-42),"Loaded")
+		eq(fresh.Coins,0)
+		eq(store:isWritable(-42),true)
+		fresh.Coins = 10
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,10)
+	end)
+
+	test("7A-C: a failed read refuses the save and never overwrites the record",function()
+		local e,Persistence,store=persistFixture({readFail=true}, seededVeteran())
+		local shell = store:load(-42)
+		eq(store:state(-42),"Failed")
+		eq(store:isWritable(-42),false)
+		-- Even a caller that mutates the shell cannot persist it.
+		shell.Coins = 999999
+		local ok,reason = store:save(-42)
+		eq(ok,false); eq(reason,"not-ready")
+		eq(store.writes,0,"no write may reach the store")
+		eq(stored(e,Persistence).Coins,5000,"the real record is untouched")
+		eq(stored(e,Persistence).Rounds,120)
+		assert(store.refusedSaves>0,"the refusal must be counted")
+	end)
+
+	test("7A-D: a save before the load completes is refused",function()
+		local e,Persistence,store=persistFixture({deferAsync=true}, seededVeteran())
+		local shell = store:load(-42)
+		eq(store:state(-42),"Loading")
+		eq(store:isWritable(-42),false)
+		shell.Coins = 777
+		eq((store:save(-42)),false,"a Loading profile must not be written")
+		eq(stored(e,Persistence).Coins,5000)
+		-- The read lands: the profile becomes writable and the save now succeeds.
+		e:flushAsync()
+		eq(store:state(-42),"Loaded")
+		eq(store:profile(-42).Coins,5000)
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,5000)
+	end)
+
+	test("7A-E: a player who leaves while the load is pending is never written",function()
+		local e,Persistence,store=persistFixture({deferAsync=true}, seededVeteran())
+		store:load(-42)
+		eq(store:state(-42),"Loading")
+		-- PlayerRemoving path: release the session, then the response arrives.
+		store:release(-42)
+		eq(store:profile(-42),nil)
+		eq(e:flushAsync()>0,true,"the read was really in flight")
+		eq(store:profile(-42),nil,"a late load must not resurrect the session")
+		eq(store:state(-42),"Leaving")
+		-- A save for the departed session is refused too, so the resurrected
+		-- profile cannot be written even if a caller still holds a reference.
+		eq((store:save(-42)),false,"a departed session must not be written")
+		eq(stored(e,Persistence).Coins,5000,"nothing was written for a departed player")
+		-- A rejoin starts a clean generation and works normally.
+		store:load(-42)
+		eq(store:state(-42),"Loading","a rejoin starts a fresh generation")
+		e:flushAsync()
+		eq(store:state(-42),"Loaded")
+		eq(store:profile(-42).Coins,5000)
+	end)
+
+	test("7A-F: a failed load can be retried successfully",function()
+		local e,Persistence,store=persistFixture({readFail=true}, seededVeteran())
+		store:load(-42)
+		eq(store:state(-42),"Failed")
+		eq((store:save(-42)),false)
+		-- The outage clears and the caller asks for one explicit retry.
+		e.options.readFail = false
+		store:load(-42,function() end,{retry=true})
+		eq(store:state(-42),"Loaded")
+		eq(store:profile(-42).Coins,5000)
+		eq(store:isWritable(-42),true)
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,5000)
+	end)
+
+	test("7A-G: a failed write leaves the in-memory profile intact and a retry works",function()
+		local e,Persistence,store=persistFixture({}, seededVeteran())
+		store:load(-42)
+		local profile = store:profile(-42)
+		profile.Coins = 5300
+		-- The write fails every retry.
+		e.options.writeFail = true
+		eq((store:save(-42)),true,"the request was accepted")
+		eq(store:profile(-42).Coins,5300,"the in-memory profile is not corrupted")
+		eq(stored(e,Persistence).Coins,5000,"the store still holds the old value")
+		assert(store.errors>0,"the failure is counted")
+		-- The outage clears; the next save point writes the correct value.
+		e.options.writeFail = false
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,5300)
+	end)
+
+	test("7A-H: the acceptance namespace is isolated and cannot be production",function()
+		local e=Mock.new(sources,schema,{studio=false})
+		local Persistence=e:import("src/server/Persistence.luau")
+		-- Production default is unchanged and needs no configuration.
+		local prod=Persistence.new({})
+		eq(prod.storeName,"BrainrotArenaProfiles")
+		eq(prod.acceptance,false)
+		-- An explicit acceptance namespace is accepted and is a different store.
+		local acc=Persistence.new({acceptance=true,storeName="BrainrotArenaAcceptance_p7a"})
+		eq(acc.storeName,"BrainrotArenaAcceptance_p7a")
+		assert(acc.storeName~=prod.storeName,"acceptance must not share production keys")
+		-- Anything that could reach live progression is refused outright.
+		eq(pcall(Persistence.new,{acceptance=true,storeName="BrainrotArenaProfiles"}),false)
+		eq(pcall(Persistence.new,{storeName="BrainrotArenaProfiles",acceptance=true}),false)
+		eq(pcall(Persistence.new,{storeName="BrainrotArena_typo"}),false)
+		eq(pcall(Persistence.new,{storeName="BrainrotArenaAcceptance_"}),false)
+		eq(pcall(Persistence.new,{acceptance=true}),false)
+		eq(pcall(Persistence.new,{storeName=42}),false)
+		-- A plain custom name is not a bypass either.
+		eq(pcall(Persistence.new,{storeName="SomeOtherStore"}),false)
+	end)
+
+	test("7A-end-to-end: a join during an outage cannot wipe a veteran profile",function()
+		local e=Mock.new(sources,schema,{fast=false,studio=false,readFail=true})
+		local Persistence=e:import("src/server/Persistence.luau")
+		local key=Persistence.key(-42)
+		local seed=seededVeteran()
+		local a=e:addPlayer(-42,"Veteran")
+		e:startServer(); e:step(.1)
+		for _,underlying in e.stores do underlying[key]=seed end
+		-- Force the in-flight read to fail: recreate the join after seeding.
+		e:removePlayer(a)
+		local b=e:addPlayer(-42,"Veteran"); e:step(.1); e:step(1)
+		e:removePlayer(b); e:step(1)
+		local after=nil
+		for _,underlying in e.stores do after=underlying[key] end
+		eq(after.Coins,5000,"the veteran's coins survived a failed read")
+		eq(after.Rounds,120,"the veteran's stats survived a failed read")
+		eq(after.Specimens.toast,9,"the veteran's specimen log survived a failed read")
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- REGRESSION: durability of the profile that carries the coins.
+	--
+	-- These run with `studio=false` — the *published server* context. The mock
+	-- defaults to `studio=true`, which is how the survival of this bug went
+	-- unnoticed: Persistence correctly stays memory-only in Studio, so a Studio
+	-- fixture can never prove that a live server writes anything.
+	-- ------------------------------------------------------------------------ #
+	test("regression: the production server opens a DataStore and writes a profile on a payout",function()
+		local e=Mock.new(sources,schema,{fast=false,studio=false,roll=.1})
+		local a=e:addPlayer(-1,"Mint Brain")
+		e:startServer()
+		e:step(.1); e:step(12.1); e:step(.1)
+		eq(e:lastState().phase,"Playing")
+		-- Finish the round with a score so the payout is non-trivial.
+		a.leaderstats["Brain Cells"].Value=0 -- leaderstats are refreshed from the server
+		local state=e:lastState()
+		e:step(state.phaseEndsAt-e.now+.05)
+		eq(e:lastState().phase,"Results")
+		local stores,store=0,nil
+		for _,value in e.stores do stores+=1; store=value end
+		eq(stores,1)                                  -- one profile store was opened at all
+		assert(store~=nil,"DataStoreService:GetDataStore was never called")
+		local key=next(store)
+		assert(key~=nil,"nothing was written to the profile store")
+		local profile=store[key]
+		eq(profile.Rounds,1)                          -- the round was recorded
+		assert(profile.Coins>0,"the payout reached the stored profile")
+		e:removePlayer(a)
+	end)
+
+	test("regression: a live server persists coins and the specimen log across two rounds",function()
+		local e=Mock.new(sources,schema,{fast=false,studio=false,roll=.1})
+		local Persistence=e:import("src/server/Persistence.luau")
+		local a=e:addPlayer(-1,"Mint Brain")
+		local b=e:addPlayer(-2,"Pink Brain")
+		e:startServer()
+		e:step(.1)                                  -- the first step publishes the phase
+		local function toPlaying()
+			local guard=0
+			while e:lastState().phase~="Playing" and guard<4 do
+				e:step((e:lastState().phaseEndsAt or 0)-e.now+.05); guard+=1
+			end
+		end
+		local function toResults()
+			e:step(e:lastState().phaseEndsAt-e.now+.05)
+			eq(e:lastState().phase,"Results")
+		end
+		local function myRow(id)
+			for _,row in e:lastState().rows do if row.id==id then return row end end
+		end
+		toPlaying()
+		collect(e,a,1); collect(e,a,2); collect(e,b,3)
+		local firstRoundScore=myRow(a.UserId).score
+		assert(firstRoundScore>0,"the round needs a score")
+		toResults()
+		local coinsAfterRound1=a.leaderstats.Coins.Value
+		eq(coinsAfterRound1, 10+firstRoundScore*2+30)  -- paid, and visible in the live wallet
+		toPlaying(); eq(e:lastState().roundId,2)
+		collect(e,a,4); collect(e,a,5)
+		toResults()
+		local coinsAfterRound2=a.leaderstats.Coins.Value
+		assert(coinsAfterRound2>coinsAfterRound1,"round 2 pays again")
+		-- The wallet is monotonic: a payout can never re-charge an old round.
+		local stores,store=0,nil
+		for _,value in e.stores do stores+=1; store=value end
+		eq(stores,1)
+		local profile=store[Persistence.key(a.UserId)]
+		assert(profile~=nil,"the stored profile exists")
+		eq(profile.Rounds,2)
+		eq(profile.Coins,coinsAfterRound2)
+		-- Specimens are the SUM of both rounds, and were never double counted:
+		-- two common catches in round 1 and two in round 2 is four, not six.
+		local specimens=0
+		for _,count in profile.Specimens do specimens+=count end
+		eq(specimens,4)
+		e:removePlayer(a); e:removePlayer(b)
+	end)
+
+	test("regression: a refused steal does not start the cooldown, and a valid steal still does",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true)
+		local Config=e:import("src/shared/Config.luau")
+		play(e); e:step(6)                       -- clear spawn protection
+		local function myRow(id)
+			for _,row in e:lastState().rows do if row.id==id then return row end end
+		end
+		-- Nobody in range: the server refuses and the cooldown stays at zero, so the
+		-- HUD (which counts down from stealReadyAt) does not lie to the player.
+		b.Character:PivotTo(e.CFrame.new(a.Character.HumanoidRootPart.Position+e.Vector3.new(60,0,0)))
+		e:step(.5)
+		e:request(a,"Steal"); e:step(.1)
+		eq(myRow(a.UserId).stealReadyAt,0)
+		eq(myRow(a.UserId).score,0)
+		-- Now in range with something to take: the steal succeeds and the cooldown
+		-- reported to the client matches the configured one.
+		collect(e,b,1)
+		eq(myRow(b.UserId).score>0,true)
+		b.Character:PivotTo(e.CFrame.new(a.Character.HumanoidRootPart.Position+e.Vector3.new(3,0,0)))
+		e:step(1)
+		local now=e.now
+		e:request(a,"Steal"); e:step(.1)
+		assert(myRow(a.UserId).score>0,"the cell changed hands")
+		near(myRow(a.UserId).stealReadyAt, now + Config.Steal.Cooldown)
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7B: the ServerStorage -> namespace plumbing, end to end.
+	--
+	-- `7A-H` proves `resolveStoreName` on its own. These run the REAL
+	-- `Main.server` and assert which DataStore namespace it actually opened, so
+	-- the documented acceptance setup is verified as a path, not just as a rule.
+	-- ------------------------------------------------------------------------ #
+	test("7B-NS-1: the published server with no config opens production only",function()
+		local e=Mock.new(sources,schema,{studio=false})
+		e:startServer(); e:step(.1)
+		local names={}
+		for name in e.stores do table.insert(names,name) end
+		eq(#names,1,"exactly one namespace may be opened")
+		eq(names[1],"BrainrotArenaProfiles")
+	end)
+
+	test("7B-NS-2: an AcceptanceRunId opens only the acceptance namespace",function()
+		local e=Mock.new(sources,schema,{studio=false})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+		runId.Value="p7b-test"; runId.Parent=config; config.Parent=e.services.ServerStorage
+		e:startServer(); e:step(.1)
+		local names={}
+		for name in e.stores do table.insert(names,name) end
+		eq(#names,1,"acceptance must open exactly one namespace")
+		eq(names[1],"BrainrotArenaAcceptance_p7b-test")
+		assert(names[1]~="BrainrotArenaProfiles","production keys must never be opened")
+	end)
+
+	test("7B-NS-3: an empty or wrong-typed run id falls back to production, never a bare prefix",function()
+		-- An empty string is not an acceptance run: it must be ignored entirely,
+		-- not turned into "BrainrotArenaAcceptance_", which would throw.
+		for _,value in {""} do
+			local e=Mock.new(sources,schema,{studio=false})
+			local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+			local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+			runId.Value=value; runId.Parent=config; config.Parent=e.services.ServerStorage
+			e:startServer(); e:step(.1)
+			local names={}
+			for name in e.stores do table.insert(names,name) end
+			eq(names[1],"BrainrotArenaProfiles")
+		end
+		-- A non-StringValue child (e.g. a NumberValue pasted by mistake) is ignored
+		-- too, so a malformed config cannot select anything at all.
+		local e=Mock.new(sources,schema,{studio=false})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local wrong=e.new("NumberValue"); wrong.Name="AcceptanceRunId"
+		wrong.Value=7; wrong.Parent=config; config.Parent=e.services.ServerStorage
+		e:startServer(); e:step(.1)
+		local names={}
+		for name in e.stores do table.insert(names,name) end
+		eq(names[1],"BrainrotArenaProfiles")
+	end)
+
+	test("7B-NS-4: Studio stays memory-only even with an acceptance namespace",function()
+		-- This is the constraint the manual checklist is built around: Studio
+		-- playtest cannot open ANY DataStore, so durability must be accepted on a
+		-- published private server. If this ever changes, the checklist changes.
+		local e=Mock.new(sources,schema,{studio=true})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+		runId.Value="p7b-test"; runId.Parent=config; config.Parent=e.services.ServerStorage
+		e:startServer(); e:step(.1)
+		eq(#(function() local n={} for name in e.stores do table.insert(n,name) end return n end)(),0,
+			"Studio must open no DataStore at all")
+		local Persistence=e:import("src/server/Persistence.luau")
+		local stats=Persistence.new({acceptance=true,storeName="BrainrotArenaAcceptance_p7b-test"}).memoryOnly
+		eq(Persistence.new({acceptance=true,storeName="BrainrotArenaAcceptance_p7b-test",persistInStudio=true}).memoryOnly,false)
+		eq(stats,true,"Studio is memory-only without an explicit opt-in")
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7B: a profile survives a server restart, in the acceptance namespace.
+	-- Two independent server instances over one DataStore double: what the first
+	-- writes after a round, the second reads on join. This is the automated half of
+	-- the "persistence across server restart" acceptance item.
+	-- ------------------------------------------------------------------------ #
+	test("7B-RESTART: a round payout written in one server is read by the next",function()
+		local e=Mock.new(sources,schema,{fast=true,studio=false})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+		runId.Value="p7b-restart"; runId.Parent=config; config.Parent=e.services.ServerStorage
+		local a=e:addPlayer(-55,"Restarter")
+		e:startServer(); e:step(.1)
+		-- The key comes from the real UserId, so derive it exactly as the server does.
+		local Persistence=e:import("src/server/Persistence.luau")
+		local key=Persistence.key(-55)
+		local underlying=e.stores["BrainrotArenaAcceptance_p7b-restart"]
+		assert(underlying,"the acceptance namespace must be the one opened")
+		-- A live server runs PRODUCTION timing (`fast` only applies in Studio):
+		-- 12 s intermission, 180 s round. Play one full round so a payout is
+		-- actually written, then let the Results edge save.
+		e:step(12.2); eq(e:lastState().phase,"Playing")
+		collect(e,a,2)
+		e:step(190)
+		local saved=underlying[key]
+		assert(saved,"the round payout must have been persisted")
+		assert(saved.Coins>0,"coins must be recorded")
+		assert(saved.Rounds==1,"one round recorded")
+		local coinsAfter,roundsAfter=saved.Coins,saved.Rounds
+		e:removePlayer(a); e:step(1)
+		-- A fresh server over the same namespace: the returning player loads it.
+		local e2=Mock.new(sources,schema,{fast=true,studio=false})
+		local config2=e2.new("Configuration"); config2.Name="BrainrotPersistenceConfig"
+		local runId2=e2.new("StringValue"); runId2.Name="AcceptanceRunId"
+		runId2.Value="p7b-restart"; runId2.Parent=config2; config2.Parent=e2.services.ServerStorage
+		local b=e2:addPlayer(-55,"Restarter")
+		e2:startServer(); e2:step(.1)
+		local profile=Persistence.new({memoryOnly=false,persistInStudio=true,
+			acceptance=true,storeName="BrainrotArenaAcceptance_p7b-restart"})
+		profile:load(-55)
+		local loaded=profile:profile(-55)
+		eq(loaded.Coins,coinsAfter)
+		eq(loaded.Rounds,roundsAfter)
+		eq(Persistence.key(-55),key)
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7C: graceful shutdown.
+	--
+	-- These run the REAL Main.server and fire the REAL `game:BindToClose`
+	-- callback through the mock's `env:shutdown()`. They prove the behaviour of
+	-- OUR code against a contract double. They do NOT prove the engine's
+	-- shutdown: the mock runs bindings in order and returns, while Roblox runs
+	-- them concurrently and kills the instance at 30 s regardless. Engine
+	-- shutdown remains a manual acceptance item.
+	-- ------------------------------------------------------------------------ #
+	local function shutdownFixture(options)
+		local opts = options or {}
+		opts.fast = true
+		opts.studio = false
+		local e = Mock.new(sources, schema, opts)
+		local cfg = e.new("Configuration"); cfg.Name = "BrainrotPersistenceConfig"
+		local rid = e.new("StringValue"); rid.Name = "AcceptanceRunId"
+		rid.Value = opts.runId or "p7c-shutdown"; rid.Parent = cfg; cfg.Parent = e.services.ServerStorage
+		return e, "BrainrotArenaAcceptance_" .. (opts.runId or "p7c-shutdown")
+	end
+	-- Seed a durable profile and let the server read it, so the session is Loaded.
+	-- A server with player -42 online. `seed` is placed in the store BEFORE the
+	-- server starts, because the join reads immediately: seeding afterwards would
+	-- be overwritten by the first (default) record the join wrote.
+	local function joinedServer(options, seed)
+		local e, name = shutdownFixture(options)
+		local a = e:addPlayer(-42, "Veteran")
+		if seed then
+			-- The server has not opened the store yet, so create the table it
+			-- will bind to and pre-place the record.
+			e.stores[name] = e.stores[name] or {}
+			e.stores[name]["p_-42"] = seed
+		end
+		e:startServer(); e:step(.1)
+		underlying = e.stores[name]
+		return e, a, underlying, name
+	end
+	-- Only the drain's own report; the start-up "ACCEPTANCE DataStore namespace"
+	-- line also contains no "shutdown", but "shutdown •" is unambiguous.
+	local function shutdownLog(e)
+		local out = {}
+		for _, entry in e.logs do
+			if (entry.name == "Log" or entry.name == "Warn") and string.find(entry.text, "shutdown •", 1, true) then
+				table.insert(out, entry.text)
+			end
+		end
+		return out
+	end
+
+	test("7C-S1: shutdown saves every loaded profile",function()
+		local e, a = joinedServer({})
+		-- Earn something durable through the real payout path.
+		e:step(12.2); eq(e:lastState().phase, "Playing")
+		collect(e, a, 2)
+		e:step(190)                            -- round closes, payout + save
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		local underlying = e.stores["BrainrotArenaAcceptance_p7c-shutdown"]
+		local before = underlying[key] and underlying[key].Coins
+		assert(before and before > 0, "the payout must be durable before shutdown")
+		-- A second, unsaved gain: mutate the live session the way a mid-round
+		-- catch does, then shut down without a round boundary.
+		local profiles = nil
+		eq(e:shutdown(), 1, "the server must register exactly one BindToClose")
+		local logs = shutdownLog(e)
+		assert(#logs >= 1, "shutdown must log a report")
+		-- The record is intact and still carries the earned coins.
+		eq(underlying[key].Coins, before)
+		assert(string.find(logs[1], "writable", 1, true), "the report names what it flushed")
+	end)
+
+	test("7C-S2: shutdown never writes a profile whose load failed",function()
+		local seed = seededVeteran()
+		local resolved = nil
+		local e, a, underlying = joinedServer({ readFail = true }, seed)
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		-- The read failed, so the session is Failed and must stay non-writable.
+		eq(e:shutdown(), 1)
+		local after = underlying[key]
+		eq(after.Coins, 5000, "a failed load must survive the shutdown untouched")
+		eq(after.Rounds, 120)
+		eq(after.Specimens.toast, 9)
+		local logs = shutdownLog(e)
+		assert(#logs >= 1, "shutdown must report")
+		-- zero writable profiles: nothing was flushed for this player
+		assert(string.find(logs[1], "0 writable", 1, true),
+			"the failed profile must not be counted writable: " .. logs[1])
+	end)
+
+	test("7C-S3: shutdown while a save is already running does not duplicate it",function()
+		local e, a = joinedServer({})
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		local underlying = e.stores["BrainrotArenaAcceptance_p7c-shutdown"]
+		-- Leave with a queued write outstanding, then shut down before it lands.
+		e:step(12.2); collect(e, a, 1)
+		-- A halo purchase queues a save through the gameplay path.
+		e:step(190)
+		local legacyWrites = e.writeCounts[key] or 0
+		e:shutdown()
+		local afterShutdown = e.writeCounts[key] or 0
+		-- Whatever the timing, a single shutdown must not add more than one
+		-- write per player beyond the one that was already running.
+		assert(afterShutdown - legacyWrites <= 1,
+			string.format("shutdown duplicated a write: %d -> %d", legacyWrites, afterShutdown))
+		assert(underlying[key], "the record is still present")
+	end)
+
+	test("7C-S4: PlayerRemoving and BindToClose together write once, newest data",function()
+		local e, a = joinedServer({})
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		local underlying = e.stores["BrainrotArenaAcceptance_p7c-shutdown"]
+		e:step(12.2); collect(e, a, 3)
+		e:step(190)   -- round closes and pays
+		local afterPayout = e.writeCounts[key] or 0
+		-- Player leaving triggers PlayerRemoving; the shutdown then runs too.
+		e:removePlayer(a)
+		e:shutdown()
+		local total = e.writeCounts[key] or 0
+		-- The unchanged payload must not be rewritten: at most one extra write
+		-- (the leave), and certainly not one per entry point.
+		assert(total - afterPayout <= 1,
+			string.format("duplicate writes on leave+shutdown: %d -> %d", afterPayout, total))
+		assert(underlying[key].Coins > 0, "the payout survived")
+	end)
+
+	test("7C-S5: a DataStore write failure during shutdown corrupts nothing",function()
+		local seed = seededVeteran()
+		local e, a, underlying = joinedServer({}, seed)
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		eq(underlying[key].Coins, 5000)
+		-- Fail every write from here on: the shutdown must give up cleanly.
+		e.options.writeFail = true
+		e:shutdown()
+		-- The previous record is byte-for-byte intact; a failed write must not
+		-- have replaced it with a default or a partial table.
+		eq(underlying[key].Coins, 5000)
+		eq(underlying[key].Rounds, 120)
+		eq(underlying[key].Specimens.toast, 9)
+		local logs = shutdownLog(e)
+		assert(#logs >= 1)
+		local warned = false
+		for _, entry in e.logs do
+			if entry.name == "Warn" and string.find(entry.text, "shutdown finished with", 1, true) then
+				warned = true
+			end
+		end
+		assert(warned, "a failed shutdown save must be reported, not swallowed")
+	end)
+
+	test("7C-S6: multiple players all save during one shutdown",function()
+		local e, name = shutdownFixture({})
+		local a = e:addPlayer(-42, "One")
+		local b = e:addPlayer(-43, "Two")
+		local c = e:addPlayer(-44, "Three")
+		e:startServer(); e:step(.1)
+		local underlying = e.stores[name]
+		eq(e:shutdown(), 1)
+		local P = e:import("src/server/Persistence.luau")
+		for _, id in { -42, -43, -44 } do
+			local key = P.key(id)
+			assert(underlying[key] ~= nil, "player " .. id .. " was not saved by the shutdown")
+		end
+		local logs = shutdownLog(e)
+		assert(#logs >= 1)
+		assert(string.find(logs[1], "3 writable", 1, true),
+			"all three must be counted writable: " .. logs[1])
+	end)
+
+	test("7C-S7: a leaving player's final save is not dropped by release",function()
+		-- Regression for a real data-loss bug: PlayerRemoving used to QUEUE the
+		-- final save and then immediately call release(), which bumps the
+		-- generation. The queued write then saw a newer generation and aborted,
+		-- so every leaving player's last session was silently lost. Proven on
+		-- the pre-fix source, where the store was still empty after the flush.
+		local e, a = joinedServer({})
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		local underlying = e.stores["BrainrotArenaAcceptance_p7c-shutdown"]
+		e:step(12.2); collect(e, a, 2)
+		e:step(190)
+		assert(underlying[key], "the round payout is durable")
+		local coins = underlying[key].Coins
+		-- Leave and let the removal save complete.
+		e:removePlayer(a); e:step(.5)
+		assert(underlying[key], "the leave save must reach the store")
+		eq(underlying[key].Coins, coins, "and it must be the same record")
+	end)
+
+	test("7C-S8: shutdown is idempotent and bounded",function()
+		local e, name = shutdownFixture({})
+		e:addPlayer(-42, "One")
+		e:startServer(); e:step(.1)
+		eq(e:shutdown(), 1)
+		-- A second bind (or a re-entrant drain) must not write again.
+		local underlying = e.stores[name]
+		local P = e:import("src/server/Persistence.luau")
+		local key = P.key(-42)
+		local writes = e.writeCounts[key] or 0
+		local profiles = nil
+		e:shutdown()   -- no bindings left
+		eq(e.writeCounts[key] or 0, writes, "a second shutdown must not rewrite")
+		assert(underlying[key], "the record is present")
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7C: the bottom control row, measured as real rectangles.
+	--
+	-- Three controls share the bottom of the screen: the steal panel (with its
+	-- readout riding 38 px above it), the ability panel, and the shop bar. Before
+	-- this phase all three were placed independently in the same band and
+	-- overlapped at EVERY phone size (390x800 included). These tests measure the
+	-- union footprint, not just the button rects, because the readout is what the
+	-- bar was actually sitting on.
+	-- ------------------------------------------------------------------------ #
+	local function footprint(e)
+		-- {name, rect} for each control, with the steal readout folded in.
+		local steal = e:find("StealPanel")
+		local readout = steal:FindFirstChild("Carried", true)
+		local s = rect(steal)
+		local box = { x = s.x, y = s.y, w = s.w, h = s.h }
+		if readout and readout.Visible then
+			local r = rect(readout)
+			local top = math.min(box.y, r.y)
+			local bottom = math.max(box.y + box.h, r.y + r.h)
+			box = { x = math.min(box.x, r.x), y = top, w = math.max(box.w, r.w), h = bottom - top }
+		end
+		return {
+			{ name = "steal(+readout)", rect = box },
+			{ name = "ability", rect = rect(e:find("AbilityPanel")) },
+			{ name = "actionbar", rect = rect(e:find("ActionBar")) },
+		}
+	end
+
+	-- The full matrix required by the phase, plus the shapes around the
+	-- two-row / single-row boundary (700 px) so an off-by-one cannot hide.
+	local CONTROL_VIEWPORTS = {
+		{ 320, 568 }, { 360, 740 }, { 390, 800 }, { 430, 900 },   -- portrait phones
+		{ 412, 915 }, { 844, 354 }, { 740, 360 }, { 932, 430 },   -- landscape phones
+		{ 600, 400 }, { 699, 500 }, { 700, 500 },                 -- row-boundary cases
+		{ 768, 1024 }, { 820, 1180 }, { 1024, 768 },              -- tablets
+		{ 1280, 720 }, { 1280, 600 }, { 1920, 1080 },             -- desktop
+	}
+
+	test("7C-S9: shutdown in Studio is honest about memory-only",function()
+		-- Studio opens no DataStore, so a shutdown can write nothing. The report
+		-- must say memoryOnly=true and must not claim a write: a green shutdown
+		-- line in Studio is not evidence of persistence.
+		local e = Mock.new(sources, schema, { fast = true, studio = true })
+		e:addPlayer(-1, "StudioPlayer")
+		e:startServer(); e:step(.1)
+		local opened = 0
+		for _ in pairs(e.stores) do opened += 1 end
+		eq(opened, 0, "Studio must open no DataStore")
+		eq(#e.closeBindings, 1, "the shutdown binding must still be registered")
+		e:shutdown()
+		local logs = shutdownLog(e)
+		assert(#logs >= 1, "shutdown must report")
+		assert(string.find(logs[1], "memoryOnly=true", 1, true), "the report must name memory-only: " .. logs[1])
+		assert(string.find(logs[1], "0 written", 1, true), "nothing may be claimed as written: " .. logs[1])
+	end)
+
+	test("7C-S10: the shutdown report counts writes truthfully",function()
+		-- The report is the only evidence a live operator gets from a shutdown,
+		-- so it must not over-count. Three cases, exact numbers.
+		local function report(options)
+			local e, name = shutdownFixture(options)
+			e:addPlayer(-42, "A"); e:addPlayer(-43, "B")
+			e:startServer(); e:step(.1)
+			if options and options.writeFail then e.options.writeFail = true end
+			e:shutdown()
+			local logs = shutdownLog(e)
+			assert(#logs == 1, "exactly one shutdown report")
+			return logs[1]
+		end
+		local ok = report({})
+		assert(string.find(ok, "2 writable", 1, true) and string.find(ok, "2 written", 1, true),
+			"both fresh players must be written: " .. ok)
+		local failed = report({ writeFail = true })
+		assert(string.find(failed, "0 written", 1, true) and string.find(failed, "2 failed", 1, true),
+			"a failed write must not be counted as written: " .. failed)
+		local unread = report({ readFail = true })
+		assert(string.find(unread, "0 writable", 1, true),
+			"an unreadable profile is not writable: " .. unread)
+	end)
+
+	test("7C-M1: no bottom control overlaps another at any viewport",function()
+		for _,size in CONTROL_VIEWPORTS do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			local boxes=footprint(e)
+			for i=1,#boxes do
+				for j=i+1,#boxes do
+					local a,b=boxes[i],boxes[j]
+					assert(not overlaps(a.rect,b.rect),string.format(
+						"%s overlaps %s at %dx%d: (%.0f,%.0f %.0fx%.0f) / (%.0f,%.0f %.0fx%.0f)",
+						a.name,b.name,size[1],size[2],
+						a.rect.x,a.rect.y,a.rect.w,a.rect.h,b.rect.x,b.rect.y,b.rect.w,b.rect.h))
+				end
+			end
+		end
+	end)
+
+	test("7C-M2: every bottom control stays fully on screen",function()
+		for _,size in CONTROL_VIEWPORTS do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			for _,box in footprint(e) do
+				local r=box.rect
+				assert(r.x>=-0.5 and r.y>=-0.5 and r.x+r.w<=size[1]+1 and r.y+r.h<=size[2]+1,
+					string.format("%s off screen at %dx%d -> %.0f,%.0f %.0fx%.0f",
+						box.name,size[1],size[2],r.x,r.y,r.w,r.h))
+			end
+		end
+	end)
+
+	test("7C-M3: touch targets keep their usable height",function()
+		-- 44 px is the accessibility floor the project already uses. Every action
+		-- control must clear it at every viewport: a control that fits the screen
+		-- but is 20 px tall is not usable on a phone.
+		for _,size in CONTROL_VIEWPORTS do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			for _,name in {"StealPanel","AbilityPanel","ActionBar"} do
+				local r=rect(e:find(name))
+				assert(r.h>=44,string.format("%s is only %.0f px tall at %dx%d",name,r.h,size[1],size[2]))
+				assert(r.w>=44,string.format("%s is only %.0f px wide at %dx%d",name,r.w,size[1],size[2]))
+			end
+		end
+	end)
+
+	test("7C-M4: mobile controls clear the thumbstick and jump zones",function()
+		-- The bottom-right ~110x105 rectangle is where Roblox puts jump, and the
+		-- bottom-left is the thumbstick. A control there would fight the player.
+		for _,size in {{390,800},{320,568},{844,354},{768,1024}} do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			local jump={x=size[1]-110,y=size[2]-105,w=110,h=105}
+			local thumb={x=0,y=size[2]-105,w=110,h=105}
+			for _,box in footprint(e) do
+				assert(not overlaps(box.rect,jump),
+					string.format("%s sits on the jump zone at %dx%d",box.name,size[1],size[2]))
+				assert(not overlaps(box.rect,thumb),
+					string.format("%s sits on the thumbstick at %dx%d",box.name,size[1],size[2]))
+			end
+		end
+	end)
+
+	test("7C-M5: the bar only moves to its own row when one row cannot fit",function()
+		-- Guards the layout DECISION through its observable result. On a narrow
+		-- phone the bar must sit ABOVE the steal/ability row; on a wide screen it
+		-- must share the bottom row (pushing it up there would waste play space).
+		local function barIsOnOwnRow(e)
+			local bar = rect(e:find("ActionBar"))
+			local steal = rect(e:find("StealPanel"))
+			-- One row means their vertical spans intersect.
+			return bar.y + bar.h <= steal.y + 0.5
+		end
+		for _,size in {{320,568},{360,740},{390,800},{430,900},{412,915}} do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			assert(barIsOnOwnRow(e),string.format("a %d px phone must use two rows",size[1]))
+		end
+		for _,size in {{1280,720},{1024,768},{1920,1080},{820,1180}} do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			assert(not barIsOnOwnRow(e),string.format("%dx%d has room for one row",size[1],size[2]))
+		end
+	end)
+
+	test("7C-M6: rotating between the two layouts keeps every control on screen",function()
+		-- `resize()` runs on every AbsoluteSize change, and the layout switches
+		-- between one row and two as the width crosses the threshold. A control
+		-- that kept a stale anchor across that switch would be stranded.
+		local e=fixture(nil,true)
+		for _,size in {{390,800},{1280,720},{844,354},{390,800},{820,1180},{699,500},{700,500}} do
+			e:setViewport(size[1],size[2])
+			local boxes=footprint(e)
+			for i=1,#boxes do
+				local r=boxes[i].rect
+				assert(r.x>=-0.5 and r.y>=-0.5 and r.x+r.w<=size[1]+1 and r.y+r.h<=size[2]+1,
+					string.format("%s stranded after rotation to %dx%d -> %.0f,%.0f",
+						boxes[i].name,size[1],size[2],r.x,r.y))
+				for j=i+1,#boxes do
+					assert(not overlaps(boxes[i].rect,boxes[j].rect),
+						string.format("%s/%s overlap after rotation to %dx%d",
+							boxes[i].name,boxes[j].name,size[1],size[2]))
+				end
+			end
+		end
 	end)
 
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))

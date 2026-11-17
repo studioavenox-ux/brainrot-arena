@@ -89,7 +89,34 @@ local appliedChaos = ""
 local chaos: ChaosRules.Modifiers = ChaosRules.modifiers("", Config)
 -- Coins, the specimen log, lifetime stats and cosmetics live here. Round score
 -- does not: it is created and destroyed by the round.
-local profiles = Persistence.new({})
+-- The DataStore namespace is chosen on the SERVER only, and never from client
+-- input. Production is the default and needs no configuration. An acceptance run
+-- sets it once, in Studio or on an isolated test place, BEFORE the server starts:
+--
+--   local Storage = game:GetService("ServerStorage")
+--   local config = Instance.new("Configuration")
+--   config.Name = "BrainrotPersistenceConfig"
+--   local runId = Instance.new("StringValue"); runId.Name = "AcceptanceRunId"
+--   runId.Value = "p7a-2026-11-17"          -- unique per acceptance run
+--   runId.Parent = config
+--   config.Parent = Storage
+--
+-- Any other name is rejected by Persistence.resolveStoreName, so a typo cannot
+-- point a test at live progression. Leaving the configuration out (the normal
+-- published game) uses BrainrotArenaProfiles.
+local function persistenceOptions(): { [string]: any }
+	local storage = game:GetService("ServerStorage")
+	local config = storage:FindFirstChild("BrainrotPersistenceConfig")
+	local runId = if config then config:FindFirstChild("AcceptanceRunId") else nil
+	if runId and runId:IsA("StringValue") and runId.Value ~= "" then
+		print(string.format("[Brainrot] ACCEPTANCE DataStore namespace: %s", runId.Value))
+		return { acceptance = true, storeName = "BrainrotArenaAcceptance_" .. runId.Value }
+	end
+	return {}
+end
+local profiles = Persistence.new(persistenceOptions())
+print(string.format("[Brainrot] persistence: store=%s acceptance=%s memoryOnly=%s",
+	tostring(profiles.storeName), tostring(profiles.acceptance), tostring(profiles.memoryOnly)))
 print("[Brainrot][server] persistence ready")
 Workspace.Gravity = Config.NormalGravity
 Workspace.FallenPartsDestroyHeight = -160
@@ -491,22 +518,28 @@ local function handleEffects(effects, now: number)
 			print(string.format("[Brainrot] stage • %s (banked all carried cells)", tostring(effect.stage)))
 		elseif effect.kind == "phase" then
 			if machine.phase == "Results" and machine.lastResults then
-				-- Pay the round into each profile once, from the machine's own result.
+				-- Pay the round into each profile exactly once, from the result the
+				-- machine froze when the round closed. Nothing here re-reads live
+				-- player state: a save that runs late can no longer record the next
+				-- round's catches, and only players the machine paid are touched.
 				local winners = {}
 				for _, row in machine.lastResults.winners do
 					winners[row.id] = true
 				end
 				for _, row in machine:rows() do
-					local profile = profiles:profile(row.id)
-					if profile then
-						local paid = (machine.lastResults.rewards[tostring(row.id)] or 0)
-						Persistence.applyRound(profile, {
-							score = row.score, steals = row.steals, lost = row.lost,
-							pickups = row.pickups, coins = paid, won = winners[row.id] == true,
-							collection = row.collection,
-						})
-						-- The machine owns live coins; keep them in step with the profile.
-						profiles:save(row.id)
+					local paid = machine.lastResults.rewards[tostring(row.id)]
+					if paid ~= nil then
+						local profile = profiles:profile(row.id)
+						if profile then
+							Persistence.applyRound(profile, {
+								score = row.score, steals = row.steals, lost = row.lost,
+								pickups = row.pickups, coins = paid, won = winners[row.id] == true,
+								-- Round-scoped catches, frozen at the results edge.
+								collection = machine.lastResults.collections[tostring(row.id)],
+							})
+							-- The machine owns live coins; keep them in step with the profile.
+							profiles:save(row.id)
+						end
 					end
 				end
 			end
@@ -578,12 +611,29 @@ local function playerAdded(player: Player)
 	-- Seed the session from the saved profile as soon as it is available. The
 	-- machine's numbers stay authoritative for the round; the profile is what
 	-- survives it.
-	profiles:load(player.UserId, function(profile)
+	-- The load reports its state. Only a Loaded profile may seed the session;
+	-- a Failed one keeps the player playing in memory with their saved progress
+	-- untouched on disk, and gets one bounded retry so a brief throttle does not
+	-- cost the whole session.
+	local function seed(profile, state)
+		if state == "Failed" then
+			warn(string.format("[Brainrot] %s: profile unavailable, playing unsaved", player.Name))
+			return
+		end
 		if machine.players[player.UserId] then
 			machine:seedProfile(player.UserId, profile.Coins, profile.Halo)
 			applyHalo(player)
 			syncStats()
 			dirty = true
+		end
+	end
+	profiles:load(player.UserId, function(profile, state)
+		seed(profile, state)
+		if state == "Failed" and player.Parent == Players then
+			task.wait(Config.PersistenceRetryDelay)
+			if player.Parent == Players and profiles:state(player.UserId) == "Failed" then
+				profiles:load(player.UserId, seed, { retry = true })
+			end
 		end
 	end)
 	nextSpawn += 1
@@ -607,6 +657,34 @@ local function playerAdded(player: Player)
 	dirty = true
 end
 
+-- Fold everything this session earned into the durable profile. Called from
+-- PlayerRemoving and from the shutdown drain so both write the SAME table: two
+-- different merge orders against one key is exactly how a shutdown can end up
+-- persisting less than the player actually earned.
+-- Returns false when the profile is not writable, and never touches it then.
+local function snapshotSession(userId: number): boolean
+	if not profiles:isWritable(userId) then
+		return false
+	end
+	local data = machine.players[userId]
+	if not data then
+		return profiles:profile(userId) ~= nil
+	end
+	local profile = profiles:profile(userId)
+	if not profile then
+		return false
+	end
+	local coins, halo = machine:cosmetics(userId)
+	profile.Coins = math.max(profile.Coins, coins)
+	profile.Halo = halo
+	for species, amount in data.collection do
+		if type(species) == "string" then
+			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
+		end
+	end
+	return true
+end
+
 Players.PlayerAdded:Connect(playerAdded)
 Players.PlayerRemoving:Connect(function(player)
 	local record = records[player.UserId]
@@ -614,17 +692,24 @@ Players.PlayerRemoving:Connect(function(player)
 		record.connection:Disconnect()
 	end
 	-- Persist what this session earned before the machine forgets the player.
-	local data = machine.players[player.UserId]
-	local profile = profiles:profile(player.UserId)
-	if data and profile then
-		local coins, halo = machine:cosmetics(player.UserId)
-		profile.Coins = math.max(profile.Coins, coins)
-		profile.Halo = halo
-		for species, amount in data.collection do
-			profile.Specimens[species] = math.max(profile.Specimens[species] or 0, amount)
-		end
-		profiles:save(player.UserId)
+	-- Only a profile that actually loaded is writable: if the read failed, this
+	-- final save is skipped so the real record survives the outage.
+	if snapshotSession(player.UserId) then
+		-- AWAITED, deliberately. `release` below bumps the generation, and the
+		-- write aborts when it sees a newer generation — so a write merely
+		-- *queued* here would be dropped by the release that follows it. (That
+		-- was a real data-loss bug: every leaving player's final save was lost.)
+		-- PlayerRemoving is allowed to yield: the player is already gone and
+		-- nothing on screen waits for it.
+		profiles:saveAwait(player.UserId)
+	else
+		print(string.format("[Brainrot] %s left with an unsaved session (profile %s)",
+			player.Name, tostring(profiles:state(player.UserId))))
 	end
+	-- Tear the session down after the save was queued. `release` invalidates any
+	-- read still in flight, so a late completion cannot store a profile for a
+	-- player who is gone, and a rejoin starts from a clean generation.
+	profiles:release(player.UserId)
 	records[player.UserId] = nil
 	movement:remove(player.UserId)
 	route:remove(player.UserId)
@@ -632,6 +717,37 @@ Players.PlayerRemoving:Connect(function(player)
 	CharacterRules.clear(characters, player.UserId)
 	AbilityService.forget(abilities, player.UserId)
 	dirty = true
+end)
+
+-- Shutdown. Roblox runs this when the server is closing (update, migration, or
+-- the last player leaving) and terminates the instance at most 30 s later
+-- whether or not the callback finished, so the drain is bounded and reports what
+-- it could not finish. It saves only profiles that reached Loaded: a session
+-- whose read failed is skipped here exactly as it is on PlayerRemoving.
+--
+-- A player PlayerRemoving already saved has an unchanged payload, so nothing is
+-- written twice. A player whose PlayerRemoving save is still in flight is
+-- joined, not duplicated.
+game:BindToClose(function()
+	local started = os.clock()
+	local players = Players:GetPlayers()
+	local writable = 0
+	for _, player in Players:GetPlayers() do
+		if snapshotSession(player.UserId) then
+			writable += 1
+		end
+	end
+	local report = profiles:shutdownSave()
+	local skipped = report.skipped
+	local stats = profiles:stats()
+	print(string.format(
+		"[Brainrot] shutdown • %d online, %d writable, %d written, %d already saved, %d failed, %d pending (%.2fs, store=%s memoryOnly=%s)",
+		#players, writable, report.saved, skipped, report.failed, report.pending,
+		os.clock() - started, tostring(stats.storeName), tostring(stats.memoryOnly)))
+	if report.failed > 0 or report.pending > 0 then
+		warn(string.format("[Brainrot] shutdown finished with %d unsaved profile(s); see the line above",
+			report.failed + report.pending))
+	end
 end)
 for _, player in Players:GetPlayers() do
 	playerAdded(player)
@@ -659,8 +775,14 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 			stateRemote:FireClient(player, snapshot(), STEAL_MESSAGES["cooldown"])
 			return
 		end
-		record.requests.StealSent = now
 		local outcome, value, victim = resolveSteal(player, now)
+		-- Only a steal that actually moved a cell starts the cooldown. A refusal
+		-- (nothing in range, protected, empty-handed) leaves the verb ready, so the
+		-- HUD — which counts down from the server's stealReadyAt — never shows
+		-- "STEAL READY" while the server is silently refusing for eight seconds.
+		if outcome == "ok" then
+			record.requests.StealSent = now
+		end
 		print(string.format("[Brainrot] steal %s • %s -> %s (+%d)", outcome, player.Name,
 			if victim then victim.Name else "nobody", value))
 		-- A steal moves score between two players: refresh leaderstats immediately
@@ -683,8 +805,8 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 			-- Coins are spent inside the round, then written to the profile: one
 			-- transition, one save. A client never sends the price.
 			local coins, halo = machine:cosmetics(player.UserId)
-			local profile = profiles:profile(player.UserId)
-			if profile then
+			if profiles:isWritable(player.UserId) then
+				local profile = profiles:profile(player.UserId)
 				profile.Coins = coins
 				profile.Halo = halo
 				profiles:save(player.UserId)

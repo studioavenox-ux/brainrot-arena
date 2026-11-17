@@ -6,7 +6,7 @@ hidden in the code comments.
 ## Verification
 
 1. **Roblox Studio was not available.** Every claim in this repository comes from
-   the automated gate (248 assertions) plus the offline renderer. The Studio
+   the automated gate (329 assertions) plus the offline renderer. The Studio
    acceptance matrix in `docs/TEST_REPORT_PHASE5.md` is **pending**, not passed:
    physics feel, real DataStore latency, mobile touch and the actual look of the
    rafts in the engine have not been observed.
@@ -49,6 +49,32 @@ hidden in the code comments.
     same moment could have the two servers write the same profile; the last write
     wins. Roblox's own `UpdateAsync` semantics would fix this and are mocked but not
     used by the live path yet.
+11a. **Persistence is now the default in a live server** (`Persistence.new({})`
+    opens the DataStore; Studio stays memory-only unless `persistInStudio` is
+    passed). This is a behaviour change from the Phase 5 build, where an inverted
+    default meant a published server never wrote a profile at all. Real DataStore
+    latency, throttling and quota behaviour are still unverified — see
+    [PHASE6_DURABILITY.md](PHASE6_DURABILITY.md) for the reproductions and the
+    pending Studio/device checks.
+11b. **A failed profile read is not retried forever.** The session gets one
+    bounded retry (`Config.PersistenceRetryDelay`); if that also fails the player
+    keeps playing with everything unsaved and the real record is left intact. No
+    write path exists for that session, so nothing is lost and nothing is gained
+    until the next join succeeds. A player who never rejoins while the store is
+    healthy keeps only their previously saved progress.
+11c. **The phone action bar no longer overlaps the action controls** (fixed in
+    Phase 7C). Phones use a two-row layout and wider screens park the bar beside
+    the action cluster; 17 viewports are geometry-clean. What is still unverified
+    is touch *delivery*: where the controls are is proven, that a tap lands is
+    not (rows T-03/T-04/T-12).
+11d. **Shutdown has a bounded drain** (added in Phase 7C). `game:BindToClose`
+    flushes every `Loaded` profile, deduplicates against writes already in flight,
+    and reports `written` / `failed` / `pending` in one line. A failed or pending
+    write is reported, never swallowed. Engine confirmation is row S-01, which has
+    not been run.
+11e. **The 20 s shutdown budget is unverified against a real DataStore.** The
+    drain sits inside the engine's 30 s ceiling, but a heavily throttled store
+    could still leave writes `pending`. Row S-01 measures it.
 12. **No purchase ledger.** Cosmetic purchases are coin spends inside the round,
     persisted immediately. There is no audit trail of individual transactions.
 13. **Save interval.** Profiles are written on purchase, on leave and on round

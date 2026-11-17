@@ -3382,6 +3382,50 @@
     "GlobalDataStore": {
       "Superclass": "Instance",
       "Properties": {}
+    },
+    "StringValue": {
+      "Superclass": "ValueBase",
+      "Properties": {
+        "Value": {
+          "Type": "string",
+          "CanLoad": true
+        }
+      }
+    },
+    "NumberValue": {
+      "Superclass": "ValueBase",
+      "Properties": {
+        "Value": {
+          "Type": "double",
+          "CanLoad": true
+        }
+      }
+    },
+    "BoolValue": {
+      "Superclass": "ValueBase",
+      "Properties": {
+        "Value": {
+          "Type": "bool",
+          "CanLoad": true
+        }
+      }
+    },
+    "ObjectValue": {
+      "Superclass": "ValueBase",
+      "Properties": {
+        "Value": {
+          "Type": "Instance",
+          "CanLoad": false
+        }
+      }
+    },
+    "Configuration": {
+      "Superclass": "Instance",
+      "Properties": {}
+    },
+    "ServerStorage": {
+      "Superclass": "Instance",
+      "Properties": {}
     }
   },
   "Enums": {
@@ -3897,5 +3941,6 @@
       "BottomLeft": 2,
       "BottomRight": 3
     }
-  }
+  },
+  "Patched": "Phase 7A: added StringValue/NumberValue/BoolValue/ObjectValue/Configuration/ServerStorage (verified against Roblox-Client-Tracker API-Dump.json, blob a4cce04d1c960f4b7bbc677fdac1219ae1ced110). No existing entry changed."
 }

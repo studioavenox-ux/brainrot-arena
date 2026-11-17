@@ -104,6 +104,37 @@ answer. Banked score is never touched.
   `applyRound()` is the single place a round pays coins or increments stats, reads and
   writes retry three times inside `pcall`, and a load merges rather than replaces so a slow
   read cannot erase the session. Round score is never persisted.
+  `Persistence.new(options)` defaults to **persisting**: only an explicit
+  `memoryOnly = true` (or `readOnly = true`, for isolated tests and offline tooling)
+  skips opening the DataStore. Studio is memory-only unless `persistInStudio = true`
+  is passed, so local playtests never share the live keys.
+- **A profile is writable only after it was read.** Each player has an explicit
+  load state — `Loading` → `Loaded`, or `Failed` when every read attempt threw —
+  and `Persistence:save` refuses with `"not-ready"` unless the state is `Loaded`.
+  A successful `nil` read is a *confirmed new player* and is writable; a failed
+  read is not. `release(userId)` runs on `PlayerRemoving`: it bumps a per-player
+  generation, drops the cache entry and marks the session `Leaving`, so a late
+  `GetAsync` completion can neither resurrect a departed session nor write for it.
+  A failed read therefore costs that session's *new* progress and nothing else —
+  the existing record is never touched. `isWritable(userId)` is the single rule
+  every caller (round payout, halo purchase, `PlayerRemoving`) consults.
+- **Namespace.** Production uses `BrainrotArenaProfiles` and nothing else.
+  `Persistence.resolveStoreName` accepts a different store only when it carries
+  the `BrainrotArenaAcceptance_` prefix **and** the caller passes
+  `acceptance = true`; the production name with `acceptance = true`, an
+  acceptance prefix without the flag, an unknown name, or a bare prefix all
+  raise. The name is resolved on the server only — `Main.server` reads an
+  optional `ServerStorage/BrainrotPersistenceConfig/AcceptanceRunId` — so no
+  client input reaches it. Player keys (`p_<userId>`) and the profile schema are
+  unchanged.
+- **Round-scoped rewards.** `RoundMachine` keeps two separate records per player:
+  `collection` (every catch this session, which the specimen log shows) and
+  `roundCollection` (only this round's catches). `finishRound()` freezes the round's
+  reward, winners and per-player `collections` into `lastResults`, and the adapter pays
+  profiles from that frozen table. A round payout can therefore never re-add an earlier
+  round's catches, and a payout that lands after the next round has started still records
+  exactly the round it closed. Neither field is replicated except as the wire `collection`
+  the HUD already shows.
 
 Snapshots contain only plain tables, arrays and primitive values. Reward dictionaries use **string UserId keys** for safe Roblox remote serialization. Name labels do not enable RichText. Score/coin/win values also appear in server-maintained `leaderstats`. Snapshots are sent at most four times a second when dirty, otherwise once a second; clients derive countdown display from server deadlines.
 
