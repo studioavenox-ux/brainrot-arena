@@ -2124,6 +2124,134 @@ return function(Mock, sources, schema)
 		end
 	end)
 
+	-- ------------------------------------------------------------------------ #
+	-- HOTFIX 01: Roblox Instances reject custom properties.
+	--
+	-- The real engine aborted HUD construction with
+	--   "__hovered is not a valid member of TextButton"
+	-- because Kit.button attached a Lua closure to the Instance. The mock used to
+	-- allow ANY `_`-prefixed key through unchecked, so 361 tests passed over it.
+	-- The mock now validates every property write against the class schema; these
+	-- tests pin that behaviour so the gap cannot reopen.
+	-- ------------------------------------------------------------------------ #
+
+	-- Hotfix 01 helpers: UDim2/Color3 live as globals inside the mock sandbox, not
+	-- on `env`, so tests reach them through a module compiled the same way.
+	local UIBUILD_SOURCE = [====[
+		local Kit = require("src/client/Kit.luau")
+		return {
+			make = function(parent, name, onClick, options)
+				return Kit.button(parent, name, "GO", UDim2.fromOffset(120, 44),
+					UDim2.fromOffset(0, 0), onClick, options or {})
+			end,
+			colors = function()
+				return { base = Color3.fromRGB(10, 20, 30), hover = Color3.fromRGB(40, 50, 60),
+					accent = Color3.fromRGB(90, 90, 90) }
+			end,
+		}
+	]====]
+	test("HF-01: Kit.button builds without attaching custom properties",function()
+		local e=Mock.new(sources,schema,{fast=true,studio=true})
+		local build=e:sandbox(UIBUILD_SOURCE)
+		local parent=e.new("Frame")
+		local fired=0
+		local button,label=build.make(parent,"Test",function() fired+=1 end)
+		eq(button.ClassName,"TextButton")
+		eq(label.ClassName,"TextLabel")
+		eq(button.Name,"Test")
+		eq(label.Text,"GO")
+		-- The specific property that crashed Studio must not exist on the instance.
+		eq(button.__hovered,nil,"Kit must not attach __hovered to the TextButton")
+		-- And the object must expose only a sane set of properties: nothing that
+		-- looks like ad-hoc state hung off the Instance.
+		local extra=0
+		for key,value in button._props do
+			if type(value)=="function" then
+				error("Kit.button attached a function property to the button: "..tostring(key))
+			end
+		end
+		eq(extra,0)
+	end)
+
+	test("HF-02: Kit.button still animates on MouseEnter / MouseLeave",function()
+		local e=Mock.new(sources,schema,{fast=true,studio=true})
+		local build=e:sandbox(UIBUILD_SOURCE)
+		local parent=e.new("Frame")
+		local tint=build.colors()
+		local button=build.make(parent,"Hover",function() end,{
+			color=tint.base, hoverColor=tint.hover, accent=tint.accent })
+		local scale=button:FindFirstChild("UIScale")
+		assert(scale,"Kit.button must create a UIScale for the hover tween")
+		eq(scale.Scale,1)
+		-- MouseEnter: scale tween runs and the background switches to hoverColor.
+		button.MouseEnter:Fire()
+		eq(button.BackgroundColor3,tint.hover,"hover must tint the button")
+		-- MouseLeave: back to the resting colour.
+		button.MouseLeave:Fire()
+		eq(button.BackgroundColor3,tint.base,"leave must restore the colour")
+	end)
+
+	test("HF-03: Kit.button fires its handler on Activated",function()
+		local e=Mock.new(sources,schema,{fast=true,studio=true})
+		local build=e:sandbox(UIBUILD_SOURCE)
+		local parent=e.new("Frame")
+		local count=0
+		local button=build.make(parent,"Click",function() count+=1 end)
+		button.Activated:Fire()
+		eq(count,1,"Activated must call onClick exactly once")
+		button.Activated:Fire()
+		eq(count,2,"and again on every activation")
+	end)
+
+	test("HF-04: a custom property on any Instance raises, like Roblox",function()
+		-- The mock must model the engine's rule, not merely tolerate our code. If it
+		-- ever goes back to accepting arbitrary keys, this test fails and the whole
+		-- class of bug becomes invisible again.
+		local e=Mock.new(sources,schema,{fast=true,studio=true})
+		local button=e.new("TextButton")
+		local ok,err=pcall(function() button.__hovered=function() return true end end)
+		eq(ok,false,"assigning a custom property must raise")
+		assert(string.find(tostring(err),"__hovered is not a valid member of TextButton",1,true),
+			"the message must match the engine's: "..tostring(err))
+		-- A plausible-looking but non-existent member is rejected too.
+		eq(pcall(function() button.HoverTint=true end),false)
+		eq(pcall(function() button.SomethingCustom=1 end),false)
+		-- Underscore bookkeeping the MOCK owns stays writable; a caller's own
+		-- underscore field does not.
+		local frame=e.new("Frame")
+		eq(pcall(function() frame._myCustomThing=1 end),false)
+		-- Real members still work.
+		button.Text="ok"
+		button.Visible=false
+		eq(button.Text,"ok")
+		eq(button.Visible,false)
+	end)
+
+	test("HF-05: every production UI instance accepts its assigned properties",function()
+		-- Build the whole client for real (server + HUD + effects). If any source
+		-- file assigns a non-existent Roblox property, construction raises here with
+		-- the engine's own message. This is the broad net for the bug class.
+		local e=fixture(nil,true)
+		e:setViewport(390,800)
+		local hud=e:find("BrainrotHUD")
+		assert(hud,"the HUD must build")
+		-- The instance named in the Studio report must exist and be a button.
+		local specimens=e:find("Specimens")
+		assert(specimens,"TopHud.Specimens must exist")
+		-- Walk every descendant: nothing may carry a function-valued custom field,
+		-- which is how a "custom property" attempt would show up after the fact.
+		local checked=0
+		for _,object in e.game:GetDescendants() do
+			for key,value in object._props do
+				checked+=1
+				assert(type(value)~="function",
+					string.format("%s.%s holds a function; Instances cannot store callbacks as properties",
+						object.ClassName,key))
+			end
+		end
+		assert(checked>0,"the walk must have inspected real properties")
+	end)
+
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")
 end

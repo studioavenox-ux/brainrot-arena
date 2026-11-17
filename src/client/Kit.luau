@@ -218,7 +218,6 @@ function Kit.button(parent, name, label, size, position, onClick, options)
 	Kit.corner(accent, 2)
 
 	local scale = Kit.instance("UIScale", { Scale = 1 }, button)
-	local hovered = false
 	local function tween(property, value, duration)
 		if o.reducedMotion and o.reducedMotion() then
 			scale.Scale = value
@@ -227,14 +226,12 @@ function Kit.button(parent, name, label, size, position, onClick, options)
 		TweenService:Create(scale, TweenInfo.new(duration or Motion.Fast), { Scale = value }):Play()
 	end
 	button.MouseEnter:Connect(function()
-		hovered = true
 		tween("Scale", 1.03, Motion.Fast)
 		text.TextColor3 = o.textColor or C.White
 		accent.BackgroundColor3 = o.accent or C.Cyan
 		button.BackgroundColor3 = o.hoverColor or C.NavyRaised
 	end)
 	button.MouseLeave:Connect(function()
-		hovered = false
 		tween("Scale", 1, Motion.Fast)
 		button.BackgroundColor3 = o.color or C.NavyRaised
 	end)
@@ -249,9 +246,11 @@ function Kit.button(parent, name, label, size, position, onClick, options)
 		end)
 		onClick()
 	end)
-	button.__hovered = function()
-		return hovered
-	end
+	-- Do NOT attach custom properties to the Instance. Roblox Instances only accept
+	-- real API members; assigning anything else raises
+	-- "__hovered is not a valid member of TextButton" and aborts HUD construction
+	-- (Hotfix 01). Hover state is therefore not exposed on the button: nothing read
+	-- it, and the visual behaviour lives entirely in the two connections above.
 	return button, text
 end
 
