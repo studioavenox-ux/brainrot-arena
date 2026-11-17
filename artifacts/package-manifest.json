@@ -21,7 +21,7 @@
     {
       "path": "artifacts/verification.json",
       "bytes": 1997,
-      "sha256": "ac4d5f886bd3e817e35efda5c98a00a403f89b54181a88af21fff401004dd5eb"
+      "sha256": "baab4ffc396663936c33ab22f1bac9b71e2cf564edacc8207dabef9732c8fe46"
     },
     {
       "path": "assets/README.md",
@@ -51,7 +51,7 @@
     {
       "path": "docs/BUILD_REPORT.md",
       "bytes": 11663,
-      "sha256": "454233fa41a618b6138f635bf6a4d36e2056d6f2275920729ca0fae952331927"
+      "sha256": "be2798bbcfc98c8532f9b322bd9b81078262ce52517942b60ca70ff7f2432624"
     },
     {
       "path": "docs/CHAOS_EVENTS.md",
@@ -553,7 +553,7 @@
   "production_script_count": 29,
   "place_count": 2,
   "source_sha256": "2b53df60cf00e943da336ae322c1f4bd15692c9e52a58c9ac90da14b8e35b846",
-  "prior_verification_timestamp_utc": "2026-11-17T10:37:51+00:00",
+  "prior_verification_timestamp_utc": "2026-11-17T10:38:25+00:00",
   "prior_automated_tests_passed": 366,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
