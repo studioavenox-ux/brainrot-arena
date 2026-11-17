@@ -49,12 +49,6 @@ hidden in the code comments.
     same moment could have the two servers write the same profile; the last write
     wins. Roblox's own `UpdateAsync` semantics would fix this and are mocked but not
     used by the live path yet.
-11b. **A failed profile read is not retried forever.** The session gets one
-    bounded retry (`Config.PersistenceRetryDelay`); if that also fails the player
-    keeps playing with everything unsaved and the real record is left intact. No
-    write path exists for that session, so nothing is lost and nothing is gained
-    until the next join succeeds. A player who never rejoins while the store is
-    healthy keeps only their previously saved progress.
 11a. **Persistence is now the default in a live server** (`Persistence.new({})`
     opens the DataStore; Studio stays memory-only unless `persistInStudio` is
     passed). This is a behaviour change from the Phase 5 build, where an inverted
@@ -62,6 +56,21 @@ hidden in the code comments.
     latency, throttling and quota behaviour are still unverified — see
     [PHASE6_DURABILITY.md](PHASE6_DURABILITY.md) for the reproductions and the
     pending Studio/device checks.
+11b. **A failed profile read is not retried forever.** The session gets one
+    bounded retry (`Config.PersistenceRetryDelay`); if that also fails the player
+    keeps playing with everything unsaved and the real record is left intact. No
+    write path exists for that session, so nothing is lost and nothing is gained
+    until the next join succeeds. A player who never rejoins while the store is
+    healthy keeps only their previously saved progress.
+11c. **The phone action bar can overlap the steal and ability panels.** All three
+    sit in the same 118 px lift band, and the bar is 252 px wide and centred. The
+    steal button stays readable and on top where they cross, but touch
+    interception has not been verified on a device (rows T-03/T-04/T-10).
+11d. **No `game:BindToClose`.** A player leaving is saved, and every completed
+    round is saved at the Results edge, but a server *shutdown* does not wait for
+    the final queued write. Coins earned after the last Results edge, and the
+    last specimen merge, can be lost on shutdown. Verify with P-06 in
+    [PHASE7B_ACCEPTANCE_PACKAGE.md](PHASE7B_ACCEPTANCE_PACKAGE.md).
 12. **No purchase ledger.** Cosmetic purchases are coin spends inside the round,
     persisted immediately. There is no audit trail of individual transactions.
 13. **Save interval.** Profiles are written on purchase, on leave and on round

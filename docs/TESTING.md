@@ -1,7 +1,11 @@
 # The unavoidable Studio acceptance pass
 
 **Not yet performed:** this development environment is Linux without Roblox Studio or a Roblox control connector.
-The full Phase 5 matrix (20 rows: stealing, protection, stages, all five events, persistence,
+**The current, executable acceptance matrix is
+[PHASE7B_ACCEPTANCE_PACKAGE.md](PHASE7B_ACCEPTANCE_PACKAGE.md)** (32 rows: 11 multiplayer,
+10 persistence, 11 mobile/touch) with setup, namespace configuration and expected output; its
+status and decision are in [PHASE7B_ACCEPTANCE_REPORT.md](PHASE7B_ACCEPTANCE_REPORT.md).
+The earlier Phase 5 matrix (20 rows: stealing, protection, stages, all five events, persistence,
 UI scaling) lives in [TEST_REPORT_PHASE5.md](TEST_REPORT_PHASE5.md). Automated checks are
 kept strictly separate from that matrix: 321 automated tests pass in the current gate (the live count is in the [build report](BUILD_REPORT.md)), and none of them is a
 substitute for a Studio run. The matrix's "five events" rows describe the superseded schedule; the current event rules are in [CHAOS_EVENTS.md](CHAOS_EVENTS.md). The included Luau logic, adapter contracts, generated map and place structure were checked locally; only Roblox Studio can verify real character physics, rendering, audio and client/server replication.

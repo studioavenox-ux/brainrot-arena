@@ -284,6 +284,43 @@ return function(Mock, sources, schema)
 			end
 		end
 	end)
+	test("7B-MOB-1: a landscape phone can reach the steal button",function()
+		-- Regression: `StealPanel` is built right-anchored, but the short-landscape
+		-- branch positioned it from the left edge WITHOUT resetting the anchor, so
+		-- the real rectangle was (Space.md - width) = -174..12 on an 844x354
+		-- phone: almost entirely off screen with only 12 px tappable. The button
+		-- must be fully reachable at every phone size, in both orientations.
+		for _,size in {{844,354},{740,360},{932,430},{1280,600}} do
+			local e=fixture(nil,true); e:setViewport(size[1],size[2])
+			local r=rect(e:find("StealPanel"))
+			assert(r.x>=0 and r.y>=0 and r.x+r.w<=size[1]+1 and r.y+r.h<=size[2]+1,
+				string.format("steal button off screen at %dx%d -> %.0f,%.0f %.0fx%.0f",
+					size[1],size[2],r.x,r.y,r.w,r.h))
+			-- A comfortable touch target: at least 44 px tall (accessibility floor)
+			-- and at least 44 px of it on screen.
+			assert(r.h>=44,string.format("steal button only %.0f px tall at %dx%d",r.h,size[1],size[2]))
+		end
+	end)
+
+	test("7B-MOB-2: rotating a phone keeps every action control on screen",function()
+		-- Device rotation re-runs resize() from the AbsoluteSize signal. A control
+		-- that is placed correctly once but keeps a stale anchor after rotating
+		-- would end up off screen, so check the round trip.
+		local e=fixture(nil,true)
+		local function check(width,height,label)
+			for _,name in {"StealPanel","AbilityPanel","ActionBar"} do
+				local r=rect(e:find(name))
+				assert(r.x>=0 and r.y>=0 and r.x+r.w<=width+1 and r.y+r.h<=height+1,
+					string.format("%s off screen %s at %dx%d -> %.0f,%.0f %.0fx%.0f",
+						name,label,width,height,r.x,r.y,r.w,r.h))
+			end
+		end
+		for _,size in {{390,800},{844,354},{390,800},{354,844},{844,354}} do
+			e:setViewport(size[1],size[2])
+			check(size[1],size[2],"after rotation")
+		end
+	end)
+
 	test("shop, inventory and settings modals all act on real state",function()
 		local e,a=fixture({fast=true,studio=true,roll=.97},true); e:setViewport(390,800)
 		-- Empty wallet: the shop explains the price and sends only the validated verb.
@@ -1575,6 +1612,123 @@ return function(Mock, sources, schema)
 		e:request(a,"Steal"); e:step(.1)
 		assert(myRow(a.UserId).score>0,"the cell changed hands")
 		near(myRow(a.UserId).stealReadyAt, now + Config.Steal.Cooldown)
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7B: the ServerStorage -> namespace plumbing, end to end.
+	--
+	-- `7A-H` proves `resolveStoreName` on its own. These run the REAL
+	-- `Main.server` and assert which DataStore namespace it actually opened, so
+	-- the documented acceptance setup is verified as a path, not just as a rule.
+	-- ------------------------------------------------------------------------ #
+	test("7B-NS-1: the published server with no config opens production only",function()
+		local e=Mock.new(sources,schema,{studio=false})
+		e:startServer(); e:step(.1)
+		local names={}
+		for name in e.stores do table.insert(names,name) end
+		eq(#names,1,"exactly one namespace may be opened")
+		eq(names[1],"BrainrotArenaProfiles")
+	end)
+
+	test("7B-NS-2: an AcceptanceRunId opens only the acceptance namespace",function()
+		local e=Mock.new(sources,schema,{studio=false})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+		runId.Value="p7b-test"; runId.Parent=config; config.Parent=e.services.ServerStorage
+		e:startServer(); e:step(.1)
+		local names={}
+		for name in e.stores do table.insert(names,name) end
+		eq(#names,1,"acceptance must open exactly one namespace")
+		eq(names[1],"BrainrotArenaAcceptance_p7b-test")
+		assert(names[1]~="BrainrotArenaProfiles","production keys must never be opened")
+	end)
+
+	test("7B-NS-3: an empty or wrong-typed run id falls back to production, never a bare prefix",function()
+		-- An empty string is not an acceptance run: it must be ignored entirely,
+		-- not turned into "BrainrotArenaAcceptance_", which would throw.
+		for _,value in {""} do
+			local e=Mock.new(sources,schema,{studio=false})
+			local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+			local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+			runId.Value=value; runId.Parent=config; config.Parent=e.services.ServerStorage
+			e:startServer(); e:step(.1)
+			local names={}
+			for name in e.stores do table.insert(names,name) end
+			eq(names[1],"BrainrotArenaProfiles")
+		end
+		-- A non-StringValue child (e.g. a NumberValue pasted by mistake) is ignored
+		-- too, so a malformed config cannot select anything at all.
+		local e=Mock.new(sources,schema,{studio=false})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local wrong=e.new("NumberValue"); wrong.Name="AcceptanceRunId"
+		wrong.Value=7; wrong.Parent=config; config.Parent=e.services.ServerStorage
+		e:startServer(); e:step(.1)
+		local names={}
+		for name in e.stores do table.insert(names,name) end
+		eq(names[1],"BrainrotArenaProfiles")
+	end)
+
+	test("7B-NS-4: Studio stays memory-only even with an acceptance namespace",function()
+		-- This is the constraint the manual checklist is built around: Studio
+		-- playtest cannot open ANY DataStore, so durability must be accepted on a
+		-- published private server. If this ever changes, the checklist changes.
+		local e=Mock.new(sources,schema,{studio=true})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+		runId.Value="p7b-test"; runId.Parent=config; config.Parent=e.services.ServerStorage
+		e:startServer(); e:step(.1)
+		eq(#(function() local n={} for name in e.stores do table.insert(n,name) end return n end)(),0,
+			"Studio must open no DataStore at all")
+		local Persistence=e:import("src/server/Persistence.luau")
+		local stats=Persistence.new({acceptance=true,storeName="BrainrotArenaAcceptance_p7b-test"}).memoryOnly
+		eq(Persistence.new({acceptance=true,storeName="BrainrotArenaAcceptance_p7b-test",persistInStudio=true}).memoryOnly,false)
+		eq(stats,true,"Studio is memory-only without an explicit opt-in")
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7B: a profile survives a server restart, in the acceptance namespace.
+	-- Two independent server instances over one DataStore double: what the first
+	-- writes after a round, the second reads on join. This is the automated half of
+	-- the "persistence across server restart" acceptance item.
+	-- ------------------------------------------------------------------------ #
+	test("7B-RESTART: a round payout written in one server is read by the next",function()
+		local e=Mock.new(sources,schema,{fast=true,studio=false})
+		local config=e.new("Configuration"); config.Name="BrainrotPersistenceConfig"
+		local runId=e.new("StringValue"); runId.Name="AcceptanceRunId"
+		runId.Value="p7b-restart"; runId.Parent=config; config.Parent=e.services.ServerStorage
+		local a=e:addPlayer(-55,"Restarter")
+		e:startServer(); e:step(.1)
+		-- The key comes from the real UserId, so derive it exactly as the server does.
+		local Persistence=e:import("src/server/Persistence.luau")
+		local key=Persistence.key(-55)
+		local underlying=e.stores["BrainrotArenaAcceptance_p7b-restart"]
+		assert(underlying,"the acceptance namespace must be the one opened")
+		-- A live server runs PRODUCTION timing (`fast` only applies in Studio):
+		-- 12 s intermission, 180 s round. Play one full round so a payout is
+		-- actually written, then let the Results edge save.
+		e:step(12.2); eq(e:lastState().phase,"Playing")
+		collect(e,a,2)
+		e:step(190)
+		local saved=underlying[key]
+		assert(saved,"the round payout must have been persisted")
+		assert(saved.Coins>0,"coins must be recorded")
+		assert(saved.Rounds==1,"one round recorded")
+		local coinsAfter,roundsAfter=saved.Coins,saved.Rounds
+		e:removePlayer(a); e:step(1)
+		-- A fresh server over the same namespace: the returning player loads it.
+		local e2=Mock.new(sources,schema,{fast=true,studio=false})
+		local config2=e2.new("Configuration"); config2.Name="BrainrotPersistenceConfig"
+		local runId2=e2.new("StringValue"); runId2.Name="AcceptanceRunId"
+		runId2.Value="p7b-restart"; runId2.Parent=config2; config2.Parent=e2.services.ServerStorage
+		local b=e2:addPlayer(-55,"Restarter")
+		e2:startServer(); e2:step(.1)
+		local profile=Persistence.new({memoryOnly=false,persistInStudio=true,
+			acceptance=true,storeName="BrainrotArenaAcceptance_p7b-restart"})
+		profile:load(-55)
+		local loaded=profile:profile(-55)
+		eq(loaded.Coins,coinsAfter)
+		eq(loaded.Rounds,roundsAfter)
+		eq(Persistence.key(-55),key)
 	end)
 
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))

@@ -393,9 +393,16 @@ function Hud:resize()
 	-- Steal action. Portrait/desktop: bottom-right. Short landscape: bottom-LEFT,
 	-- above the thumbstick, so it cannot sit under the leaderboard or the jump pad.
 	local stealLift = if compact then 118 else Space.lg
+	-- The panel is built right-anchored (see Panels.stealPanel), so the left-hand
+	-- short-landscape branch must reset the anchor. Without this the root is
+	-- positioned from the left edge but still anchored by its right edge, which
+	-- put it at x = -174 on an 844x354 phone — off screen, so a landscape phone
+	-- could not steal at all.
 	if short then
+		self.steal.root.AnchorPoint = Vector2.new(0, 0)
 		self.steal.root.Position = UDim2.fromOffset(Space.md, height - stealLift - 52)
 	else
+		self.steal.root.AnchorPoint = Vector2.new(1, 0)
 		self.steal.root.Position = UDim2.new(1, -Space.md, 1, -stealLift - 52)
 	end
 	self.steal.root.Size = UDim2.fromOffset(if compact then 150 else 186, 52)

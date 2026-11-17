@@ -21,7 +21,7 @@
     {
       "path": "artifacts/verification.json",
       "bytes": 1908,
-      "sha256": "17079f31d1d5c5d147c06c161958e14d67bbe2210751a9ee35e18bafe6726742"
+      "sha256": "32777756cab30200615e9486325e90c756dc763af84670e9e233ae739c34aa3b"
     },
     {
       "path": "assets/README.md",
@@ -51,7 +51,7 @@
     {
       "path": "docs/BUILD_REPORT.md",
       "bytes": 11663,
-      "sha256": "b8da61abf0135e72413b27e065e8832a26ca37be98808dd6fecec41b34c7e7c5"
+      "sha256": "2811bdaeefd149923140cd76257015c8a42f1ec176fb70400f95f6cf09903d09"
     },
     {
       "path": "docs/CHAOS_EVENTS.md",
@@ -70,8 +70,8 @@
     },
     {
       "path": "docs/KNOWN_LIMITATIONS.md",
-      "bytes": 5007,
-      "sha256": "99b19e985e29d3b2c06499cc61ec16b55ff1e218ff9a1001bb00f216210bc50c"
+      "bytes": 5693,
+      "sha256": "c89ab8e5d3c5d289472b7bcf0ae7169e6ae122642c2947c0100e4b6718f7707a"
     },
     {
       "path": "docs/PHASE3_GAMEPLAY_FIXES.md",
@@ -94,6 +94,16 @@
       "sha256": "4325248be29162646935754a4dd66a01255cea9f11b527404dca19bae9ccd448"
     },
     {
+      "path": "docs/PHASE7B_ACCEPTANCE_PACKAGE.md",
+      "bytes": 24074,
+      "sha256": "9cc90c734778bcc9f7e5ad6461ce0be5df14d56125e0e25923248a06e2b54d0c"
+    },
+    {
+      "path": "docs/PHASE7B_ACCEPTANCE_REPORT.md",
+      "bytes": 12873,
+      "sha256": "8d1ffcb4f4de0d3a478ce46c436982f8ed0c2e2373bb05e826ec430fe57d057b"
+    },
+    {
       "path": "docs/PHASE_CHARACTERS_ABILITIES.md",
       "bytes": 5650,
       "sha256": "753156e27ff5eec5ad35f6b4800fc79aa283868eacd7ebd1faac43537dfa7fd2"
@@ -110,8 +120,8 @@
     },
     {
       "path": "docs/TESTING.md",
-      "bytes": 13335,
-      "sha256": "d0bdb59b6ec75013ce000cf43884adef26d07fcabbdf1ad063328b0956df27cd"
+      "bytes": 13659,
+      "sha256": "28f4dfd783dbb49f7392e0aa0a5895d0ac93ac10dbf4129e3830926d7f2eb890"
     },
     {
       "path": "docs/TEST_REPORT_PHASE5.md",
@@ -265,13 +275,13 @@
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1851450,
-      "sha256": "e2d25dae4ed4f80f6b5b8c35642b43725f90193c6e9e3cbcdbc45259e52e3fa7"
+      "bytes": 1851891,
+      "sha256": "7a5f8a2aa4ed66301f2c22b7829c66acd9b24685a5e023934eb3add4169917f2"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1851451,
-      "sha256": "f91952e524ecf80502827fe3adf8236c97044c376108115c9b502f95aafc64ba"
+      "bytes": 1851892,
+      "sha256": "a29ab5a5f63c5c85ea7399056742df0404c179dd651a4ff8dc2f1672f5715ed7"
     },
     {
       "path": "src/client/Audio.luau",
@@ -300,8 +310,8 @@
     },
     {
       "path": "src/client/Hud.luau",
-      "bytes": 41922,
-      "sha256": "cbe15a2b1d61f6d002d72a599bc990f791d282c9df8dcc0eb5ca3cf90a696a6a"
+      "bytes": 42363,
+      "sha256": "6125b684dba420ed2dd3907f5329a6ac9153afd3285f1e0b1e41bca070bd61a2"
     },
     {
       "path": "src/client/Iconography.luau",
@@ -420,8 +430,8 @@
     },
     {
       "path": "tests/adapters.spec.luau",
-      "bytes": 75342,
-      "sha256": "45a4f6568140c123fdfc318319ab47183d398b871d727b67b4047d058d66dfe7"
+      "bytes": 83569,
+      "sha256": "6750c167c59496a8c90f2d2688bc0485465ecfbf4407582f900f91784ea889b0"
     },
     {
       "path": "tests/core.spec.luau",
@@ -480,8 +490,8 @@
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 9686,
-      "sha256": "f832d407949725a724bd356a5803898467b41bfd6c3470280030ce38d914eace"
+      "bytes": 9765,
+      "sha256": "96c4f639d6d8a2e01665bb35169f67a334a75f5ae4997531a227c332fdefb437"
     },
     {
       "path": "tools/preview.py",
@@ -524,12 +534,12 @@
       "sha256": "c6427b28e8f9a7d41d293b81576b3bfe697497b81b5af6e2ae433bae5d088bda"
     }
   ],
-  "file_count_excluding_manifest": 104,
+  "file_count_excluding_manifest": 106,
   "production_script_count": 29,
   "place_count": 2,
-  "source_sha256": "b6744099ba0b1c5714f67c5ac3cc482d0f9db273b1c50ade92d203a2e0c3443a",
-  "prior_verification_timestamp_utc": "2026-11-17T09:30:42+00:00",
-  "prior_automated_tests_passed": 338,
+  "source_sha256": "ce8f1f86f75813e666a656c2e383981064367c95a62f581015a693e57ead5d25",
+  "prior_verification_timestamp_utc": "2026-11-17T09:42:22+00:00",
+  "prior_automated_tests_passed": 345,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",
