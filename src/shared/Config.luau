@@ -43,6 +43,9 @@ local Config = {
 	WinnerCoins = 30,
 	HaloCost = 100,
 	SaveInterval = 60,
+	-- Seconds before one bounded retry of a profile whose first read failed.
+	-- The player keeps playing meanwhile; nothing is written until it succeeds.
+	PersistenceRetryDelay = 5,
 
 	-- ------------------------------------------------------------------ #
 	-- Round stages. Elapsed seconds from the start of a Playing round.

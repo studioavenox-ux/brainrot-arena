@@ -937,6 +937,10 @@ return function(Mock, sources, schema)
 	end)
 	test("persistence: a saved profile reloads with the same coins and specimens",function()
 		local store=Persistence.new({memoryOnly=false,persistInStudio=true})
+		-- Load first: since Phase 7A only a Loaded profile is writable, so the test
+		-- must reach the real state machine instead of writing into the cache.
+		store:load(-7)
+		eq(store:state(-7),"Loaded")
 		store.profiles[-7]=Persistence.sanitise({Coins=250,Specimens={toast=2},Halo="Gold"})
 		store:save(-7)
 		assert(store.writes==1,"the save must reach the store")
@@ -1291,6 +1295,181 @@ return function(Mock, sources, schema)
 		local e,a=fixture({fast=true,studio=true,roll=.1},true)
 		assert(a.PlayerGui:FindFirstChild("BrainrotHUD")~=nil,"HUD is built")
 		eq(a.PlayerGui:FindFirstChild("BrainrotStartupError"),nil)
+	end)
+
+	-- ------------------------------------------------------------------------ #
+	-- PHASE 7A: persistence safety. A profile is writable only after a read that
+	-- actually established it. Each test below names the failure it locks down.
+	-- ------------------------------------------------------------------------ #
+	local function seededVeteran()
+		return { Version=1, Coins=5000, Halo="Cyan", Specimens={toast=9}, Rounds=120,
+			Wins=40, BestScore=310, TotalScore=9000, Steals=30, Lost=12, Picked=800 }
+	end
+	-- A live-server Persistence over the mock DataStore, with its store pre-seeded.
+	local function persistFixture(options, seed)
+		local opts = options or {}
+		opts.studio = false
+		local e = Mock.new(sources, schema, opts)
+		local Persistence = e:import("src/server/Persistence.luau")
+		local store = Persistence.new({ memoryOnly = false, persistInStudio = true })
+		if seed then
+			for _, underlying in e.stores do underlying[Persistence.key(-42)] = seed end
+		end
+		return e, Persistence, store
+	end
+	local function stored(e, Persistence)
+		local found = nil
+		for _, underlying in e.stores do found = underlying[Persistence.key(-42)] end
+		return found
+	end
+
+	test("7A-A: existing profile + successful load + save round-trips",function()
+		local e,Persistence,store=persistFixture({}, seededVeteran())
+		local loaded = store:load(-42)
+		eq(store:state(-42),"Loaded")
+		eq(loaded.Coins,5000)
+		eq(store:isWritable(-42),true)
+		loaded.Coins = 5100
+		local ok,reason = store:save(-42)
+		eq(ok,true); eq(reason,"ok")
+		eq(stored(e,Persistence).Coins,5100)
+	end)
+
+	test("7A-B: a confirmed nil read is a new player and may be written",function()
+		local e,Persistence,store=persistFixture({})
+		local fresh = store:load(-42)
+		eq(store:state(-42),"Loaded")
+		eq(fresh.Coins,0)
+		eq(store:isWritable(-42),true)
+		fresh.Coins = 10
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,10)
+	end)
+
+	test("7A-C: a failed read refuses the save and never overwrites the record",function()
+		local e,Persistence,store=persistFixture({readFail=true}, seededVeteran())
+		local shell = store:load(-42)
+		eq(store:state(-42),"Failed")
+		eq(store:isWritable(-42),false)
+		-- Even a caller that mutates the shell cannot persist it.
+		shell.Coins = 999999
+		local ok,reason = store:save(-42)
+		eq(ok,false); eq(reason,"not-ready")
+		eq(store.writes,0,"no write may reach the store")
+		eq(stored(e,Persistence).Coins,5000,"the real record is untouched")
+		eq(stored(e,Persistence).Rounds,120)
+		assert(store.refusedSaves>0,"the refusal must be counted")
+	end)
+
+	test("7A-D: a save before the load completes is refused",function()
+		local e,Persistence,store=persistFixture({deferAsync=true}, seededVeteran())
+		local shell = store:load(-42)
+		eq(store:state(-42),"Loading")
+		eq(store:isWritable(-42),false)
+		shell.Coins = 777
+		eq((store:save(-42)),false,"a Loading profile must not be written")
+		eq(stored(e,Persistence).Coins,5000)
+		-- The read lands: the profile becomes writable and the save now succeeds.
+		e:flushAsync()
+		eq(store:state(-42),"Loaded")
+		eq(store:profile(-42).Coins,5000)
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,5000)
+	end)
+
+	test("7A-E: a player who leaves while the load is pending is never written",function()
+		local e,Persistence,store=persistFixture({deferAsync=true}, seededVeteran())
+		store:load(-42)
+		eq(store:state(-42),"Loading")
+		-- PlayerRemoving path: release the session, then the response arrives.
+		store:release(-42)
+		eq(store:profile(-42),nil)
+		eq(e:flushAsync()>0,true,"the read was really in flight")
+		eq(store:profile(-42),nil,"a late load must not resurrect the session")
+		eq(store:state(-42),"Leaving")
+		-- A save for the departed session is refused too, so the resurrected
+		-- profile cannot be written even if a caller still holds a reference.
+		eq((store:save(-42)),false,"a departed session must not be written")
+		eq(stored(e,Persistence).Coins,5000,"nothing was written for a departed player")
+		-- A rejoin starts a clean generation and works normally.
+		store:load(-42)
+		eq(store:state(-42),"Loading","a rejoin starts a fresh generation")
+		e:flushAsync()
+		eq(store:state(-42),"Loaded")
+		eq(store:profile(-42).Coins,5000)
+	end)
+
+	test("7A-F: a failed load can be retried successfully",function()
+		local e,Persistence,store=persistFixture({readFail=true}, seededVeteran())
+		store:load(-42)
+		eq(store:state(-42),"Failed")
+		eq((store:save(-42)),false)
+		-- The outage clears and the caller asks for one explicit retry.
+		e.options.readFail = false
+		store:load(-42,function() end,{retry=true})
+		eq(store:state(-42),"Loaded")
+		eq(store:profile(-42).Coins,5000)
+		eq(store:isWritable(-42),true)
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,5000)
+	end)
+
+	test("7A-G: a failed write leaves the in-memory profile intact and a retry works",function()
+		local e,Persistence,store=persistFixture({}, seededVeteran())
+		store:load(-42)
+		local profile = store:profile(-42)
+		profile.Coins = 5300
+		-- The write fails every retry.
+		e.options.writeFail = true
+		eq((store:save(-42)),true,"the request was accepted")
+		eq(store:profile(-42).Coins,5300,"the in-memory profile is not corrupted")
+		eq(stored(e,Persistence).Coins,5000,"the store still holds the old value")
+		assert(store.errors>0,"the failure is counted")
+		-- The outage clears; the next save point writes the correct value.
+		e.options.writeFail = false
+		eq((store:save(-42)),true)
+		eq(stored(e,Persistence).Coins,5300)
+	end)
+
+	test("7A-H: the acceptance namespace is isolated and cannot be production",function()
+		local e=Mock.new(sources,schema,{studio=false})
+		local Persistence=e:import("src/server/Persistence.luau")
+		-- Production default is unchanged and needs no configuration.
+		local prod=Persistence.new({})
+		eq(prod.storeName,"BrainrotArenaProfiles")
+		eq(prod.acceptance,false)
+		-- An explicit acceptance namespace is accepted and is a different store.
+		local acc=Persistence.new({acceptance=true,storeName="BrainrotArenaAcceptance_p7a"})
+		eq(acc.storeName,"BrainrotArenaAcceptance_p7a")
+		assert(acc.storeName~=prod.storeName,"acceptance must not share production keys")
+		-- Anything that could reach live progression is refused outright.
+		eq(pcall(Persistence.new,{acceptance=true,storeName="BrainrotArenaProfiles"}),false)
+		eq(pcall(Persistence.new,{storeName="BrainrotArenaProfiles",acceptance=true}),false)
+		eq(pcall(Persistence.new,{storeName="BrainrotArena_typo"}),false)
+		eq(pcall(Persistence.new,{storeName="BrainrotArenaAcceptance_"}),false)
+		eq(pcall(Persistence.new,{acceptance=true}),false)
+		eq(pcall(Persistence.new,{storeName=42}),false)
+		-- A plain custom name is not a bypass either.
+		eq(pcall(Persistence.new,{storeName="SomeOtherStore"}),false)
+	end)
+
+	test("7A-end-to-end: a join during an outage cannot wipe a veteran profile",function()
+		local e=Mock.new(sources,schema,{fast=false,studio=false,readFail=true})
+		local Persistence=e:import("src/server/Persistence.luau")
+		local key=Persistence.key(-42)
+		local seed=seededVeteran()
+		local a=e:addPlayer(-42,"Veteran")
+		e:startServer(); e:step(.1)
+		for _,underlying in e.stores do underlying[key]=seed end
+		-- Force the in-flight read to fail: recreate the join after seeding.
+		e:removePlayer(a)
+		local b=e:addPlayer(-42,"Veteran"); e:step(.1); e:step(1)
+		e:removePlayer(b); e:step(1)
+		local after=nil
+		for _,underlying in e.stores do after=underlying[key] end
+		eq(after.Coins,5000,"the veteran's coins survived a failed read")
+		eq(after.Rounds,120,"the veteran's stats survived a failed read")
+		eq(after.Specimens.toast,9,"the veteran's specimen log survived a failed read")
 	end)
 
 	-- ------------------------------------------------------------------------ #

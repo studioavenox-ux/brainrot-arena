@@ -110,7 +110,7 @@ function Mock.new(sources, schema, options)
 	-- explicit `studio = false`: a defaulted false is exactly what would have
 	-- produced a false green on the persistence path.
 	if options.studio == nil then options.studio = true end
-	local env = { now=100, viewport={X=1280,Y=720}, logs={}, delayed={}, modules={}, sources=sources, options=options }
+	local env = { now=100, viewport={X=1280,Y=720}, logs={}, delayed={}, deferred={}, modules={}, sources=sources, options=options }
 	local enum={}
 	for enumName,items in schema.Enums do
 		local values={}
@@ -224,6 +224,9 @@ function Mock.new(sources, schema, options)
 		if obj:IsA("GuiObject") then obj._props.Visible=true; obj._props.Size=UDim2.fromOffset(0,0); obj._props.Position=UDim2.fromOffset(0,0) end
 		if class=="Humanoid" then obj._props.Health=100 end
 		if class=="IntValue" then obj._props.Value=0 end
+		if class=="StringValue" then obj._props.Value="" end
+		if class=="NumberValue" then obj._props.Value=0 end
+		if class=="BoolValue" then obj._props.Value=false end
 		return obj
 	end
 	function methods:IsA(class) return classIs(self._class,class) end
@@ -316,7 +319,7 @@ function Mock.new(sources, schema, options)
 	-- DataStoreService is a deterministic in-memory double: the same key always
 	-- returns what was last written, and `options.store` can preseed or inspect it.
 	env.stores={}
-	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui","DataStoreService"} do
+	for _,name in {"Workspace","Players","ReplicatedStorage","ServerScriptService","ServerStorage","StarterPlayer","Lighting","SoundService","RunService","TweenService","UserInputService","Debris","StarterGui","DataStoreService"} do
 		local service=new(name); service.Name=name; service.Parent=env.game; env.services[name]=service
 	end
 	function methods:GetService(name) assert(env.services[name],"Unknown service "..name); return env.services[name] end
@@ -326,11 +329,11 @@ function Mock.new(sources, schema, options)
 		local store=env.stores[name]
 		local methods2={}
 		function methods2:GetAsync(key)
-			if options.storeFail then error("DataStore disabled in this test") end
+			if options.storeFail or options.readFail then error("DataStore read disabled in this test") end
 			return store[key]
 		end
 		function methods2:SetAsync(key,value)
-			if options.storeFail then error("DataStore disabled in this test") end
+			if options.storeFail or options.writeFail then error("DataStore write disabled in this test") end
 			store[key]=value
 			return key
 		end
@@ -374,7 +377,14 @@ function Mock.new(sources, schema, options)
 			return {_type="PhysicalProperties",Density=density,Friction=friction,Elasticity=elasticity,
 				FrictionWeight=weight,ElasticityWeight=strength} end},
 		Random={new=function() return {NextNumber=function() return options.roll or .1 end} end},
-		task={spawn=function(fn,...) fn(...) end,wait=function() return 0 end,delay=function(delay,fn) table.insert(env.delayed,{at=env.now+delay,fn=fn}) end},
+		task={spawn=function(fn,...)
+			-- `options.deferAsync` holds every spawned continuation until the test
+			-- releases it, so an in-flight load can be raced against a leave.
+			if options.deferAsync then table.insert(env.deferred,{fn=fn,args={...}}); return end
+			fn(...)
+		end,
+		wait=function() return 0 end,
+		delay=function(delay,fn) table.insert(env.delayed,{at=env.now+delay,fn=fn}) end},
 		typeof=function(value) return if type(value)=="table" then (value._type or (if value._class then "Instance" else "table")) else type(value) end,
 	}
 	local loading={}
@@ -433,6 +443,13 @@ function Mock.new(sources, schema, options)
 	end
 	function env:request(player,...)
 		self.services.ReplicatedStorage.BrainrotRemotes.Request.OnServerEvent:Fire(player,...)
+	end
+	-- Run every continuation that task.spawn deferred, in order. Tests call this
+	-- to simulate "the DataStore response finally arrived".
+	function env:flushAsync()
+		local queue=self.deferred; self.deferred={}
+		for _,item in queue do item.fn(table.unpack(item.args)) end
+		return #queue
 	end
 	function env:logsMatching(needle)
 		local out={}

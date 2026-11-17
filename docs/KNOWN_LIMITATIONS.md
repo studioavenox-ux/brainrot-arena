@@ -49,6 +49,12 @@ hidden in the code comments.
     same moment could have the two servers write the same profile; the last write
     wins. Roblox's own `UpdateAsync` semantics would fix this and are mocked but not
     used by the live path yet.
+11b. **A failed profile read is not retried forever.** The session gets one
+    bounded retry (`Config.PersistenceRetryDelay`); if that also fails the player
+    keeps playing with everything unsaved and the real record is left intact. No
+    write path exists for that session, so nothing is lost and nothing is gained
+    until the next join succeeds. A player who never rejoins while the store is
+    healthy keeps only their previously saved progress.
 11a. **Persistence is now the default in a live server** (`Persistence.new({})`
     opens the DataStore; Studio stays memory-only unless `persistInStudio` is
     passed). This is a behaviour change from the Phase 5 build, where an inverted
