@@ -1044,6 +1044,102 @@ test("movement: a grant for an unknown player does nothing", function()
 	eq(g:grant(42, 90, 5, 0), false)
 end)
 
+-- --------------------------------------------------------------------------- #
+-- REGRESSION (coin/specimen economy): a round payout may only persist what that
+-- round actually caught. `collection` is a session record, so paying a profile
+-- from it re-adds every earlier round's catches on every payout.
+-- --------------------------------------------------------------------------- #
+local function rowOf(m, id)
+	for _, row in m:rows() do
+		if row.id == id then return row end
+	end
+	return nil
+end
+local function closeRound(m, now)
+	m:step(now)
+	return m.lastResults
+end
+
+test("regression: roundCollection counts only this round's catches", function()
+	local m = playing(1)
+	eq(m:award(-1, 1, m.roundId, "brain"), true)
+	eq(m:award(-1, 1, m.roundId, "brain"), true)
+	eq(m:award(-1, 10, m.roundId, "sock"), true)
+	eq(rowOf(m, -1).roundCollection["brain"], 2)
+	eq(rowOf(m, -1).roundCollection["sock"], 1)
+	-- the session record still holds the same numbers
+	eq(rowOf(m, -1).collection["brain"], 2)
+end)
+
+test("regression: a payout snapshot is frozen at the results edge and excludes later catches", function()
+	local m = playing(1)
+	local now = 104
+	m:award(-1, 5, m.roundId, "fish")
+	now = 154
+	local results = closeRound(m, now)
+	eq(results.roundId, 1)
+	eq(results.collections["-1"]["fish"], 1)
+	eq(results.collections["-1"]["brain"], nil)
+	-- a second round's catches cannot appear in the first round's results table
+	m:step(now + 5); m:step(now + 20)   -- results -> intermission -> next round
+	eq(m.roundId, 2)
+	m:award(-1, 1, m.roundId, "brain")
+	eq(rowOf(m, -1).roundCollection["brain"], 1)
+	eq(rowOf(m, -1).collection["brain"], 1)
+	eq(m.lastResults, nil)                       -- cleared when a round starts
+	eq(results.collections["-1"]["brain"], nil)   -- and the old table never moved
+end)
+
+test("regression: two consecutive rounds each pay only their own specimens", function()
+	local m = playing(1)
+	local now = 104
+	m:award(-1, 1, m.roundId, "brain")
+	now = 154
+	local first = closeRound(m, now)
+	m:step(now + 5); m:step(now + 20)
+	m:award(-1, 1, m.roundId, "frog")
+	now = now + 20 + Config.FastTiming.Round
+	local second = closeRound(m, now)
+	-- Round 1: one brain. Round 2: one frog. Nothing doubled, nothing carried over.
+	eq(first.collections["-1"]["brain"], 1)
+	eq(first.collections["-1"]["frog"], nil)
+	eq(second.collections["-1"]["frog"], 1)
+	eq(second.collections["-1"]["brain"], nil)
+	-- while the session record legitimately holds both
+	eq(rowOf(m, -1).collection["brain"], 1)
+	eq(rowOf(m, -1).collection["frog"], 1)
+end)
+
+test("regression: a participant who caught nothing still gets a (empty) collection entry", function()
+	local m = playing(2)
+	m:award(-1, 5, m.roundId, "fish")
+	local results = closeRound(m, 154)
+	-- Player -2 was participating but collected nothing: paid, with an empty table.
+	-- Paid is what matters here; the amount is the machine's own rule and is covered
+	-- by the earlier reward tests.
+	eq(type(results.collections["-2"]), "table")
+	eq(next(results.collections["-2"]), nil)
+	assert(results.rewards["-2"] ~= nil, "a participant must always be paid")
+	eq(results.rewards["-1"], Config.ParticipationCoins + 5 * Config.CoinsPerPoint + Config.WinnerCoins)
+end)
+
+test("regression: the wire snapshot carries no payout bookkeeping", function()
+	local m = playing(1)
+	m:award(-1, 1, m.roundId, "brain")
+	local row = m:snapshot().rows[1]
+	eq(row.roundCollection, nil)
+	eq(row.collection["brain"], 1)   -- the specimen log still gets what it needs
+	eq(row.score, 1)
+	-- The payout snapshot is server-side bookkeeping and must not cross a remote
+	-- either: once a round has closed, the wire results carry no collections table.
+	m:step(154)
+	local snapshot = m:snapshot()
+	assert(snapshot.results ~= nil, "results must still be sent")
+	eq(snapshot.results.collections, nil)
+	eq(snapshot.results.topScore, 1)
+	eq(snapshot.results.rewards["-1"] ~= nil, true)
+end)
+
 print(string.format("\nCORE RESULTS: %d passed, %d failed",passed,failed))
 -- The Luau CLI exits non-zero on an uncaught error, so a failing suite fails CI
 -- instead of printing a red line into a passing run.

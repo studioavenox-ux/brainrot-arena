@@ -491,22 +491,28 @@ local function handleEffects(effects, now: number)
 			print(string.format("[Brainrot] stage • %s (banked all carried cells)", tostring(effect.stage)))
 		elseif effect.kind == "phase" then
 			if machine.phase == "Results" and machine.lastResults then
-				-- Pay the round into each profile once, from the machine's own result.
+				-- Pay the round into each profile exactly once, from the result the
+				-- machine froze when the round closed. Nothing here re-reads live
+				-- player state: a save that runs late can no longer record the next
+				-- round's catches, and only players the machine paid are touched.
 				local winners = {}
 				for _, row in machine.lastResults.winners do
 					winners[row.id] = true
 				end
 				for _, row in machine:rows() do
-					local profile = profiles:profile(row.id)
-					if profile then
-						local paid = (machine.lastResults.rewards[tostring(row.id)] or 0)
-						Persistence.applyRound(profile, {
-							score = row.score, steals = row.steals, lost = row.lost,
-							pickups = row.pickups, coins = paid, won = winners[row.id] == true,
-							collection = row.collection,
-						})
-						-- The machine owns live coins; keep them in step with the profile.
-						profiles:save(row.id)
+					local paid = machine.lastResults.rewards[tostring(row.id)]
+					if paid ~= nil then
+						local profile = profiles:profile(row.id)
+						if profile then
+							Persistence.applyRound(profile, {
+								score = row.score, steals = row.steals, lost = row.lost,
+								pickups = row.pickups, coins = paid, won = winners[row.id] == true,
+								-- Round-scoped catches, frozen at the results edge.
+								collection = machine.lastResults.collections[tostring(row.id)],
+							})
+							-- The machine owns live coins; keep them in step with the profile.
+							profiles:save(row.id)
+						end
 					end
 				end
 			end
@@ -659,8 +665,14 @@ requestRemote.OnServerEvent:Connect(function(player: Player, action: any, ...: a
 			stateRemote:FireClient(player, snapshot(), STEAL_MESSAGES["cooldown"])
 			return
 		end
-		record.requests.StealSent = now
 		local outcome, value, victim = resolveSteal(player, now)
+		-- Only a steal that actually moved a cell starts the cooldown. A refusal
+		-- (nothing in range, protected, empty-handed) leaves the verb ready, so the
+		-- HUD — which counts down from the server's stealReadyAt — never shows
+		-- "STEAL READY" while the server is silently refusing for eight seconds.
+		if outcome == "ok" then
+			record.requests.StealSent = now
+		end
 		print(string.format("[Brainrot] steal %s • %s -> %s (+%d)", outcome, player.Name,
 			if victim then victim.Name else "nobody", value))
 		-- A steal moves score between two players: refresh leaderstats immediately

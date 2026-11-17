@@ -15,13 +15,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 14111,
-      "sha256": "0820a8bd8f1486d93a6b6178797b39d4f65521b0bfd8d651570d3d40dd0e0b86"
+      "bytes": 14293,
+      "sha256": "b08205057a5e8f380704b9efce1a0065b3f03dc0b37c1a5782b71e9ce5b049b3"
     },
     {
       "path": "artifacts/verification.json",
       "bytes": 1908,
-      "sha256": "bbce996aeee6178418f1ddb17b11988a2bc2882ed9d04170085894dd3387523b"
+      "sha256": "8dbd7f88e4e44c148dc8f0cfc7c183527ab698f42390bf8154c78624d6b7ae0b"
     },
     {
       "path": "assets/README.md",
@@ -40,8 +40,8 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "bytes": 16918,
-      "sha256": "1cce5af06badd8aeec20c45594d95235e8500c2ac8502e9f4c53cfc86904eb8b"
+      "bytes": 17846,
+      "sha256": "4a340f1f84f400236f0c05b6a87817f7e1f00122e998e7a4e7ee95ad2168bbcd"
     },
     {
       "path": "docs/AUDIO.md",
@@ -50,8 +50,8 @@
     },
     {
       "path": "docs/BUILD_REPORT.md",
-      "bytes": 11419,
-      "sha256": "9f324a9876a30b84c03f16ba4b12d1e7662053bba0837a1c748fc4c90c721a4e"
+      "bytes": 11663,
+      "sha256": "6e5624b02b98b2b2f68956f19b5358b386bbda41c06ee9e90ecfb4149099b5ac"
     },
     {
       "path": "docs/CHAOS_EVENTS.md",
@@ -70,8 +70,8 @@
     },
     {
       "path": "docs/KNOWN_LIMITATIONS.md",
-      "bytes": 4043,
-      "sha256": "989aa4b41575d60adfffe85328605e8f34ba0a72650bb0defb2ecd8b854ffe15"
+      "bytes": 4551,
+      "sha256": "4a40797320243f176b53112127937a8389e4111f205b805df7686e28093bfb4f"
     },
     {
       "path": "docs/PHASE3_GAMEPLAY_FIXES.md",
@@ -82,6 +82,11 @@
       "path": "docs/PHASE5_STEAL_AND_EVENTS.md",
       "bytes": 9819,
       "sha256": "af62994ffbe186375a9628bc820424addbce8abdb6068b350b760041ef62bea0"
+    },
+    {
+      "path": "docs/PHASE6_DURABILITY.md",
+      "bytes": 12566,
+      "sha256": "aba6a283f443b8cba8c4432958a0d2962747ea845c622303ad25b0f02c99a8e0"
     },
     {
       "path": "docs/PHASE_CHARACTERS_ABILITIES.md",
@@ -255,13 +260,13 @@
     },
     {
       "path": "places/BrainrotArena-QuickTest.rbxlx",
-      "bytes": 1836202,
-      "sha256": "92cb42582c5785a0d960e149b08436f018be4ddec49862df11a0fcb911ada089"
+      "bytes": 1840591,
+      "sha256": "e6fc323e868970241a2a39cdd707bc2eea9faa9a0273885b75b7fa91556f1c7f"
     },
     {
       "path": "places/BrainrotArena.rbxlx",
-      "bytes": 1836203,
-      "sha256": "03d4c53a0916bd109ee1e80eafb23ee0f54d50a82c1dd1d67e6b5b1532f1b42f"
+      "bytes": 1840592,
+      "sha256": "c28381d761048d8ab7b3f9a640ee19306c9f1901a5753c0423edf1e0b60d29a7"
     },
     {
       "path": "src/client/Audio.luau",
@@ -270,8 +275,8 @@
     },
     {
       "path": "src/client/Collection.luau",
-      "bytes": 11310,
-      "sha256": "df4ead9235cf2831d99b42efbe691127ffb192570219edea235b6df157dd2bbb"
+      "bytes": 11448,
+      "sha256": "8b1d1078375d6fadfe0ed914756720990f21e9adb0221a9b53b2ba1958178d94"
     },
     {
       "path": "src/client/CreatureData.luau",
@@ -290,8 +295,8 @@
     },
     {
       "path": "src/client/Hud.luau",
-      "bytes": 41815,
-      "sha256": "82e302af4e2edba33ee32de65c4bad176bf1851710ddf73ec8afe35098e13a26"
+      "bytes": 41922,
+      "sha256": "cbe15a2b1d61f6d002d72a599bc990f791d282c9df8dcc0eb5ca3cf90a696a6a"
     },
     {
       "path": "src/client/Iconography.luau",
@@ -335,13 +340,13 @@
     },
     {
       "path": "src/server/Main.server.luau",
-      "bytes": 35280,
-      "sha256": "df49acc7a181c2ce6b8fcd6dce25ea9980b21212febe7e65208ad31bc1ae9a47"
+      "bytes": 35966,
+      "sha256": "b0109eae3e0a6583dbdbe023099c9d5617892fd77e97cc3ed7dd4ace2a3027ba"
     },
     {
       "path": "src/server/Persistence.luau",
-      "bytes": 9620,
-      "sha256": "baa566176f88b63709d9fa52825729b09b3bb577b68cb7da8a745e85b9b5fce8"
+      "bytes": 10119,
+      "sha256": "dcf2370de30536ce14752d3c8b82646d85b05e58db7dedd6fcdd5df051e12ecb"
     },
     {
       "path": "src/server/WorldData.luau",
@@ -385,8 +390,8 @@
     },
     {
       "path": "src/server/core/RoundMachine.luau",
-      "bytes": 23881,
-      "sha256": "e213582c42e5c015cbf6132f0725d9527bc2dc56799e42f51c6941c5c3141ea8"
+      "bytes": 26840,
+      "sha256": "e61b07d57f6d6954524992add973c2877124e9738a1bfd27642ca4ef367eb27e"
     },
     {
       "path": "src/shared/ArtDirection.luau",
@@ -410,13 +415,13 @@
     },
     {
       "path": "tests/adapters.spec.luau",
-      "bytes": 62679,
-      "sha256": "bf1654085d8cc6afc76b25f97845a645894afb0cb6c2a3262aba960daf34f824"
+      "bytes": 67475,
+      "sha256": "ea4349a235330604d3b89e86eabeefbe498e4bc6c92b2ef1be399faf2cc9b7fb"
     },
     {
       "path": "tests/core.spec.luau",
-      "bytes": 54471,
-      "sha256": "d3f7cb296b7bc8f752023678704e4c44fc1c4e75d6cc4e8fb3bdf112427c331b"
+      "bytes": 58379,
+      "sha256": "6c138148d92e410abd85d684c858e9cb3746a85e88aed6f0a1430a69c5ce577a"
     },
     {
       "path": "tests/fixtures/roblox-api.json",
@@ -430,8 +435,8 @@
     },
     {
       "path": "tests/roblox_mock.luau",
-      "bytes": 21599,
-      "sha256": "c0ebab9029bdf22590cc0442833637630eb049980a8900d45f2f71fe6f59be4c"
+      "bytes": 22020,
+      "sha256": "c0859c3736a58cbf3dee33e7c03ead067096e5b878f2c1f14414c39d60e8c4ba"
     },
     {
       "path": "tools/artcheck.py",
@@ -450,8 +455,8 @@
     },
     {
       "path": "tools/check.py",
-      "bytes": 18525,
-      "sha256": "ab91448b3d7082cd289a110e07313f39287b026ea16fef7cea2b12ac31e16b71"
+      "bytes": 18802,
+      "sha256": "385674528d203d0eddaa5a65006b2ec6e3bbecd73dea4eb6c380fcc0afcd41d5"
     },
     {
       "path": "tools/creatures.py",
@@ -470,8 +475,8 @@
     },
     {
       "path": "tools/package_release.py",
-      "bytes": 9611,
-      "sha256": "497b60a2bf2a3a500077b5a7e13e487ec1b8fcd249c312ddcad6ed97e847068b"
+      "bytes": 9648,
+      "sha256": "80e22083856be3902d408e6ffe3e722756fffd32b5817a210a44915f860e4d35"
     },
     {
       "path": "tools/preview.py",
@@ -514,12 +519,12 @@
       "sha256": "c6427b28e8f9a7d41d293b81576b3bfe697497b81b5af6e2ae433bae5d088bda"
     }
   ],
-  "file_count_excluding_manifest": 102,
+  "file_count_excluding_manifest": 103,
   "production_script_count": 29,
   "place_count": 2,
-  "source_sha256": "26d7f475fabb11325f78c0d0f94bd87e9d1adc1a058b774bc658d32243e2dd0f",
-  "prior_verification_timestamp_utc": "2026-11-09T12:58:42+00:00",
-  "prior_automated_tests_passed": 321,
+  "source_sha256": "b0b698bd1085210588e0faa85aec366ad392783393483ea1fa83a694cd0f3cda",
+  "prior_verification_timestamp_utc": "2026-11-17T08:11:08+00:00",
+  "prior_automated_tests_passed": 329,
   "studio_engine_playtest_performed": false,
   "visual_redesign": {
     "report": "docs/VISUAL_CHANGES.md",

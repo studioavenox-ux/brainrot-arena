@@ -6,7 +6,7 @@ hidden in the code comments.
 ## Verification
 
 1. **Roblox Studio was not available.** Every claim in this repository comes from
-   the automated gate (248 assertions) plus the offline renderer. The Studio
+   the automated gate (329 assertions) plus the offline renderer. The Studio
    acceptance matrix in `docs/TEST_REPORT_PHASE5.md` is **pending**, not passed:
    physics feel, real DataStore latency, mobile touch and the actual look of the
    rafts in the engine have not been observed.
@@ -49,6 +49,13 @@ hidden in the code comments.
     same moment could have the two servers write the same profile; the last write
     wins. Roblox's own `UpdateAsync` semantics would fix this and are mocked but not
     used by the live path yet.
+11a. **Persistence is now the default in a live server** (`Persistence.new({})`
+    opens the DataStore; Studio stays memory-only unless `persistInStudio` is
+    passed). This is a behaviour change from the Phase 5 build, where an inverted
+    default meant a published server never wrote a profile at all. Real DataStore
+    latency, throttling and quota behaviour are still unverified — see
+    [PHASE6_DURABILITY.md](PHASE6_DURABILITY.md) for the reproductions and the
+    pending Studio/device checks.
 12. **No purchase ledger.** Cosmetic purchases are coin spends inside the round,
     persisted immediately. There is no audit trail of individual transactions.
 13. **Save interval.** Profiles are written on purchase, on leave and on round

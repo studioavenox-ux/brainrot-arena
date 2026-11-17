@@ -1293,6 +1293,111 @@ return function(Mock, sources, schema)
 		eq(a.PlayerGui:FindFirstChild("BrainrotStartupError"),nil)
 	end)
 
+	-- ------------------------------------------------------------------------ #
+	-- REGRESSION: durability of the profile that carries the coins.
+	--
+	-- These run with `studio=false` — the *published server* context. The mock
+	-- defaults to `studio=true`, which is how the survival of this bug went
+	-- unnoticed: Persistence correctly stays memory-only in Studio, so a Studio
+	-- fixture can never prove that a live server writes anything.
+	-- ------------------------------------------------------------------------ #
+	test("regression: the production server opens a DataStore and writes a profile on a payout",function()
+		local e=Mock.new(sources,schema,{fast=false,studio=false,roll=.1})
+		local a=e:addPlayer(-1,"Mint Brain")
+		e:startServer()
+		e:step(.1); e:step(12.1); e:step(.1)
+		eq(e:lastState().phase,"Playing")
+		-- Finish the round with a score so the payout is non-trivial.
+		a.leaderstats["Brain Cells"].Value=0 -- leaderstats are refreshed from the server
+		local state=e:lastState()
+		e:step(state.phaseEndsAt-e.now+.05)
+		eq(e:lastState().phase,"Results")
+		local stores,store=0,nil
+		for _,value in e.stores do stores+=1; store=value end
+		eq(stores,1)                                  -- one profile store was opened at all
+		assert(store~=nil,"DataStoreService:GetDataStore was never called")
+		local key=next(store)
+		assert(key~=nil,"nothing was written to the profile store")
+		local profile=store[key]
+		eq(profile.Rounds,1)                          -- the round was recorded
+		assert(profile.Coins>0,"the payout reached the stored profile")
+		e:removePlayer(a)
+	end)
+
+	test("regression: a live server persists coins and the specimen log across two rounds",function()
+		local e=Mock.new(sources,schema,{fast=false,studio=false,roll=.1})
+		local Persistence=e:import("src/server/Persistence.luau")
+		local a=e:addPlayer(-1,"Mint Brain")
+		local b=e:addPlayer(-2,"Pink Brain")
+		e:startServer()
+		e:step(.1)                                  -- the first step publishes the phase
+		local function toPlaying()
+			local guard=0
+			while e:lastState().phase~="Playing" and guard<4 do
+				e:step((e:lastState().phaseEndsAt or 0)-e.now+.05); guard+=1
+			end
+		end
+		local function toResults()
+			e:step(e:lastState().phaseEndsAt-e.now+.05)
+			eq(e:lastState().phase,"Results")
+		end
+		local function myRow(id)
+			for _,row in e:lastState().rows do if row.id==id then return row end end
+		end
+		toPlaying()
+		collect(e,a,1); collect(e,a,2); collect(e,b,3)
+		local firstRoundScore=myRow(a.UserId).score
+		assert(firstRoundScore>0,"the round needs a score")
+		toResults()
+		local coinsAfterRound1=a.leaderstats.Coins.Value
+		eq(coinsAfterRound1, 10+firstRoundScore*2+30)  -- paid, and visible in the live wallet
+		toPlaying(); eq(e:lastState().roundId,2)
+		collect(e,a,4); collect(e,a,5)
+		toResults()
+		local coinsAfterRound2=a.leaderstats.Coins.Value
+		assert(coinsAfterRound2>coinsAfterRound1,"round 2 pays again")
+		-- The wallet is monotonic: a payout can never re-charge an old round.
+		local stores,store=0,nil
+		for _,value in e.stores do stores+=1; store=value end
+		eq(stores,1)
+		local profile=store[Persistence.key(a.UserId)]
+		assert(profile~=nil,"the stored profile exists")
+		eq(profile.Rounds,2)
+		eq(profile.Coins,coinsAfterRound2)
+		-- Specimens are the SUM of both rounds, and were never double counted:
+		-- two common catches in round 1 and two in round 2 is four, not six.
+		local specimens=0
+		for _,count in profile.Specimens do specimens+=count end
+		eq(specimens,4)
+		e:removePlayer(a); e:removePlayer(b)
+	end)
+
+	test("regression: a refused steal does not start the cooldown, and a valid steal still does",function()
+		local e,a,b=fixture({fast=true,studio=true,roll=.1},true)
+		local Config=e:import("src/shared/Config.luau")
+		play(e); e:step(6)                       -- clear spawn protection
+		local function myRow(id)
+			for _,row in e:lastState().rows do if row.id==id then return row end end
+		end
+		-- Nobody in range: the server refuses and the cooldown stays at zero, so the
+		-- HUD (which counts down from stealReadyAt) does not lie to the player.
+		b.Character:PivotTo(e.CFrame.new(a.Character.HumanoidRootPart.Position+e.Vector3.new(60,0,0)))
+		e:step(.5)
+		e:request(a,"Steal"); e:step(.1)
+		eq(myRow(a.UserId).stealReadyAt,0)
+		eq(myRow(a.UserId).score,0)
+		-- Now in range with something to take: the steal succeeds and the cooldown
+		-- reported to the client matches the configured one.
+		collect(e,b,1)
+		eq(myRow(b.UserId).score>0,true)
+		b.Character:PivotTo(e.CFrame.new(a.Character.HumanoidRootPart.Position+e.Vector3.new(3,0,0)))
+		e:step(1)
+		local now=e.now
+		e:request(a,"Steal"); e:step(.1)
+		assert(myRow(a.UserId).score>0,"the cell changed hands")
+		near(myRow(a.UserId).stealReadyAt, now + Config.Steal.Cooldown)
+	end)
+
 	print(string.format("\nADAPTER RESULTS: %d passed, %d failed (mock Roblox boundary, no engine physics)",passed,failed))
 	assert(failed==0,"Adapter test failures")
 end

@@ -860,9 +860,11 @@ function Hud:refreshModal()
 	if kind == "Shop" then
 		self.modalTitle.Text = Copy.ShopTitle
 		self.modalTitle.TextColor3 = C.Amber
-		self.modalBody.Text = Copy.ShopBody .. "\n\nPULSE HALO — " .. self.config.HaloCost .. " session coins."
+		-- Coins are a saved balance, not a per-session counter: say so, because the
+		-- halo is the one thing a player buys with them.
+		self.modalBody.Text = Copy.ShopBody .. "\n\nPULSE HALO — " .. self.config.HaloCost .. " coins."
 			.. "\n\nBalance: " .. coins .. " coins."
-			.. (if owned then "\n\nYou already own this glow for the session." else "")
+			.. (if owned then "\n\nYou already own this glow." else "")
 		self.modalPrimary.Label.Text = if owned then (if equipped then "UNEQUIP" else "EQUIP") else "UNLOCK  •  " .. self.config.HaloCost
 		self.modalPrimary.Visible = true
 	elseif kind == "Inventory" then

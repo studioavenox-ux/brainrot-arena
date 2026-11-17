@@ -113,6 +113,14 @@ end
 local Store = {}
 Store.__index = Persistence
 
+-- `options` is optional and every field is optional. The DEFAULTS matter:
+--   * memoryOnly defaults to FALSE — a live server persists unless it is told not
+--     to. (An earlier expression, `o.memoryOnly ~= false`, made `new({})` memory
+--     only, so the production path never opened a DataStore at all.)
+--   * Studio is the exception: it is memory-only unless `persistInStudio = true`
+--     is passed explicitly, so local playtests never contend for the live keys.
+--   * `readOnly = true` opens no DataStore at all. It exists for isolated tests
+--     and offline tooling, not for the game.
 function Persistence.new(options)
 	local o = options or {}
 	local self = setmetatable({}, Store)
@@ -123,9 +131,9 @@ function Persistence.new(options)
 	self.store = nil
 	self.profiles = {}       -- userId -> profile (cache: the session's truth)
 	self.loaded = {}         -- userId -> true once the durable copy was read
-	self.failed = {}         -- userId -> true if the read failed (retry later)
 	self.savedAt = {}
-	self.memoryOnly = o.memoryOnly ~= false or RunService:IsStudio() and o.persistInStudio ~= true
+	self.memoryOnly = (o.memoryOnly == true) or (o.readOnly == true)
+		or (RunService:IsStudio() and o.persistInStudio ~= true)
 	self.writes = 0
 	self.reads = 0
 	self.errors = 0
@@ -189,7 +197,6 @@ function Persistence.load(self, userId, callback)
 			end
 		end
 		self.loaded[userId] = true
-		self.failed[userId] = data == nil and false or false
 		-- Merge, never replace: anything earned between join and load is kept.
 		local merged = Persistence.sanitise(data)
 		merged = Persistence.merge(merged, self.profiles[userId])

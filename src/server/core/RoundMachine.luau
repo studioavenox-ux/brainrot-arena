@@ -30,7 +30,12 @@ export type Settings = {
 export type Player = {
 	id: number, name: string, score: number, coins: number, wins: number, pickups: number,
 	participating: boolean, haloOwned: boolean, haloEquipped: boolean,
+	-- Two records, deliberately separate:
+	--   `collection`      every catch this session (drives the specimen log)
+	--   `roundCollection` only this round's catches (the ONLY thing a round payout
+	--                     may add to a durable profile — see Persistence.applyRound)
 	collection: { [string]: number },
+	roundCollection: { [string]: number },
 	-- Round inventory. `carried` holds the values not yet banked, so a stolen cell
 	-- can be removed from exactly the right place.
 	carried: { number }, carriedValue: number,
@@ -40,11 +45,17 @@ export type Player = {
 export type Row = {
 	id: number, name: string, score: number, coins: number, wins: number, pickups: number,
 	haloOwned: boolean, haloEquipped: boolean, collection: { [string]: number },
+	-- This round's catches only. Round rewards, and therefore the shipped profile,
+	-- are computed from this table and never from `collection`.
+	roundCollection: { [string]: number },
 	collected: number, carried: number, carriedValue: number,
 	steals: number, lost: number, stealReadyAt: number, protectedUntil: number, immuneUntil: number,
 }
 export type Results = {
 	roundId: number, winners: { Row }, topScore: number, rewards: { [string]: number },
+	-- userId -> that round's catches, captured when the round closes. The payout is
+	-- the only consumer, so a slow profile save can never re-read a newer round.
+	collections: { [string]: { [string]: number } },
 }
 export type Effect = {
 	kind: string, phase: string?, active: boolean?, event: string?, stage: string?,
@@ -140,7 +151,7 @@ function RoundMachine.addPlayer(self: Machine, id: number, name: string): boolea
 	self.players[id] = {
 		id = id, name = string.sub(name, 1, 50), score = 0, coins = 0, wins = 0, pickups = 0,
 		participating = self.phase == "Playing", haloOwned = false, haloEquipped = false,
-		collection = {}, carried = {}, carriedValue = 0,
+		collection = {}, roundCollection = {}, carried = {}, carriedValue = 0,
 		-- A player who joins mid-round is protected for the usual spawn window.
 		stealReadyAt = 0, protectedUntil = 0, immuneUntil = 0,
 		lastVictim = 0, lastStealAt = -math.huge, steals = 0, lost = 0,
@@ -218,7 +229,10 @@ function RoundMachine.award(
 	table.insert(player.carried, value)
 	player.carriedValue += value
 	if species and species ~= "" then
+		-- Session record for the specimen log, and the round-scoped record that the
+		-- payout is allowed to persist. Both are incremented together, here only.
 		player.collection[species] = (player.collection[species] or 0) + 1
+		player.roundCollection[species] = (player.roundCollection[species] or 0) + 1
 	end
 	return true
 end
@@ -385,11 +399,15 @@ function RoundMachine.rows(self: Machine): { Row }
 				collected += 1
 			end
 		end
+		local roundCollection: { [string]: number } = {}
+		for species, amount in player.roundCollection do
+			roundCollection[species] = amount
+		end
 		table.insert(rows, {
 			id = player.id, name = player.name, score = player.score, coins = player.coins,
 			wins = player.wins, pickups = player.pickups,
 			haloOwned = player.haloOwned, haloEquipped = player.haloEquipped,
-			collection = collection, collected = collected,
+			collection = collection, roundCollection = roundCollection, collected = collected,
 			carried = #player.carried, carriedValue = player.carriedValue,
 			steals = player.steals, lost = player.lost,
 			stealReadyAt = player.stealReadyAt, protectedUntil = player.protectedUntil,
@@ -407,6 +425,11 @@ function RoundMachine.finishRound(self: Machine)
 	local topScore = if rows[1] then rows[1].score else 0
 	local winners: { Row } = {}
 	local rewards: { [string]: number } = {}
+	-- Snapshot each participant's round catches as it closes. The adapter pays from
+	-- this table, not from a live record, so the amount saved to a profile is
+	-- exactly what this round earned even if the save runs after the next round
+	-- has already started collecting.
+	local collections: { [string]: { [string]: number } } = {}
 	for _, row in rows do
 		local player = self.players[row.id]
 		if player.participating then
@@ -419,13 +442,21 @@ function RoundMachine.finishRound(self: Machine)
 			end
 			player.coins += amount
 			rewards[tostring(row.id)] = amount
+			local caught: { [string]: number } = {}
+			for species, count in player.roundCollection do
+				caught[species] = count
+			end
+			collections[tostring(row.id)] = caught
 		end
 		-- Round inventory never survives the round; the score that already counted
 		-- it is what gets paid and recorded.
 		bankPlayer(player)
 		player.participating = false
 	end
-	self.lastResults = { roundId = self.roundId, winners = winners, topScore = topScore, rewards = rewards }
+	self.lastResults = {
+		roundId = self.roundId, winners = winners, topScore = topScore, rewards = rewards,
+		collections = collections,
+	}
 end
 
 -- Which stage an elapsed time falls in. Pure, so both the machine and tests agree.
@@ -492,6 +523,9 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 			player.score = 0
 			player.pickups = 0
 			player.participating = true
+			-- A new round starts with an empty round record. The session record is
+			-- left alone: it is the specimen log, and it spans rounds.
+			table.clear(player.roundCollection)
 			table.clear(player.carried)
 			player.carriedValue = 0
 			player.stealReadyAt = 0
@@ -534,6 +568,7 @@ function RoundMachine.setPhase(self: Machine, phase: string, now: number, effect
 		self.chaosKind = ""
 		for _, player in self.players do
 			player.participating = false
+			table.clear(player.roundCollection)
 			table.clear(player.carried)
 			player.carriedValue = 0
 		end
@@ -641,12 +676,33 @@ end
 function RoundMachine.snapshot(self: Machine)
 	local schedule: { { Kind: string, Label: string, At: number, Duration: number } } = {}
 	local base = self.phaseStartedAt
+	-- The wire rows carry what the HUD reads. `roundCollection` is payout
+	-- bookkeeping that the client never needs, so it is not replicated.
+	local rows: { any } = {}
+	for _, row in self:rows() do
+		rows[#rows + 1] = {
+			id = row.id, name = row.name, score = row.score, coins = row.coins, wins = row.wins,
+			pickups = row.pickups, haloOwned = row.haloOwned, haloEquipped = row.haloEquipped,
+			collection = row.collection, collected = row.collected, carried = row.carried,
+			carriedValue = row.carriedValue, steals = row.steals, lost = row.lost,
+			stealReadyAt = row.stealReadyAt, protectedUntil = row.protectedUntil,
+			immuneUntil = row.immuneUntil,
+		}
+	end
 	for _, entry in self.schedule do
 		table.insert(schedule, {
 			Kind = entry.Kind, Label = RoundMachine.eventLabel(entry.Kind),
 			At = base + entry.StartsAt, Duration = entry.EndsAt - entry.StartsAt,
 		})
 	end
+	-- Results are shown, not persisted by a client: send the winners, the score and
+	-- the reward dictionary, and deliberately not the per-player `collections`
+	-- snapshot the adapter pays from.
+	local results = self.lastResults
+	local wireResults = if results == nil then nil else {
+		roundId = results.roundId, winners = results.winners,
+		topScore = results.topScore, rewards = results.rewards,
+	}
 	return {
 		phase = self.phase, roundId = self.roundId, phaseEndsAt = self.phaseEndsAt,
 		eventActive = self.eventActive, eventEndsAt = self.eventEndsAt,
@@ -654,7 +710,7 @@ function RoundMachine.snapshot(self: Machine)
 		eventWarning = self.eventWarning, eventWarningEndsAt = self.warningEndsAt,
 		stage = self.stage, stageIndex = self.stageIndex, stageEndsAt = self.stageEndsAt,
 		events = schedule,
-		rows = self:rows(), results = self.lastResults,
+		rows = rows, results = wireResults,
 	}
 end
 

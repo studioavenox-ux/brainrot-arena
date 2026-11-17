@@ -104,6 +104,18 @@ answer. Banked score is never touched.
   `applyRound()` is the single place a round pays coins or increments stats, reads and
   writes retry three times inside `pcall`, and a load merges rather than replaces so a slow
   read cannot erase the session. Round score is never persisted.
+  `Persistence.new(options)` defaults to **persisting**: only an explicit
+  `memoryOnly = true` (or `readOnly = true`, for isolated tests and offline tooling)
+  skips opening the DataStore. Studio is memory-only unless `persistInStudio = true`
+  is passed, so local playtests never share the live keys.
+- **Round-scoped rewards.** `RoundMachine` keeps two separate records per player:
+  `collection` (every catch this session, which the specimen log shows) and
+  `roundCollection` (only this round's catches). `finishRound()` freezes the round's
+  reward, winners and per-player `collections` into `lastResults`, and the adapter pays
+  profiles from that frozen table. A round payout can therefore never re-add an earlier
+  round's catches, and a payout that lands after the next round has started still records
+  exactly the round it closed. Neither field is replicated except as the wire `collection`
+  the HUD already shows.
 
 Snapshots contain only plain tables, arrays and primitive values. Reward dictionaries use **string UserId keys** for safe Roblox remote serialization. Name labels do not enable RichText. Score/coin/win values also appear in server-maintained `leaderstats`. Snapshots are sent at most four times a second when dirty, otherwise once a second; clients derive countdown display from server deadlines.
 

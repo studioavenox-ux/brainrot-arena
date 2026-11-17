@@ -104,6 +104,12 @@ local Vector2 = {new=function(x,y) return {X=x,Y=y,_type="Vector2"} end,zero={X=
 
 function Mock.new(sources, schema, options)
 	options = options or {}
+	-- Roblox reports `RunService:IsStudio()` from the execution context, and the
+	-- unchanged default here is "studio". A test that wants the *live-server*
+	-- behaviour (DataStore persistence, published-only guards) must opt in with an
+	-- explicit `studio = false`: a defaulted false is exactly what would have
+	-- produced a false green on the persistence path.
+	if options.studio == nil then options.studio = true end
 	local env = { now=100, viewport={X=1280,Y=720}, logs={}, delayed={}, modules={}, sources=sources, options=options }
 	local enum={}
 	for enumName,items in schema.Enums do
